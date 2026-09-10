@@ -1,0 +1,33 @@
+# Generated Unreal Engine data
+/Binaries/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+Plugins/**/Intermediate/
+Plugins/**/DerivedDataCache/
+Plugins/**/Saved/
+
+# Generated IDE files
+/.vs/
+/.idea/
+*.sln
+*.slnx
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+*.opensdf
+*.sdf
+*.ipch
+*.code-workspace
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Operating system files
+Thumbs.db
+Desktop.ini
+.DS_Store
