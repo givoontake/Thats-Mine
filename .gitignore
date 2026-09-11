@@ -31,3 +31,28 @@ Plugins/**/Saved/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local editor state and current commit exclusions
+/Config/DefaultEditorPerProjectUserSettings.ini
+/README.md
+/Stylescape.png
+/Content/Developers/
+/Content/Collections/
+
+# Outside assets not referenced by the retained project, verified by Unreal Asset Registry
+/Content/Asian_Village/
+/Content/Characters/
+/Content/FirstPerson/
+/Content/KayKit/
+/Content/LevelPrototyping/
+/Content/Stylescape/
+/Content/StylizedNature/
+/Content/Stylized_Egypt/
+/Content/Stylized_Landscape/
+/Content/Variant_Horror/
+/Content/Variant_Shooter/
+/Content/Weapons/
+/Content/__ExternalActors__/Variant_Horror/
+/Content/__ExternalActors__/Variant_Shooter/
+/Content/__ExternalObjects__/Variant_Horror/
+/Content/__ExternalObjects__/Variant_Shooter/
