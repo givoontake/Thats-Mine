@@ -1,0 +1,69 @@
+cmake_minimum_required(VERSION 3.21)
+project(GameServer LANGUAGES CXX)
+
+if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "GameServer requires 64-bit Windows.")
+endif()
+
+find_package(TBB CONFIG REQUIRED)
+set(MYSQL_CONNECTOR_ROOT "" CACHE PATH "MySQL Connector/C++ installation directory")
+find_path(MYSQL_CONNECTOR_INCLUDE_DIR jdbc/mysql_driver.h HINTS "${MYSQL_CONNECTOR_ROOT}/include" REQUIRED)
+find_library(MYSQL_CONNECTOR_LIBRARY mysqlcppconn HINTS "${MYSQL_CONNECTOR_ROOT}/lib64/vs14" REQUIRED)
+find_file(MYSQL_CONNECTOR_DLL NAMES mysqlcppconn-10-vs14.dll mysqlcppconn-9-vs14.dll HINTS "${MYSQL_CONNECTOR_ROOT}/lib64" REQUIRED)
+
+add_library(MySQLConnector SHARED IMPORTED)
+set_target_properties(MySQLConnector PROPERTIES
+    IMPORTED_IMPLIB "${MYSQL_CONNECTOR_LIBRARY}"
+    IMPORTED_LOCATION "${MYSQL_CONNECTOR_DLL}"
+    INTERFACE_INCLUDE_DIRECTORIES "${MYSQL_CONNECTOR_INCLUDE_DIR}"
+)
+
+add_executable(GameServer
+    Core/main.cpp
+    Core/GameServer.cpp
+    Game/Player.cpp
+    Lobby/LobbySession.cpp
+    Managers/ActivePlayerManager.cpp
+    Network/Session.cpp
+    Network/SendBuffer.cpp
+    Rooms/GameRoom.cpp
+    Rooms/GameRoomPackets.cpp
+    Threads/ServerThread.cpp
+    Threads/Database/DBThread.cpp
+    Threads/Game/GameThread.cpp
+    Threads/Game/GamePhaseContext.cpp
+    Threads/IO/IOThread.cpp
+    Threads/Lobby/LobbyThread.cpp
+    Threads/Lobby/LobbyPhaseContext.cpp
+    Threads/Timer/TimerThread.cpp
+    Threads/Managers/ServerThreadManager.cpp
+    Threads/Managers/DBThreadManager.cpp
+    Threads/Managers/GameThreadManager.cpp
+    Threads/Managers/IOThreadManager.cpp
+    Threads/Managers/LobbyThreadManager.cpp
+    Threads/Managers/TimerThreadManager.cpp
+)
+target_compile_features(GameServer PRIVATE cxx_std_20)
+target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_include_directories(GameServer PRIVATE
+    . Common Core Game Lobby Managers Network Packets Rooms Threads
+    Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
+)
+target_link_libraries(GameServer PRIVATE TBB::tbb MySQLConnector ws2_32 mswsock bcrypt)
+if(MSVC)
+    target_compile_options(GameServer PRIVATE /W4 /utf-8 /permissive-)
+endif()
+
+add_custom_command(TARGET GameServer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:GameServer> $<TARGET_FILE_DIR:GameServer>
+    COMMAND_EXPAND_LISTS
+)
+get_filename_component(MYSQL_CONNECTOR_RUNTIME_DIR "${MYSQL_CONNECTOR_DLL}" DIRECTORY)
+file(GLOB MYSQL_CONNECTOR_TLS_DLLS "${MYSQL_CONNECTOR_RUNTIME_DIR}/libssl*.dll" "${MYSQL_CONNECTOR_RUNTIME_DIR}/libcrypto*.dll")
+if(MYSQL_CONNECTOR_TLS_DLLS)
+    add_custom_command(TARGET GameServer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MYSQL_CONNECTOR_TLS_DLLS} $<TARGET_FILE_DIR:GameServer>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+set_property(TARGET GameServer PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")

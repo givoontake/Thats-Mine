@@ -1,0 +1,6 @@
+/Build/
+/out/
+/.vs/
+/CMakeUserPresets.json
+/vcpkg_installed/
+db_config.txt

@@ -1,0 +1,7 @@
+# Copy to db_config.txt and enter local connection settings.
+# No schema or table is created automatically.
+host=127.0.0.1
+port=3306
+user=
+password=
+schema=game
