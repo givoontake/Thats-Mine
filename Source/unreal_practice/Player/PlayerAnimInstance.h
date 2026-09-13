@@ -34,6 +34,27 @@ protected:
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	FVector left_hand_ik_location_ = FVector::ZeroVector;
 
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	float aim_pitch_ = 0.0f;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	FRotator spine_aim_rotation_ = FRotator::ZeroRotator;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	FRotator chest_aim_rotation_ = FRotator::ZeroRotator;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Head", meta = (ClampMin = "0", ClampMax = "89", Units = "deg"))
+	float head_pitch_up_limit_ = 60.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Head", meta = (ClampMin = "0", ClampMax = "89", Units = "deg"))
+	float head_pitch_down_limit_ = 45.0f;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	FVector head_look_location_ = FVector::ZeroVector;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	float head_look_alpha_ = 0.0f;
+
 private:
 	TWeakObjectPtr<APlayerCharacter> character_;
 };
