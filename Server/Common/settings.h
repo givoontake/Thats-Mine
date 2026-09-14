@@ -5,7 +5,7 @@ constexpr int TICK_INTERVAL_MS = 1000 / TICK_RATE;
 
 constexpr int BUF_SIZE = 2048;
 constexpr int MAX_MESSAGE_SIZE = 512;
-constexpr int SERVER_PORT = 12345;
+constexpr int SERVER_PORT = 12312;
 
 constexpr int MAX_PLAYER_COUNT = 10000;
 constexpr int MAX_ROOM_COUNT = 5000;

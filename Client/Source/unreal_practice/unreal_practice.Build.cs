@@ -22,7 +22,7 @@ public class unreal_practice : ModuleRules
 			"SlateCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking" });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"unreal_practice",
