@@ -1,10 +1,12 @@
 #include "ActivePlayerManager.h"
 #include "Session.h"
 
-bool ActivePlayerManager::AddPlayer(SessionKey session_key)
+bool ActivePlayerManager::AddPlayer(Session& session, const DBLoginResult& result)
 {
 	std::lock_guard<std::mutex> lock(active_players_mutex_);
-	return active_players_.emplace(session_key.player_id, session_key).second;
+	if (active_players_.contains(result.player_id) || !session.ApplyLoginResult(result)) return false;
+	active_players_[result.player_id] = session.GetSessionKey();
+	return true;
 }
 
 void ActivePlayerManager::RemovePlayer(int player_id, SessionKey session_key)

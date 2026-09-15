@@ -1,6 +1,9 @@
 // DBThread.h
 #pragma once
 #include <condition_variable>
+#include <queue>
+#include "db_login_task.h"
+#include "db_login_result.h"
 #include <cstdint>
 #include <exception>
 #include <memory>
@@ -23,7 +26,14 @@ struct DBConnectionInfo
 class DBThread : public ServerThread
 {
 	sql::mysql::MySQL_Driver* driver_ = nullptr;
+protected:
 	std::unique_ptr<sql::Connection> connection_;
+	virtual DBLoginResult ProcessTask(const DBLoginTask& task);
+
+private:
+	HANDLE iocp_handle_ = nullptr;
+	std::queue<DBLoginTask> task_queue_;
+	void PostResult(SessionKey session_key, DBLoginResult result);
 	DBConnectionInfo connection_info_;
 	std::mutex wait_mutex_;
 	std::condition_variable cv_;
@@ -40,7 +50,8 @@ public:
 	~DBThread() override;
 	DBThread(const DBThread&) = delete;
 	DBThread& operator=(const DBThread&) = delete;
-	void Init(sql::mysql::MySQL_Driver* driver);
+	void Init(HANDLE iocp_handle, sql::mysql::MySQL_Driver* driver);
+	bool Enqueue(DBLoginTask task);
 	void Run() override;
 	void Close() override;
 };

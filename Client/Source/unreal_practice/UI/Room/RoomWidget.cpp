@@ -9,6 +9,7 @@
 void URoomWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
+	SetIsFocusable(true);
 	action_style_ = action_button_->GetStyle();
 	action_button_->OnClicked.AddDynamic(this, &URoomWidget::HandleAction);
 	leave_button_->OnClicked.AddDynamic(this, &URoomWidget::ShowLeaveDialog);
@@ -31,6 +32,7 @@ void URoomWidget::NativeOnInitialized()
 		UUniformGridSlot* slot = members_grid_->AddChildToUniformGrid(member, index % 10, index / 10);
 		slot->SetHorizontalAlignment(HAlign_Fill);
 		slot->SetVerticalAlignment(VAlign_Fill);
+		member->on_kick_requested_.BindUObject(this, &URoomWidget::HandleKick);
 		member_widgets_.Add(member);
 		member->SetMember(nullptr, false);
 	}
@@ -47,6 +49,7 @@ void URoomWidget::SetRoom(const FLobbyRoomInfo& room, const TArray<FRoomMemberIn
 	{
 		const FRoomMemberInfo* member = members.IsValidIndex(index) ? &members[index] : nullptr;
 		member_widgets_[index]->SetMember(member, member && member->player_key == local_player_key);
+		member_widgets_[index]->SetCanKick(is_host_ && member && member->player_key != local_player_key);
 	}
 	action_text_->SetText(is_host_ ? NSLOCTEXT("Room", "Start", "게임 시작") : is_ready_ ? NSLOCTEXT("Room", "CancelReady", "준비 취소") : NSLOCTEXT("Room", "ReadyAction", "준비하기"));
 	action_button_->SetIsEnabled(local && (!is_host_ || can_start));
@@ -89,4 +92,22 @@ void URoomWidget::CancelLeave()
 void URoomWidget::ConfirmLeave()
 {
 	on_leave_requested_.Broadcast();
+}
+
+void URoomWidget::SetPending(bool is_pending)
+{
+	if (is_pending) { action_button_->SetIsEnabled(false); leave_dialog_->SetVisibility(ESlateVisibility::Collapsed); }
+	leave_button_->SetIsEnabled(!is_pending);
+	leave_confirm_button_->SetIsEnabled(!is_pending);
+	if (is_pending) for (const auto& member : member_widgets_) member->SetCanKick(false);
+}
+
+void URoomWidget::ShowStatus(const FText& message)
+{
+	if (!message.IsEmpty()) status_text_->SetText(message);
+}
+
+void URoomWidget::HandleKick(int64 player_key)
+{
+	on_kick_requested_.Broadcast(player_key);
 }

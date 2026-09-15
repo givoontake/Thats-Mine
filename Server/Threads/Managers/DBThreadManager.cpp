@@ -11,9 +11,9 @@ DBThreadManager::DBThreadManager(GameServer& game_server)
 
 void DBThreadManager::Start()
 {
-    login_thread_.Init(driver_);
+    login_thread_.Init(game_server_.GetIOCPHandle(), driver_);
     for (auto& db_thread : game_threads_)
-        db_thread.Init(driver_);
+        db_thread.Init(game_server_.GetIOCPHandle(), driver_);
 
     threads_.reserve(THREAD_COUNT);
     login_thread_.Start();
@@ -35,4 +35,9 @@ void DBThreadManager::Join()
 {
     for (auto& thread : threads_)
         thread.join();
+}
+
+bool DBThreadManager::Enqueue(DBLoginTask task)
+{
+	return login_thread_.Enqueue(std::move(task));
 }

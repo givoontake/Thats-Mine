@@ -73,3 +73,10 @@ void ULoginWidget::SubmitLocalLogin()
 }
 
 #undef LOCTEXT_NAMESPACE
+
+void ULoginWidget::SetPending(bool is_pending)
+{
+	login_button_->SetIsEnabled(!is_pending);
+	id_input_->SetIsEnabled(!is_pending);
+	password_input_->SetIsEnabled(!is_pending);
+}

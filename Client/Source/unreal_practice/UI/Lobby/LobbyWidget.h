@@ -30,6 +30,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Lobby")
 	void ShowStatus(const FText& message);
+	void SetPending(bool is_pending);
+	FOnLobbyRefreshRequested on_quick_join_requested_;
 
 	UPROPERTY(BlueprintAssignable, Category = "Lobby")
 	FOnLobbyRefreshRequested on_refresh_requested_;

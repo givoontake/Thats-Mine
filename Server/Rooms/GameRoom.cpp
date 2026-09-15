@@ -151,7 +151,7 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const std:
 			add_p.header.size = static_cast<std::uint16_t>(sizeof(add_p));
 			add_p.header.type = S2C_ADD_PLAYER;
 			add_p.player_id = new_session.GetSessionKey().player_id;
-			server_->StringToCharBuf("", add_p.nickname, sizeof(add_p.nickname));
+			server_->StringToCharBuf(new_session.GetNickname(), add_p.nickname, sizeof(add_p.nickname));
 			session->SendPacket(reinterpret_cast<char*>(&add_p), add_p.header.size);
 		}
 
@@ -165,8 +165,13 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const std:
 			add_p.header.size = static_cast<std::uint16_t>(sizeof(add_p));
 			add_p.header.type = S2C_ADD_PLAYER;
 			add_p.player_id = session->GetSessionKey().player_id;
-			server_->StringToCharBuf("", add_p.nickname, sizeof(add_p.nickname));
+			server_->StringToCharBuf(session->GetNickname(), add_p.nickname, sizeof(add_p.nickname));
 			new_session.SendPacket(reinterpret_cast<char*>(&add_p), add_p.header.size);
+			S2C_READY_PACKET ready_p{};
+			ready_p.header = {sizeof(ready_p), S2C_READY};
+			ready_p.player_id = add_p.player_id;
+			ready_p.is_ready = room_player.GetRoomPlayerState() == RoomPlayerState::READY;
+			new_session.SendPacket(reinterpret_cast<const char*>(&ready_p), sizeof(ready_p));
 		}
 
 		// 새로 입장한 세션에게 방장이 누구인지
@@ -484,6 +489,10 @@ void GameRoom::SendCreateRoom(Session& session)
 		server_->StringToCharBuf(room_password_, private_p.room_password, sizeof(private_p.room_password));
 		session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
 	}
+	S2C_UPDATE_HOST_PACKET host_p{};
+	host_p.header = {sizeof(host_p), S2C_UPDATE_HOST};
+	host_p.new_host_id = host_id_;
+	session.SendPacket(reinterpret_cast<const char*>(&host_p), sizeof(host_p));
 }
 
 void GameRoom::TogglePlayerReady(int player_id)

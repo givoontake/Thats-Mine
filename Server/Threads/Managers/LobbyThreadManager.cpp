@@ -7,6 +7,7 @@
 #include "packet_types.h"
 #include "room_packets.h"
 #include "room_lifecycle_tasks.h"
+#include "database_packets.h"
 
 LobbyThreadManager::LobbyThreadManager(GameServer& game_server)
 	: game_server_(game_server), active_session_keys_(MAX_PLAYER_COUNT), session_index_registry_(MAX_PLAYER_COUNT)
@@ -177,7 +178,7 @@ void LobbyThreadManager::SendLobbyPlayerList(Session& session)
 			if (player->GetSessionKey().player_id == session.GetSessionKey().player_id) continue;
 			if (player->GetModeState() == ModeState::LOBBY) {
 				info_p.player_id = player->GetSessionKey().player_id;
-				game_server_.StringToCharBuf("", info_p.nickname, MAX_ROOM_NAME_SIZE);
+				game_server_.StringToCharBuf(player->GetNickname(), info_p.nickname, sizeof(info_p.nickname));
 			}
 			else continue;
 		}
@@ -197,6 +198,13 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 {
 	if (!packet) return;
 	switch (reinterpret_cast<PACKET_HEADER*>(packet)->type) {
+	case C2S_LOGIN: {
+		if (session.GetModeState() != ModeState::LOGIN) return;
+		const auto* request = reinterpret_cast<const C2S_LOGIN_PACKET*>(packet);
+		DBLoginTask task{session.GetSessionKey(), game_server_.CharBufToString(request->login_id, sizeof(request->login_id)), game_server_.CharBufToString(request->login_password, sizeof(request->login_password))};
+		game_server_.GetThreadManager().GetDBThreadManager().Enqueue(std::move(task));
+		break;
+	}
 	case C2S_MESSAGE: {
 		if (session.GetModeState() != ModeState::LOBBY) return;
 		C2S_MESSAGE_PACKET* recv_p = reinterpret_cast<C2S_MESSAGE_PACKET*>(packet);
@@ -265,7 +273,7 @@ void LobbyThreadManager::ProcessTask(std::unique_ptr<LobbyTask> task)
 		auto* session = game_server_.FindSession(task->session_key);
 		if (!lobby_session || !session || session->GetLifeState() != LifeState::ACTIVE) return;
 		const ModeState mode_state = session->GetModeState();
-		if (mode_state != ModeState::LOBBY) return;
+		if (mode_state != ModeState::LOGIN && mode_state != ModeState::LOBBY) return;
 		if (lobby_session->TryPrepare(task->session_key) && lobby_session->Activate(task->session_key) && !AddActiveSession(task->session_key))
 			lobby_session->Clear(task->session_key);
 		break;

@@ -9,6 +9,7 @@
 #include "packet_types.h"
 #include "room_lifecycle_tasks.h"
 #include "session_tasks.h"
+#include "DBResultHandler.h"
 
 #undef min
 
@@ -128,6 +129,9 @@ SessionTaskProcessResult GameServer::ProcessSessionTask(Session& session, std::u
 		if (packet_type == C2S_REMOVE_PLAYER) return SessionTaskProcessResult::RESTORE_REMAINING;
 		break;
 	}
+	case SessionTaskType::DB_RESULT:
+		DBResultHandler::HandleLogin(*this, session, static_cast<SessionDBResultTask*>(task.get())->result);
+		break;
 	case SessionTaskType::DISCONNECT:
 		if (session.BeginDisconnect(task->session_key))
 			EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::DISCONNECT, task->session_key));
@@ -142,6 +146,7 @@ void GameServer::RoutePacket(char* packet, Session& session)
 	switch (room_snapshot.mode_state) {
 	case ModeState::NONE:
 		return;
+	case ModeState::LOGIN:
 	case ModeState::LOBBY:
 		thread_manager_->GetLobbyThreadManager().ProcessPacket(packet, session);
 		break;
@@ -159,7 +164,6 @@ Session* GameServer::AcquireSession(SOCKET new_socket)
 	for (int i = 0; i < MAX_PLAYER_COUNT; ++i) {
 		if (sessions_[i].InitSession(i, session_id, new_socket, iocp_handle_)) {
 			const SessionKey session_key = sessions_[i].GetSessionKey();
-			active_players_.AddPlayer(session_key);
 			EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::ADD_SESSION, session_key));
 			return &sessions_[i];
 		}

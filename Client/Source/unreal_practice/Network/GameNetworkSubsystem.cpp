@@ -176,3 +176,8 @@ void UGameNetworkSubsystem::ProcessPackets()
 		on_connection_state_changed_.Broadcast(connection_state_, message);
 	}
 }
+
+bool UGameNetworkSubsystem::Reconnect()
+{
+	return Connect(server_address_, server_port_, connect_timeout_seconds_);
+}

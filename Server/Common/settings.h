@@ -16,3 +16,5 @@ constexpr int MAX_ARRAY_SIZE = 127;
 constexpr int ID_SIZE = 16;
 
 constexpr int MAX_PLAYER_NAME_SIZE = 48;
+constexpr int MAX_PLAYER_ID_SIZE = 48;
+constexpr int MAX_PLAYER_PASSWORD_SIZE = 48;

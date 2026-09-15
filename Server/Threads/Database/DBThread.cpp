@@ -9,6 +9,7 @@
 #include <jdbc/cppconn/connection.h>
 #include <jdbc/cppconn/driver.h>
 #include "DBThread.h"
+#include "DBOverlapped.h"
 
 #undef min
 
@@ -31,8 +32,9 @@ DBThread::~DBThread()
 {
 }
 
-void DBThread::Init(sql::mysql::MySQL_Driver* driver)
+void DBThread::Init(HANDLE iocp_handle, sql::mysql::MySQL_Driver* driver)
 {
+	iocp_handle_ = iocp_handle;
 	driver_ = driver;
 }
 
@@ -96,24 +98,80 @@ bool DBThread::LoadDBConfigFromFile(const std::string& file_path)
             connection_info_.schema = val;
     }
 
-    return !connection_info_.host.empty() && connection_info_.port != 0 && !connection_info_.id.empty() && !connection_info_.schema.empty();
+    return true;
 }
 
 // ---- DB 스레드 루프 ----
+bool DBThread::Enqueue(DBLoginTask task)
+{
+	{
+		std::lock_guard<std::mutex> lock(wait_mutex_);
+		if (!is_running_.load()) return false;
+		task_queue_.push(std::move(task));
+	}
+	cv_.notify_one();
+	return true;
+}
+
+DBLoginResult DBThread::ProcessTask(const DBLoginTask&)
+{
+	return {};
+}
+
+void DBThread::PostResult(SessionKey session_key, DBLoginResult result)
+{
+	auto over = std::make_unique<DBOverlapped>();
+	over->ex_over.op_type = OPType::DB;
+	over->ex_over.session_key = session_key;
+	over->result = std::move(result);
+	PostQueuedCompletionStatus(iocp_handle_, 0, DB_SESSION_COMPLETION, reinterpret_cast<WSAOVERLAPPED*>(over.release()));
+}
+
 void DBThread::Run()
 {
-	// 설정 파일이 없으면 DB 접속 없이 종료한다. 게임 서버의 접속 처리는 계속 유지한다.
-	if (!LoadDBConfigFromFile("db_config.txt")) {
-		is_running_.store(false);
+	LoadDBConfigFromFile("db_config.txt");
+	driver_->threadInit();
+	if (!Connect()) {
+		std::cerr << "[DB] Failed to connect to database." << std::endl;
+		{
+			std::lock_guard<std::mutex> lock(wait_mutex_);
+			is_running_.store(false);
+		}
+		while (!task_queue_.empty()) {
+			PostResult(task_queue_.front().session_key, {});
+			task_queue_.pop();
+		}
+		Disconnect();
+		driver_->threadEnd();
 		return;
 	}
-	driver_->threadInit();
-	if (Connect()) {
-		std::unique_lock<std::mutex> lock(wait_mutex_);
-		// 쿼리 기능을 제거했으므로 연결을 유지하며 종료 신호만 기다린다.
-		cv_.wait(lock, [this]() { return !is_running_.load(); });
+	while (is_running_.load()) {
+		DBLoginTask task;
+		{
+			std::unique_lock<std::mutex> lock(wait_mutex_);
+			cv_.wait(lock, [this]() { return !is_running_.load() || !task_queue_.empty(); });
+			if (!is_running_.load()) break;
+			task = std::move(task_queue_.front());
+			task_queue_.pop();
+		}
+		DBLoginResult result;
+		try {
+			result = ProcessTask(task);
+		}
+		catch (const sql::SQLException& e) {
+			PrintErrorLog(__func__, e);
+			Enqueue(std::move(task));
+			continue;
+		}
+		catch (const std::exception& e) {
+			PrintErrorLog(__func__, e);
+		}
+		PostResult(task.session_key, std::move(result));
 	}
-	else is_running_.store(false);
+	{
+		std::lock_guard<std::mutex> lock(wait_mutex_);
+		while (!task_queue_.empty()) task_queue_.pop();
+	}
 	Disconnect();
 	driver_->threadEnd();
 }

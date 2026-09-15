@@ -4,6 +4,7 @@
 #include "common_packets.h"
 #include "packet_types.h"
 #include "session_tasks.h"
+#include "DBOverlapped.h"
 
 IOThread::IOThread(GameServer& game_server)
 	: game_server_(game_server)
@@ -25,6 +26,11 @@ void IOThread::Run()
 			ProcessAcceptCompletion(result, ex_over);
 			break;
 
+		case DB_SESSION_COMPLETION: {
+			std::unique_ptr<DBOverlapped> db_over(reinterpret_cast<DBOverlapped*>(ex_over));
+			game_server_.EnqueueSessionTask(db_over->ex_over.session_key, std::make_unique<SessionDBResultTask>(std::move(db_over->result)));
+			break;
+		}
 		case SESSION_IO_COMPLETION:
 			ProcessSessionCompletion(result, transferred_bytes, ex_over);
 			break;

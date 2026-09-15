@@ -14,6 +14,7 @@ struct SessionKey {
 
 constexpr ULONG_PTR LISTEN_IO_COMPLETION = 1;
 constexpr ULONG_PTR SESSION_IO_COMPLETION = 2;
+constexpr ULONG_PTR DB_SESSION_COMPLETION = 3;
 
 struct ExOverlapped {
 	WSAOVERLAPPED over;

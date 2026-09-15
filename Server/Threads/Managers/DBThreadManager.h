@@ -7,6 +7,7 @@
 #include <vector>
 #include <jdbc/mysql_driver.h>
 #include "DBThread.h"
+#include "LoginDBThread.h"
 
 class GameServer;
 
@@ -20,13 +21,14 @@ public:
 private:
     GameServer& game_server_;
     sql::mysql::MySQL_Driver* driver_ = nullptr;
-    DBThread login_thread_;
+    LoginDBThread login_thread_;
     std::array<DBThread, GAME_THREAD_COUNT> game_threads_;
     std::vector<std::thread> threads_;
 
 public:
     DBThreadManager(GameServer& game_server);
 
+    bool Enqueue(DBLoginTask task);
     void Start();
     void Close();
     void Join();

@@ -25,6 +25,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Network")
 	void Disconnect();
+	bool Reconnect();
 
 	UFUNCTION(BlueprintCallable, Category = "Network")
 	bool SendPacket(uint8 type, const TArray<uint8>& payload);

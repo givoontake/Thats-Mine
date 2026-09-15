@@ -4,6 +4,7 @@
 #include "ExOverlapped.h"
 
 class Session;
+struct DBLoginResult;
 
 class ActivePlayerManager
 {
@@ -11,7 +12,7 @@ class ActivePlayerManager
 	mutable std::mutex active_players_mutex_;
 
 public:
-	bool AddPlayer(SessionKey session_key);
+	bool AddPlayer(Session& session, const DBLoginResult& result);
 	void RemovePlayer(int player_id, SessionKey session_key);
 	SessionKey FindSessionKeyByID(int player_id) const;
 	void Clear();

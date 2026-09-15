@@ -13,6 +13,11 @@ protected:
 	virtual void OnExit() override;
 
 private:
+	void RefreshOnline();
+	UFUNCTION()
+	void HandleReady(bool is_ready);
+	UFUNCTION()
+	void HandleKick(int64 player_key);
 	UFUNCTION()
 	void HandleRoomLeave();
 

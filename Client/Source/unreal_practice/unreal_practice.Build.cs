@@ -22,6 +22,10 @@ public class unreal_practice : ModuleRules
 			"SlateCore"
 		});
 
+		// 서버와 같은 패킷 정의를 사용해 필드 크기와 번호가 달라지는 것을 막는다.
+		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Packets")));
+		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Common")));
+
 		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking" });
 
 		PublicIncludePaths.AddRange(new string[] {

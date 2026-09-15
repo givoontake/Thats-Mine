@@ -3,8 +3,9 @@
 #include <utility>
 #include <vector>
 #include "ExOverlapped.h"
+#include "db_login_result.h"
 
-enum class SessionTaskType { PACKET, DISCONNECT };
+enum class SessionTaskType { PACKET, DISCONNECT, DB_RESULT };
 enum class SessionTaskProcessResult { CONTINUE, RESTORE_REMAINING, DISCARD_REMAINING };
 
 struct SessionTask
@@ -27,4 +28,11 @@ struct SessionPacketTask final : SessionTask
 struct SessionDisconnectTask final : SessionTask
 {
 	SessionDisconnectTask() : SessionTask(SessionTaskType::DISCONNECT) {}
+};
+
+struct SessionDBResultTask final : SessionTask
+{
+	DBLoginResult result;
+	explicit SessionDBResultTask(DBLoginResult result)
+		: SessionTask(SessionTaskType::DB_RESULT), result(std::move(result)) {}
 };

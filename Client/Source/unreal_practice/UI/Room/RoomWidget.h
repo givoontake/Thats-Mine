@@ -12,6 +12,7 @@ class UTextBlock;
 class UUniformGridPanel;
 class URoomMemberWidget;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRoomKickRequested, int64, player_key);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnRoomLeaveRequested);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnRoomStartRequested);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRoomReadyRequested, bool, is_ready);
@@ -22,6 +23,9 @@ class UNREAL_PRACTICE_API URoomWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
+	void SetPending(bool is_pending);
+	void ShowStatus(const FText& message);
+	FOnRoomKickRequested on_kick_requested_;
 	UFUNCTION(BlueprintCallable, Category = "Room")
 	void SetRoom(const FLobbyRoomInfo& room, const TArray<FRoomMemberInfo>& members, int64 local_player_key, bool can_start);
 
@@ -63,6 +67,8 @@ protected:
 	TObjectPtr<UButton> leave_cancel_button_;
 
 private:
+	UFUNCTION()
+	void HandleKick(int64 player_key);
 	UFUNCTION()
 	void HandleAction();
 	UFUNCTION()

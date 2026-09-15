@@ -21,8 +21,8 @@ bool Session::InitSession(int session_index, std::uint64_t session_id, SOCKET ne
 	room_index_ = -1;
 	remaining_data_size_ = 0;
 	session_key_.session_index = session_index;
-	// 로그인 기능을 제거한 현재 단계에서는 연결 슬롯으로 임시 플레이어 번호를 부여한다.
-	session_key_.player_id = session_index + 1;
+	session_key_.player_id = -1;
+	nickname_.clear();
 	session_key_.session_id = session_id;
 	ZeroMemory(&recv_over_.ex_over.over, sizeof(recv_over_.ex_over.over));
 	ZeroMemory(recv_over_.packet_buffer, sizeof(recv_over_.packet_buffer));
@@ -30,7 +30,7 @@ bool Session::InitSession(int session_index, std::uint64_t session_id, SOCKET ne
 	recv_over_.wsabuf.buf = recv_over_.packet_buffer;
 	recv_over_.ex_over.session_key = session_key_;
 	life_state_.store(LifeState::ACTIVE);
-	mode_state_.store(ModeState::LOBBY);
+	mode_state_.store(ModeState::LOGIN);
 	return true;
 }
 
@@ -240,4 +240,20 @@ bool Session::TrySetRoomMode(SessionKey session_key, int new_room_index)
 	room_index_ = new_room_index;
 	mode_state_.store(ModeState::ROOM);
 	return true;
+}
+
+bool Session::ApplyLoginResult(const DBLoginResult& result)
+{
+	std::lock_guard<std::mutex> lock(session_mutex_);
+	if (life_state_.load() != LifeState::ACTIVE || mode_state_.load() != ModeState::LOGIN) return false;
+	session_key_.player_id = result.player_id;
+	nickname_ = result.nickname;
+	mode_state_.store(ModeState::LOBBY);
+	return true;
+}
+
+std::string Session::GetNickname() const
+{
+	std::lock_guard<std::mutex> lock(session_mutex_);
+	return nickname_;
 }

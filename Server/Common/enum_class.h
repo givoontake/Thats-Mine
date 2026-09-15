@@ -2,7 +2,7 @@
 #include "error_code.h"
 #include "info_code.h"
 
-enum class OPType { SEND, POOLED_SEND, RECV, ACCEPT };
+enum class OPType { SEND, POOLED_SEND, RECV, ACCEPT, DB };
 
 
 enum class RoomPlayerState { EMPTY, WAIT, READY, PLAY };
@@ -19,4 +19,4 @@ enum class RoomTaskType { NONE, JOIN, REMOVE_PLAYER, READY, KICK, START };
 
 enum class LifeState { NONE, INITIALIZING, ACTIVE, DISCONNECT_PENDING, DISCONNECTING };
 
-enum class ModeState { NONE, LOBBY, ROOM };
+enum class ModeState { NONE, LOGIN, LOBBY, ROOM };

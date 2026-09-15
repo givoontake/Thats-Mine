@@ -26,6 +26,7 @@ class Session
 	IOOverlapped recv_over_;
 	SendBufferPool send_buffer_pool_;
 	SessionKey session_key_;
+	std::string nickname_;
 	int room_index_ = -1;
 	int remaining_data_size_ = 0;
 	std::atomic<int> io_pending_count_ = 0;
@@ -45,6 +46,8 @@ public:
 	Session();
 
 	bool InitSession(int session_index, std::uint64_t session_id, SOCKET new_socket, HANDLE iocp_handle);
+	bool ApplyLoginResult(const DBLoginResult& result);
+	std::string GetNickname() const;
 	bool SendPacket(const char* packet, int packet_size);
 	bool RecvPacket();
 	bool BeginDisconnect(SessionKey session_key);

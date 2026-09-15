@@ -19,6 +19,7 @@ class UNREAL_PRACTICE_API ULoginWidget : public UUserWidget
 
 public:
 	void ShowStatus(const FText& message);
+	void SetPending(bool is_pending);
 
 	UPROPERTY(BlueprintAssignable, Category = "Login")
 	FOnLoginRequested on_login_requested_;

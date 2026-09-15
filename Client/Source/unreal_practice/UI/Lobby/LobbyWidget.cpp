@@ -372,6 +372,7 @@ void ULobbyWidget::SelectExit()
 
 void ULobbyWidget::QuickJoin()
 {
+	if (on_quick_join_requested_.IsBound()) { on_quick_join_requested_.Broadcast(); return; }
 	for (const FLobbyRoomInfo& room : rooms_)
 	{
 		if (!room.is_private && !room.is_playing && room.player_count < room.max_player_count)
@@ -468,3 +469,13 @@ void ULobbyWidget::ConfirmExit()
 }
 
 #undef LOCTEXT_NAMESPACE
+
+void ULobbyWidget::SetPending(bool is_pending)
+{
+	quick_join_button_->SetIsEnabled(!is_pending);
+	refresh_button_->SetIsEnabled(!is_pending);
+	create_button_->SetIsEnabled(!is_pending);
+	confirm_button_->SetIsEnabled(!is_pending);
+	if (is_pending) join_button_->SetIsEnabled(false);
+	else HandleSelectionChanged(room_list_->GetSelectedItem<UObject>());
+}

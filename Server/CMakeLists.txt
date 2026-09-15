@@ -6,6 +6,7 @@ if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 
 find_package(TBB CONFIG REQUIRED)
+find_package(Botan CONFIG REQUIRED)
 set(MYSQL_CONNECTOR_ROOT "" CACHE PATH "MySQL Connector/C++ installation directory")
 find_path(MYSQL_CONNECTOR_INCLUDE_DIR jdbc/mysql_driver.h HINTS "${MYSQL_CONNECTOR_ROOT}/include" REQUIRED)
 find_library(MYSQL_CONNECTOR_LIBRARY mysqlcppconn HINTS "${MYSQL_CONNECTOR_ROOT}/lib64/vs14" REQUIRED)
@@ -30,6 +31,8 @@ add_executable(GameServer
     Rooms/GameRoomPackets.cpp
     Threads/ServerThread.cpp
     Threads/Database/DBThread.cpp
+    Threads/Database/LoginDBThread.cpp
+    Database/DBResultHandler.cpp
     Threads/Game/GameThread.cpp
     Threads/Game/GamePhaseContext.cpp
     Threads/IO/IOThread.cpp
@@ -42,14 +45,61 @@ add_executable(GameServer
     Threads/Managers/IOThreadManager.cpp
     Threads/Managers/LobbyThreadManager.cpp
     Threads/Managers/TimerThreadManager.cpp
+    Common/ActiveList.h
+    Common/ConcurrentTaskQueue.h
+    Common/enum_class.h
+    Common/error_code.h
+    Common/IndexRegistry.h
+    Common/info_code.h
+    Common/settings.h
+    Common/types.h
+    Core/GameServer.h
+    Database/db_login_result.h
+    Database/db_login_task.h
+    Database/DBOverlapped.h
+    Database/DBResultHandler.h
+    Game/Player.h
+    Lobby/lobby_tasks.h
+    Lobby/LobbySession.h
+    Managers/ActivePlayerManager.h
+    Network/ExOverlapped.h
+    Network/SendBuffer.h
+    Network/session_tasks.h
+    Network/Session.h
+    Packets/common_packets.h
+    Packets/database_packets.h
+    Packets/lobby_packets.h
+    Packets/packet_types.h
+    Packets/room_packets.h
+    Rooms/GameRoom.h
+    Rooms/room_lifecycle_tasks.h
+    Threads/Database/DBThread.h
+    Threads/Database/LoginDBThread.h
+    Threads/Game/game_state.h
+    Threads/Game/GamePhaseContext.h
+    Threads/Game/GameThread.h
+    Threads/IO/IOThread.h
+    Threads/Lobby/lobby_state.h
+    Threads/Lobby/LobbyPhaseContext.h
+    Threads/Lobby/LobbyThread.h
+    Threads/Managers/DBThreadManager.h
+    Threads/Managers/GameThreadManager.h
+    Threads/Managers/IOThreadManager.h
+    Threads/Managers/LobbyThreadManager.h
+    Threads/Managers/ServerThreadManager.h
+    Threads/Managers/TimerThreadManager.h
+    Threads/ServerThread.h
+    Threads/Timer/TimerThread.h
 )
+get_target_property(GAME_SERVER_FILES GameServer SOURCES)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Game Lobby Managers Network Packets Rooms Threads
+    . Common Core Database Game Lobby Managers Network Packets Rooms Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
 )
-target_link_libraries(GameServer PRIVATE TBB::tbb MySQLConnector ws2_32 mswsock bcrypt)
+target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)
 if(MSVC)
     target_compile_options(GameServer PRIVATE /W4 /utf-8 /permissive-)
 endif()

@@ -13,6 +13,9 @@ protected:
 	virtual void OnExit() override;
 
 private:
+	void RefreshOnline();
+	UFUNCTION()
+	void HandleQuickJoin();
 	UFUNCTION()
 	void HandleLobbyRefresh();
 

@@ -34,11 +34,11 @@ void LobbyThread::Run()
 			const SessionKey session_key = session->GetSessionKey();
 			if (!lobby_session.MatchesSessionKey(session_key)) continue;
 			ModeState mode_state = session->GetModeState();
-			if (mode_state != ModeState::LOBBY) continue;
+			if (mode_state != ModeState::LOGIN && mode_state != ModeState::LOBBY) continue;
 			if (!session->TryStartTaskProcessing()) continue;
 
 			mode_state = session->GetModeState();
-			if (lobby_session.GetState() != ActiveEntryState::ACTIVE || !lobby_session.MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::ACTIVE || (mode_state != ModeState::LOBBY)) {
+			if (lobby_session.GetState() != ActiveEntryState::ACTIVE || !lobby_session.MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::ACTIVE || (mode_state != ModeState::LOGIN && mode_state != ModeState::LOBBY)) {
 				session->CompleteTaskProcessing();
 				continue;
 			}
@@ -53,7 +53,7 @@ void LobbyThread::Run()
 				}
 
 				mode_state = session->GetModeState();
-				if (result == SessionTaskProcessResult::RESTORE_REMAINING || lobby_session.GetState() != ActiveEntryState::ACTIVE || !lobby_session.MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::ACTIVE || (mode_state != ModeState::LOBBY)) {
+				if (result == SessionTaskProcessResult::RESTORE_REMAINING || lobby_session.GetState() != ActiveEntryState::ACTIVE || !lobby_session.MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::ACTIVE || (mode_state != ModeState::LOGIN && mode_state != ModeState::LOBBY)) {
 					session->RestoreClaimedTaskCount(task_count - i - 1);
 					break;
 				}

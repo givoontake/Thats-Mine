@@ -8,6 +8,8 @@
 class UBorder;
 class UTextBlock;
 
+DECLARE_DELEGATE_OneParam(FOnMemberKickRequested, int64);
+
 UCLASS(Abstract)
 class UNREAL_PRACTICE_API URoomMemberWidget : public UUserWidget
 {
@@ -15,8 +17,13 @@ class UNREAL_PRACTICE_API URoomMemberWidget : public UUserWidget
 
 public:
 	void SetMember(const FRoomMemberInfo* member, bool is_local);
+	void SetCanKick(bool can_kick);
+	FOnMemberKickRequested on_kick_requested_;
 
 protected:
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& geometry, const FPointerEvent& event) override;
+	int64 player_key_ = 0;
+	bool can_kick_ = false;
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> name_text_;
 	UPROPERTY(meta = (BindWidget))

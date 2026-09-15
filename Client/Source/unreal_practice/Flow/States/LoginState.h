@@ -13,6 +13,7 @@ protected:
 	virtual void OnExit() override;
 
 private:
+	void RefreshOnline();
 	UFUNCTION()
 	void HandleLoginRequested(const FString& user_id, const FString& password);
 
