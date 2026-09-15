@@ -1,6 +1,8 @@
 #include "GameNetworkSubsystem.h"
 
 #include "HAL/PlatformTime.h"
+#include "Engine/GameInstance.h"
+#include "Flow/ClientStateSubsystem.h"
 #include "IPAddress.h"
 #include "Templates/UnrealTemplate.h"
 #include "SocketSubsystem.h"
@@ -14,6 +16,7 @@ UGameNetworkSubsystem::~UGameNetworkSubsystem() = default;
 void UGameNetworkSubsystem::Initialize(FSubsystemCollectionBase& collection)
 {
 	Super::Initialize(collection);
+	collection.InitializeDependency<UClientStateSubsystem>();
 	can_connect_ = true;
 	if (should_connect_on_initialize_)
 	{
@@ -33,7 +36,7 @@ void UGameNetworkSubsystem::Deinitialize()
 bool UGameNetworkSubsystem::Connect(const FString& server_address, int32 server_port, float connect_timeout_seconds)
 {
 	check(IsInGameThread());
-	if (!can_connect_)
+	if (!can_connect_ || GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode())
 	{
 		return false;
 	}
@@ -111,7 +114,7 @@ void UGameNetworkSubsystem::Disconnect()
 bool UGameNetworkSubsystem::SendPacket(uint8 type, const TArray<uint8>& payload)
 {
 	check(IsInGameThread());
-	return worker_ && connection_state_ == ENetworkConnectionState::CONNECTED && worker_->SendPacket(type, payload);
+	return !GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode() && worker_ && connection_state_ == ENetworkConnectionState::CONNECTED && worker_->SendPacket(type, payload);
 }
 
 bool UGameNetworkSubsystem::RegisterPacketHandler(uint8 type, FNetworkPacketHandler handler)
