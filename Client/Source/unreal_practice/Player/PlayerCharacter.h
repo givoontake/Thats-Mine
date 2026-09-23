@@ -25,7 +25,6 @@ class UNREAL_PRACTICE_API APlayerCharacter : public ACharacter
 
 public:
 	APlayerCharacter();
-	virtual void Jump() override;
 	virtual void PawnClientRestart() override;
 	virtual void UnPossessed() override;
 
@@ -40,6 +39,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Actions")
 	void PickUp();
+
+	UFUNCTION(BlueprintCallable, Category = "Player|Actions")
+	void Interact();
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Weapon")
 	void Reload();
@@ -63,6 +65,7 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type end_play_reason) override;
 	virtual void PostInitializeComponents() override;
+	virtual void OnMovementModeChanged(EMovementMode previous_movement_mode, uint8 previous_custom_mode) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* player_input_component) override;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Input")
@@ -73,9 +76,6 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Movement", meta = (ClampMin = "0"))
 	float forward_speed_ = 600.0f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Player|Movement", meta = (ClampMin = "0"))
-	float backward_speed_ = 200.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Weapon")
 	TMap<EWeaponType, FWeaponSettings> weapon_settings_;
@@ -130,9 +130,6 @@ private:
 	int32 active_montage_instance_id_ = INDEX_NONE;
 	bool has_pending_melee_hit_ = false;
 	FMeleeHitSettings active_melee_settings_;
-	bool should_restore_movement_ = false;
-	EMovementMode previous_movement_mode_ = MOVE_Walking;
-	uint8 previous_custom_movement_mode_ = 0;
 
 	void Move(const FInputActionValue& value);
 	void Look(const FInputActionValue& value);

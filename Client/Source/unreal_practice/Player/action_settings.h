@@ -15,7 +15,4 @@ struct FActionSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action", meta = (ClampMin = "0.01"))
 	float play_rate = 1.5f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
-	bool should_disable_movement = false;
 };

@@ -12,11 +12,14 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "InputActionValue.h"
+#include "Interaction/HintBox.h"
 #include "UI/EquipmentWidget.h"
 
 APlayerCharacter::APlayerCharacter()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	GetCharacterMovement()->AirControl = 0.5f;
+	GetCharacterMovement()->AirControlBoostMultiplier = 1.0f;
 
 	equipment_widget_class_ = UEquipmentWidget::StaticClass();
 
@@ -37,7 +40,6 @@ APlayerCharacter::APlayerCharacter()
 	sniper.left_hand_grip_socket = TEXT("LeftHandGrip");
 	weapon_settings_.Add(EWeaponType::SNIPER, sniper);
 
-	pickup_action_.should_disable_movement = true;
 	first_person_camera_reference_.ComponentProperty = TEXT("FirstPersonCamera");
 	third_person_camera_reference_.ComponentProperty = TEXT("ThirdPersonCamera");
 }
@@ -121,19 +123,49 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* player_input_c
 	player_input_component->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &APlayerCharacter::ToggleAim);
 	player_input_component->BindKey(EKeys::R, IE_Pressed, this, &APlayerCharacter::Reload);
 	player_input_component->BindKey(EKeys::E, IE_Pressed, this, &APlayerCharacter::PickUp);
+	player_input_component->BindKey(EKeys::F, IE_Pressed, this, &APlayerCharacter::Interact);
 	player_input_component->BindKey(EKeys::SpaceBar, IE_Pressed, this, &APlayerCharacter::Jump);
 	player_input_component->BindKey(EKeys::SpaceBar, IE_Released, this, &APlayerCharacter::StopJumping);
 }
 
-void APlayerCharacter::Move(const FInputActionValue& value)
+void APlayerCharacter::Interact()
 {
-	if (is_action_locked_)
+	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
+	if (is_action_locked_ || GetCharacterMovement()->IsFalling() || !GetWorld() || !IsValid(camera) || !camera->IsActive())
 	{
 		return;
 	}
+	const FVector start = GetCapsuleComponent()->GetComponentLocation();
+	const FVector view_direction = camera->GetForwardVector();
+	const FVector view_location = camera->GetComponentLocation();
+	FCollisionQueryParams query(SCENE_QUERY_STAT(HintBoxInteraction), false, this);
+	for (const auto& [weapon, mesh] : weapon_meshes_)
+	{
+		if (UPrimitiveComponent* component = Cast<UPrimitiveComponent>(mesh))
+		{
+			query.AddIgnoredComponent(component);
+		}
+	}
+	const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(start - view_location, view_direction));
+	const FVector aim_end = aim_start + view_direction * 10000.0;
+	FHitResult aim_hit;
+	const bool has_aim_hit = GetWorld()->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, ECC_Visibility, query);
+	const FVector direction = ((has_aim_hit ? aim_hit.ImpactPoint : aim_end) - start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
+	FHitResult hit;
+	// 카메라는 목표만 정하고, 실제 거리는 캐릭터 중심에서 최대 1m로 제한한다.
+	if (GetWorld()->LineTraceSingleByChannel(hit, start, start + direction * 100.0, ECC_Visibility, query))
+	{
+		if (AHintBox* box = Cast<AHintBox>(hit.GetActor()))
+		{
+			box->Activate(false);
+		}
+	}
+}
 
+void APlayerCharacter::Move(const FInputActionValue& value)
+{
 	const FVector2D movement = value.Get<FVector2D>();
-	GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? backward_speed_ : forward_speed_;
+	GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? forward_speed_ * 0.5f : forward_speed_;
 	AddMovementInput(GetActorForwardVector(), movement.Y);
 	AddMovementInput(GetActorRightVector(), movement.X);
 }
@@ -145,11 +177,21 @@ void APlayerCharacter::Look(const FInputActionValue& value)
 	AddControllerPitchInput(look.Y);
 }
 
-void APlayerCharacter::Jump()
+void APlayerCharacter::OnMovementModeChanged(EMovementMode previous_movement_mode, uint8 previous_custom_mode)
 {
-	if (!is_action_locked_)
+	Super::OnMovementModeChanged(previous_movement_mode, previous_custom_mode);
+	if (!GetCharacterMovement()->IsFalling() || !is_action_locked_)
 	{
-		Super::Jump();
+		return;
+	}
+
+	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+	FAnimMontageInstance* montage_instance = anim_instance ? anim_instance->GetMontageInstanceForID(active_montage_instance_id_) : nullptr;
+	UAnimMontage* montage = montage_instance ? montage_instance->Montage.Get() : nullptr;
+	FinishAction(action_id_);
+	if (montage)
+	{
+		anim_instance->Montage_Stop(0.1f, montage);
 	}
 }
 
@@ -247,7 +289,7 @@ void APlayerCharacter::PickUp()
 void APlayerCharacter::PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit)
 {
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	if (is_action_locked_ || !action.montage || !anim_instance || action.play_rate <= 0.0f)
+	if (is_action_locked_ || GetCharacterMovement()->IsFalling() || !action.montage || !anim_instance || action.play_rate <= 0.0f)
 	{
 		return;
 	}
@@ -264,15 +306,6 @@ void APlayerCharacter::PlayAction(const FActionSettings& action, const FMeleeHit
 	if (has_pending_melee_hit_)
 	{
 		active_melee_settings_ = *melee_hit;
-	}
-	should_restore_movement_ = action.should_disable_movement;
-	if (should_restore_movement_)
-	{
-		UCharacterMovementComponent* movement = GetCharacterMovement();
-		previous_movement_mode_ = movement->MovementMode;
-		previous_custom_movement_mode_ = movement->CustomMovementMode;
-		movement->StopMovementImmediately();
-		movement->DisableMovement();
 	}
 
 	FOnMontageEnded ended;
@@ -303,16 +336,11 @@ void APlayerCharacter::FinishAction(uint32 action_id)
 	is_action_locked_ = false;
 	has_pending_melee_hit_ = false;
 	active_montage_instance_id_ = INDEX_NONE;
-	if (should_restore_movement_)
-	{
-		GetCharacterMovement()->SetMovementMode(previous_movement_mode_, previous_custom_movement_mode_);
-		should_restore_movement_ = false;
-	}
 }
 
 void APlayerCharacter::ProcessMeleeHit(int32 montage_instance_id)
 {
-	if (!is_action_locked_ || !has_pending_melee_hit_ || montage_instance_id == INDEX_NONE || montage_instance_id != active_montage_instance_id_)
+	if (!is_action_locked_ || GetCharacterMovement()->IsFalling() || !has_pending_melee_hit_ || montage_instance_id == INDEX_NONE || montage_instance_id != active_montage_instance_id_)
 	{
 		return;
 	}
@@ -430,6 +458,13 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	}
 	UpdateEquipmentDisplay();
 	on_shot_fired_.Broadcast(shot);
+	if (shot.has_hit)
+	{
+		if (AHintBox* box = Cast<AHintBox>(shot.hit.GetActor()))
+		{
+			box->Activate(true);
+		}
+	}
 }
 
 void APlayerCharacter::PawnClientRestart()

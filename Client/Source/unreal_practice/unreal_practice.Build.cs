@@ -26,7 +26,7 @@ public class unreal_practice : ModuleRules
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Packets")));
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Common")));
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Niagara" });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"unreal_practice",
