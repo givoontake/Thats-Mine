@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class UUserWidget;
+class UWorldMapWidget;
 
 /**
  *  Simple first person Player Controller
@@ -48,10 +49,23 @@ protected:
 
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type end_play_reason) override;
 
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
 
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Map")
+	TSubclassOf<UWorldMapWidget> map_widget_class_;
+
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<UWorldMapWidget> map_widget_;
+
+	bool was_mouse_cursor_visible_ = false;
+
+	void ToggleMap();
+	void CloseMap();
 };
