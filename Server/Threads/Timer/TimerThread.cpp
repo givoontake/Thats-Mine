@@ -65,7 +65,7 @@ void TimerThread::Run()
 
         // 새 틱이 생겼으니 GameThread들을 깨운다.
         // 사용 가능한 스레드를 확보하고 같은 틱의 처리 정보를 전달한다. 이전 틱의 전체 완료는 기다리지 않는다.
-		manager_.lobby_thread_manager_.StartLobbyPhase();
+		manager_.lobby_thread_manager_.StartLobbyPhase(tick_time_ms);
         manager_.game_thread_manager_.StartGamePhase(tick_time_ms);
     }
 

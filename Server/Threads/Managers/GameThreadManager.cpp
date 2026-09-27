@@ -1,6 +1,5 @@
 #include <WinSock2.h>
 #include <bcrypt.h>
-#include <immintrin.h>
 #include "GameThreadManager.h"
 #include "GameRoom.h"
 #include "GameServer.h"
@@ -11,7 +10,7 @@
 #include "room_packets.h"
 
 GameThreadManager::GameThreadManager(GameServer& game_server, TickWaitPolicy tick_policy)
-    : game_server_(game_server), tick_wait_policy_(tick_policy), active_room_keys_(MAX_ROOM_COUNT), room_index_registry_(MAX_ROOM_COUNT)
+    : game_server_(game_server), tick_wait_policy_(tick_policy), room_index_registry_(MAX_ROOM_COUNT)
 {
 }
 
@@ -75,194 +74,159 @@ void GameThreadManager::Enqueue(std::unique_ptr<RoomLifecycleTask> task)
 	lifecycle_tasks_.Enqueue(std::move(task));
 }
 
-int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, const std::string& room_password, int matching_max_player_count)
+// 로비가 담당자로서 호출한다. 전환 대기로 먼저 바꾼 뒤 방에 입장 요청을 넣는다.
+// 요청을 넣지 못하면(방이 삭제 중) 로비에 실패 결과를 통지해 다른 입장 실패와 같은 경로로 로비 상태를 확정한다.
+// room_password는 패킷의 고정 길이 비밀번호 배열이며, 공개방 입장이면 nullptr이다.
+int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password)
 {
 	auto* session = game_server_.FindSession(session_key);
 	if (!session || session->GetModeState() != ModeState::LOBBY) return ErrorCode::INVALID_REQUEST;
-	auto room = FindRoomByKey(room_key);
+	auto* room = FindRoomByKey(room_key);
 	if (!room) return ErrorCode::ROOM_NOT_FOUND;
-	if (!game_server_.GetThreadManager().GetLobbyThreadManager().BeginRoomTransition(session_key)) return ErrorCode::INVALID_REQUEST;
+	if (!session->TryChangeMode(ModeState::LOBBY, ModeState::ROOM_PENDING)) return ErrorCode::INVALID_REQUEST;
 	RoomTask task;
 	task.task_type = RoomTaskType::JOIN;
 	task.session_key = session_key;
-	task.room_password = room_password;
-	task.matching_max_player_count = matching_max_player_count;
+	task.room_key = room_key;
+	game_server_.CopyCharBuf(task.room_password, sizeof(task.room_password), room_password, MAX_ROOM_PASSWORD_SIZE);
 	if (!room->AddRoomTask(std::move(task))) {
-		auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::ROOM_TRANSITION_RESULT, session_key);
+		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
+		auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, session_key);
 		lobby_task->result = ErrorCode::ROOM_NOT_FOUND;
-		lobby_task->matching_max_player_count = matching_max_player_count;
 		game_server_.EnqueueLobbyTask(std::move(lobby_task));
 	}
 	return SUCCESS;
 }
 
+// 방 생성 요청의 받는 쪽이다. 성공하면 ROOM, 실패하면 로비로 돌려보내며 모든 분기가 결과로 끝난다.
 void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 {
 	if (!task) return;
 	if (task->task_type == RoomLifecycleTaskType::DELETE_ROOM) {
-		DeleteRoom(task->room_index);
+		DeleteRoom(task->room_index, task->room_key);
 		return;
 	}
+	// 한 세션에 걸린 전환 요청은 하나뿐이므로, 전환 대기가 아니면 이 요청의 대상이 아니다.
 	auto* session = game_server_.FindSession(task->session_key);
-	if (!session || session->GetLifeState() != LifeState::ACTIVE) {
-		auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::ROOM_TRANSITION_RESULT, task->session_key);
-		lobby_task->result = ErrorCode::INVALID_REQUEST;
-		game_server_.EnqueueLobbyTask(std::move(lobby_task));
-		return;
-	}
-	while (!session->TryStartTaskProcessing()) {
-		if (!game_server_.IsRunning()) return;
-		_mm_pause();
-	}
-	if (!session->MatchesSessionKey(task->session_key) || session->GetLifeState() != LifeState::ACTIVE || session->GetModeState() != ModeState::LOBBY) {
-		session->CompleteTaskProcessing();
-		auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::ROOM_TRANSITION_RESULT, task->session_key);
-		lobby_task->result = ErrorCode::INVALID_REQUEST;
-		game_server_.EnqueueLobbyTask(std::move(lobby_task));
-		return;
-	}
+	if (!session || session->GetModeState() != ModeState::ROOM_PENDING) return;
 
 	int result = ErrorCode::INVALID_REQUEST;
-	switch (task->task_type) {
-	case RoomLifecycleTaskType::CREATE_PUBLIC:
-		result = CreatePublicRoom(task->packet.data(), *session, task->session_key);
-		break;
-	case RoomLifecycleTaskType::CREATE_PRIVATE:
-		result = CreatePrivateRoom(task->packet.data(), *session, task->session_key);
-		break;
-	default:
-		break;
+	if (session->GetLifeState() == LifeState::ACTIVE) {
+		switch (task->task_type) {
+		case RoomLifecycleTaskType::CREATE_PUBLIC:
+			result = CreatePublicRoom(task->packet.data(), *session, task->session_key);
+			break;
+		case RoomLifecycleTaskType::CREATE_PRIVATE:
+			result = CreatePrivateRoom(task->packet.data(), *session, task->session_key);
+			break;
+		default:
+			break;
+		}
 	}
-	auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::ROOM_TRANSITION_RESULT, task->session_key);
+	if (result == SUCCESS) return;
+
+	session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
+	auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, task->session_key);
 	lobby_task->result = result;
 	game_server_.EnqueueLobbyTask(std::move(lobby_task));
-	if (result == SUCCESS) {
-		const RoomSnapshot room_snapshot = session->GetRoomSnapshot();
-		auto room = game_server_.GetRoomByIndex(room_snapshot.room_index);
-		if (room) room->CompleteRoomInitialization();
+}
+
+// 가장 앞의 빈 방 자리를 차지해 방을 만들고 방장을 추가한 뒤 입장을 확정한다. 실패하면 자리를 되돌린다.
+// 방이 배열 앞쪽부터 채워지므로 순회 경계가 동시에 존재하는 방 수에 가깝게 유지된다.
+int GameThreadManager::PublishRoom(const RoomInitData& data, Session& session, SessionKey session_key)
+{
+	GameRoom* new_room = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(room_index_mutex_);
+		for (int room_index = 0; room_index < MAX_ROOM_COUNT; ++room_index) {
+			auto* room = game_server_.GetRoomByIndex(room_index);
+			if (!room->TryClaim()) continue;
+			new_room = room;
+			break;
+		}
+		if (!new_room) return ErrorCode::SERVER_ERROR;
+
+		const int room_index = new_room->GetRoomIndex();
+		new_room->Initialize(data);
+		if (!room_index_registry_.Register(data.room_key, room_index)) {
+			new_room->Reset();
+			return ErrorCode::SERVER_ERROR;
+		}
+		if (!new_room->AddHostSession(session_key) || !session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) {
+			room_index_registry_.Unregister(data.room_key, room_index);
+			new_room->Reset();
+			return ErrorCode::INVALID_REQUEST;
+		}
+		if (room_index >= room_index_end_.load()) room_index_end_.store(room_index + 1);
 	}
-	session->CompleteTaskProcessing();
+	// 초기화가 끝나기 전까지 방 처리 상태는 FREE이므로 순회 경계 안에 있어도 처리되지 않는다.
+	new_room->SendCreateRoom(session);
+	new_room->CompleteRoomInitialization();
+	// ROOM이 되어 로비 목록에 있으면 안 되므로 목록을 맞춘다.
+	game_server_.SyncLobbyList(session_key.session_index);
+	return SUCCESS;
 }
 
 int GameThreadManager::CreatePublicRoom(char* packet, Session& session, SessionKey session_key)
 {
 	if (!packet) return ErrorCode::INVALID_REQUEST;
 	C2S_ADD_PUBLIC_ROOM_PACKET* public_p = reinterpret_cast<C2S_ADD_PUBLIC_ROOM_PACKET*>(packet);
-	PublicRoomInitData data;
+	RoomInitData data;
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	if (public_p->max_player_count != MAX_ROOM_PLAYER_COUNT) return ErrorCode::INVALID_REQUEST;
-	data.room_name = game_server_.CharBufToString(public_p->room_name, sizeof(public_p->room_name));
-	if (data.room_name.size() < MIN_ROOM_NAME_LENGTH) return ErrorCode::INVALID_REQUEST;
+	game_server_.CopyCharBuf(data.room_name, sizeof(data.room_name), public_p->room_name, sizeof(public_p->room_name));
+	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::INVALID_REQUEST;
 	data.room_key = GenerateRoomKey();
 	if (data.room_key == 0) return ErrorCode::SERVER_ERROR;
 
-	SP<GameRoom> new_room;
-
-	for (int i = 0; i < MAX_ROOM_COUNT; ++i) {
-		if (!game_server_.GetRoomByIndex(i)) {
-			data.room_index = i;
-			{
-				new_room = std::make_shared<GameRoom>(&game_server_, data);
-				if (game_server_.TryAddRoom(i, new_room)) {
-					if (!room_index_registry_.Register(data.room_key, i) || !active_room_keys_.Add(data.room_key)) {
-						room_index_registry_.Unregister(data.room_key, i);
-						game_server_.TryRemoveRoom(i, new_room);
-						return ErrorCode::SERVER_ERROR;
-					}
-					if (!new_room->AddHostSession(session, session_key)) {
-						active_room_keys_.Remove(data.room_key);
-						room_index_registry_.Unregister(data.room_key, i);
-						game_server_.TryRemoveRoom(i, new_room);
-						return ErrorCode::INVALID_REQUEST;
-					}
-					new_room->SendCreateRoom(session);
-					return SUCCESS;
-				}
-			}
-		}
-	}
-
-	return ErrorCode::SERVER_ERROR;
+	return PublishRoom(data, session, session_key);
 }
 
 int GameThreadManager::CreatePrivateRoom(char* packet, Session& session, SessionKey session_key)
 {
 	if (!packet) return ErrorCode::INVALID_REQUEST;
 	C2S_ADD_PRIVATE_ROOM_PACKET* private_p = reinterpret_cast<C2S_ADD_PRIVATE_ROOM_PACKET*>(packet);
-	PrivateRoomInitData data;
+	RoomInitData data;
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	constexpr size_t MIN_ROOM_PASSWORD_LENGTH = 4;
 	if (private_p->max_player_count != MAX_ROOM_PLAYER_COUNT) return ErrorCode::INVALID_REQUEST;
-	data.room_name = game_server_.CharBufToString(private_p->room_name, sizeof(private_p->room_name));
-	data.room_password = game_server_.CharBufToString(private_p->room_password, sizeof(private_p->room_password));
-	if (data.room_name.size() < MIN_ROOM_NAME_LENGTH || data.room_password.size() < MIN_ROOM_PASSWORD_LENGTH) return ErrorCode::INVALID_REQUEST;
+	game_server_.CopyCharBuf(data.room_name, sizeof(data.room_name), private_p->room_name, sizeof(private_p->room_name));
+	game_server_.CopyCharBuf(data.room_password, sizeof(data.room_password), private_p->room_password, sizeof(private_p->room_password));
+	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH || strnlen(data.room_password, sizeof(data.room_password)) < MIN_ROOM_PASSWORD_LENGTH) return ErrorCode::INVALID_REQUEST;
 	data.room_key = GenerateRoomKey();
 	if (data.room_key == 0) return ErrorCode::SERVER_ERROR;
 
-	SP<GameRoom> new_room;
-
-	for (int i = 0; i < MAX_ROOM_COUNT; ++i) {
-		if (!game_server_.GetRoomByIndex(i)) {
-			data.room_index = i;
-			{
-				new_room = std::make_shared<GameRoom>(&game_server_, data);
-				if (game_server_.TryAddRoom(i, new_room)) {
-					if (!room_index_registry_.Register(data.room_key, i) || !active_room_keys_.Add(data.room_key)) {
-						room_index_registry_.Unregister(data.room_key, i);
-						game_server_.TryRemoveRoom(i, new_room);
-						return ErrorCode::SERVER_ERROR;
-					}
-					if (!new_room->AddHostSession(session, session_key)) {
-						active_room_keys_.Remove(data.room_key);
-						room_index_registry_.Unregister(data.room_key, i);
-						game_server_.TryRemoveRoom(i, new_room);
-						return ErrorCode::INVALID_REQUEST;
-					}
-					new_room->SendCreateRoom(session);
-					return SUCCESS;
-				}
-			}
-		}
-	}
-	return ErrorCode::SERVER_ERROR;
+	return PublishRoom(data, session, session_key);
 }
 
-void GameThreadManager::ProcessPacket(char* packet, Session& session)
+// 삭제 대기(DELETE_POST)인 방 자리를 비운다. 다른 방의 위치는 바뀌지 않으며, 마지막 방이 지워지면 뒤쪽의 연속된 빈 자리만큼 순회 경계를 당긴다.
+// 이전 틱이 그 방을 처리하는 중이면 처리권을 얻지 못하므로 삭제 작업을 다시 넣어 다음 생명주기 작업에서 시도한다.
+// 게임 스레드는 DELETE_POST인 방을 새로 처리하지 않으므로, 진행 중이던 처리가 끝나면 다음 시도에서 성공한다.
+void GameThreadManager::DeleteRoom(int room_index, RoomKey room_key)
 {
-	if (!packet) return;
-	const RoomSnapshot room_snapshot = session.GetRoomSnapshot();
-	auto room = game_server_.GetRoomByIndex(room_snapshot.room_index);
-	if (!room) {
-		game_server_.SendError(session, ErrorCode::INVALID_REQUEST);
+	std::lock_guard<std::mutex> lock(room_index_mutex_);
+	auto* room = game_server_.GetRoomByIndex(room_index);
+	if (!room || room->GetRoomKey() != room_key || room->GetRoomState() != RoomState::DELETE_POST) return;
+	if (!room->TryBeginReset()) {
+		Enqueue(std::make_unique<RoomLifecycleTask>(room_index, room_key));
 		return;
 	}
-	room->HandlePacket(packet, session);
-}
-
-void GameThreadManager::DeleteRoom(int room_index)
-{
-	auto room = game_server_.GetRoomByIndex(room_index);
-	if (!room) return;
-	const RoomKey room_key = room->GetRoomKey();
-	active_room_keys_.Remove(room_key);
 	room_index_registry_.Unregister(room_key, room_index);
-	game_server_.TryRemoveRoom(room_index, room);
+	room->Reset();
+
+	int room_index_end = room_index_end_.load();
+	if (room_index != room_index_end - 1) return;
+	while (room_index_end > 0 && game_server_.GetRoomByIndex(room_index_end - 1)->GetRoomState() == RoomState::EMPTY) --room_index_end;
+	room_index_end_.store(room_index_end);
 }
 
-std::shared_ptr<GameRoom> GameThreadManager::FindRoomByKey(RoomKey room_key) const
+GameRoom* GameThreadManager::FindRoomByKey(RoomKey room_key) const
 {
 	const auto room_index = room_index_registry_.Find(room_key);
 	if (!room_index) return nullptr;
-	auto room = game_server_.GetRoomByIndex(*room_index);
+	auto* room = game_server_.GetRoomByIndex(*room_index);
 	if (!room || room->GetRoomKey() != room_key) return nullptr;
 	return room;
-}
-
-SP<GameRoom> GameThreadManager::GetActiveRoom(std::size_t active_room_index) const
-{
-	const auto room_key = active_room_keys_.Get(active_room_index);
-	if (!room_key) return nullptr;
-	return FindRoomByKey(*room_key);
 }
 
 RoomKey GameThreadManager::GenerateRoomKey()

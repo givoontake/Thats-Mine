@@ -43,10 +43,13 @@ void GameThread::Run()
 		while (is_running_.load() && manager_.game_server_.IsRunning() && !current_phase_context->is_lifecycle_complete.load())
 			_mm_pause();
 
+		// 고정 방 배열을 경계까지 순회한다. 빈 번호는 건너뛰고, 처리 상태를 점유한 워커만 방을 처리한다.
         while (true) {
-			const std::size_t active_room_index = current_phase_context->next_active_room_index.fetch_add(1);
-			auto room = manager_.GetActiveRoom(active_room_index);
-			if (!room) break;
+			const int room_index = current_phase_context->next_room_index.fetch_add(1);
+			if (room_index >= manager_.GetRoomIndexEnd()) break;
+			auto* room = manager_.game_server_.GetRoomByIndex(room_index);
+			// 삭제 대기 방은 새로 처리하지 않아, 삭제 쪽이 처리권을 얻어 자리를 비울 수 있게 한다.
+			if (!room || room->GetRoomState() == RoomState::DELETE_POST) continue;
 			RoomProcessState expected_state = RoomProcessState::COMPLETE;
 			if (!room->processing_state_.compare_exchange_strong(expected_state, RoomProcessState::PROCESSING)) continue;
 			room->ProcessRoomTick(current_phase_context->tick_time_ms);

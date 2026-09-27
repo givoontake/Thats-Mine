@@ -14,10 +14,14 @@
 // 비동기 송수신 완료가 세션 슬롯 재사용 이후 도착할 수 있으므로 등록 시 세션 식별자를 오버랩 구조체에 저장하고, 완료 시 현재 식별자와 비교한다.
 // 송수신 등록과 소켓 종료의 경쟁은 소켓 공유 잠금으로 방지한다.
 
-struct RoomSnapshot {
-	ModeState mode_state;
-	int room_index;
+// 연결 상태와 담당 상태를 한 번에 읽고 비교·교체하기 위해 원자 변수 하나에 함께 저장한다.
+struct SessionState
+{
+	LifeState life = LifeState::NONE;
+	ModeState mode = ModeState::NONE;
 };
+static_assert(sizeof(SessionState) == 2);
+static_assert(std::atomic<SessionState>::is_always_lock_free);
 
 class Session
 {
@@ -27,19 +31,20 @@ class Session
 	SendBufferPool send_buffer_pool_;
 	SessionKey session_key_;
 	std::string nickname_;
-	int room_index_ = -1;
 	int remaining_data_size_ = 0;
 	std::atomic<int> io_pending_count_ = 0;
+	// 작업 큐는 세션이 소유하고, 현재 담당자(로비 또는 방)만 소비한다. 전환 대기 중에는 아무도 소비하지 않고 작업을 보존한다.
 	ConcurrentTaskQueue<std::unique_ptr<SessionTask>> session_tasks_;
-	// 로비와 방 단계가 동시에 실행돼도 한 세션의 작업 큐는 한 스레드만 소비하도록 한다.
-	std::atomic<bool> is_processing_tasks_{ false };
 	// 남은 데이터는 recv_over 버퍼에 들어 있으므로 추가로 만들 필요가 없음.
 
 	// 송수신 등록은 공유 잠금으로 병렬 처리하고 closesocket은 단독 잠금으로 막아, 닫힌 소켓 번호가 새 연결에 재사용되는 경쟁을 방지한다.
 	mutable std::shared_mutex socket_mutex_;
+	// 같은 소켓에 여러 스레드가 동시에 WSASend를 호출하지 않도록 송신 등록만 세션 단위로 직렬화한다.
+	// Microsoft 문서는 스트림 소켓에 동시 송신 요청을 보내면 일부 제공자에서 데이터가 섞일 수 있다고 경고한다.
+	// 로비 방송과 담당자의 응답 송신이 같은 세션에 동시에 일어날 수 있어 필요하다.
+	std::mutex send_mutex_;
 	mutable std::mutex session_mutex_;
-	std::atomic<LifeState> life_state_ = LifeState::NONE;
-	std::atomic<ModeState> mode_state_ = ModeState::NONE;
+	std::atomic<SessionState> state_{};
 
 
 public:
@@ -52,29 +57,26 @@ public:
 	bool RecvPacket();
 	bool BeginDisconnect(SessionKey session_key);
 	bool CompleteIO(SessionKey session_key);
-	bool CompleteRoomRemoval(SessionKey session_key);
-	void FinalizeDisconnect(SessionKey session_key);
+	void ReleaseMode();
+	bool TryBeginRelease();
+	void CompleteRelease();
 	bool TryEnqueueTask(SessionKey session_key, std::unique_ptr<SessionTask> task);
 	void DiscardTasks();
 	std::size_t ClaimTaskCount();
 	void RestoreClaimedTaskCount(std::size_t task_count);
 	std::unique_ptr<SessionTask> DequeueTask();
-	bool TryStartTaskProcessing();
-	void CompleteTaskProcessing();
 
 	// 데이터 레이스를 방지하기 위해 세션은 언제든지 수정될 수 있는 데이터에 대해 참조 반환을 하지 않는다
 	//getters
 	IOOverlapped& GetRecvOver() { return recv_over_; }
 	SessionKey GetSessionKey() const;
-	int GetRoomIndex() const;
-	RoomSnapshot GetRoomSnapshot() const;
 	int GetRemainingDataSize() const;
-	LifeState GetLifeState() const { return life_state_.load(); }
-	ModeState GetModeState() const { return mode_state_.load(); }
+	SessionState GetState() const { return state_.load(); }
+	LifeState GetLifeState() const { return state_.load().life; }
+	ModeState GetModeState() const { return state_.load().mode; }
 
 	//setters
 	bool MatchesSessionKey(SessionKey session_key) const;
 	void AdjustRemainingDataSize(int data_size_delta);
-	bool TrySetLobbyMode(SessionKey session_key);
-	bool TrySetRoomMode(SessionKey session_key, int new_room_index);
+	bool TryChangeMode(ModeState expected_mode, ModeState desired_mode);
 };

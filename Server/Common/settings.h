@@ -8,7 +8,7 @@ constexpr int MAX_MESSAGE_SIZE = 512;
 constexpr int SERVER_PORT = 12312;
 
 constexpr int MAX_PLAYER_COUNT = 10000;
-constexpr int MAX_ROOM_COUNT = 5000;
+constexpr int MAX_ROOM_COUNT = 500;
 constexpr int MAX_ROOM_PLAYER_COUNT = 20;
 constexpr int MAX_ROOM_NAME_SIZE = 48; // 16자 * UTF-8 1문자 크기(3)
 constexpr int MAX_ROOM_PASSWORD_SIZE = 48;

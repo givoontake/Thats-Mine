@@ -6,7 +6,10 @@
 #include "db_login_result.h"
 
 enum class SessionTaskType { PACKET, DISCONNECT, DB_RESULT };
-enum class SessionTaskProcessResult { CONTINUE, RESTORE_REMAINING, DISCARD_REMAINING };
+
+// 담당자가 세션 작업을 처리한 뒤의 결과
+// OWNED: 계속 담당 중, HANDED_OVER: 다른 담당자로 넘어감(남은 작업은 보존), CLOSED: 연결이 닫혀 담당자가 정리해야 함
+enum class SessionDrainResult { OWNED, HANDED_OVER, CLOSED };
 
 struct SessionTask
 {

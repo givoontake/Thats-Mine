@@ -27,6 +27,7 @@ GameServer::GameServer()
 	server_addr_.sin_addr.S_un.S_addr = INADDR_ANY;
 
 	accept_over_.SetOperationType(OPType::ACCEPT);
+	for (int room_index = 0; room_index < MAX_ROOM_COUNT; ++room_index) rooms_[room_index].AttachToServer(this, room_index);
 
 }
 
@@ -113,48 +114,59 @@ void GameServer::EnqueueRoomLifecycleTask(std::unique_ptr<RoomLifecycleTask> tas
 	thread_manager_->GetGameThreadManager().Enqueue(std::move(task));
 }
 
-SessionTaskProcessResult GameServer::ProcessSessionTask(Session& session, std::unique_ptr<SessionTask> task)
+// 세션 작업 하나를 처리한다. room이 nullptr이면 로비가, 아니면 해당 방이 담당자로서 처리한다.
+void GameServer::ProcessSessionTask(Session& session, std::unique_ptr<SessionTask> task, GameRoom* room)
 {
-	if (!task || !session.MatchesSessionKey(task->session_key)) return SessionTaskProcessResult::CONTINUE;
+	if (!task || !session.MatchesSessionKey(task->session_key)) return;
 	switch (task->task_type) {
 	case SessionTaskType::PACKET: {
 		auto* packet_task = static_cast<SessionPacketTask*>(task.get());
 		const std::uint8_t packet_type = reinterpret_cast<PACKET_HEADER*>(packet_task->packet.data())->type;
 		if (packet_type == C2S_DISCONNECT) {
-			if (session.BeginDisconnect(task->session_key))
-				EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::DISCONNECT, task->session_key));
-			return SessionTaskProcessResult::DISCARD_REMAINING;
+			session.BeginDisconnect(task->session_key);
+			return;
 		}
-		RoutePacket(packet_task->packet.data(), session);
-		if (packet_type == C2S_REMOVE_PLAYER) return SessionTaskProcessResult::RESTORE_REMAINING;
+		RoutePacket(packet_task->packet.data(), session, room);
 		break;
 	}
 	case SessionTaskType::DB_RESULT:
 		DBResultHandler::HandleLogin(*this, session, static_cast<SessionDBResultTask*>(task.get())->result);
 		break;
 	case SessionTaskType::DISCONNECT:
-		if (session.BeginDisconnect(task->session_key))
-			EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::DISCONNECT, task->session_key));
-		return SessionTaskProcessResult::DISCARD_REMAINING;
+		session.BeginDisconnect(task->session_key);
+		break;
 	}
-	return SessionTaskProcessResult::CONTINUE;
 }
 
-void GameServer::RoutePacket(char* packet, Session& session)
+// 담당자가 세션 작업을 처리한다. 작업마다 처리 후 세션 상태를 기대 상태와 비교해,
+// 연결이 닫혔으면 남은 작업을 버리고, 담당자가 바뀌었으면 남은 작업 개수를 되돌려 다음 담당자가 이어서 처리하게 한다.
+SessionDrainResult GameServer::DrainSessionTasks(Session& session, GameRoom* room)
 {
-	auto room_snapshot = session.GetRoomSnapshot();
-	switch (room_snapshot.mode_state) {
-	case ModeState::NONE:
-		return;
-	case ModeState::LOGIN:
-	case ModeState::LOBBY:
-		thread_manager_->GetLobbyThreadManager().ProcessPacket(packet, session);
-		break;
-	case ModeState::ROOM:
-		thread_manager_->GetGameThreadManager().ProcessPacket(packet, session);
-		break;
-	}
+	const auto is_owned = [room](ModeState mode_state) {
+		if (room) return mode_state == ModeState::ROOM;
+		return mode_state == ModeState::LOGIN || mode_state == ModeState::LOBBY || mode_state == ModeState::MATCHING;
+	};
 
+	const std::size_t task_count = session.ClaimTaskCount();
+	for (std::size_t i = 0; i < task_count; ++i) {
+		ProcessSessionTask(session, session.DequeueTask(), room);
+		const SessionState state = session.GetState();
+		if (state.life != LifeState::ACTIVE) {
+			for (++i; i < task_count; ++i) session.DequeueTask();
+			return SessionDrainResult::CLOSED;
+		}
+		if (!is_owned(state.mode)) {
+			session.RestoreClaimedTaskCount(task_count - i - 1);
+			return SessionDrainResult::HANDED_OVER;
+		}
+	}
+	return SessionDrainResult::OWNED;
+}
+
+void GameServer::RoutePacket(char* packet, Session& session, GameRoom* room)
+{
+	if (room) room->HandlePacket(packet, session);
+	else thread_manager_->GetLobbyThreadManager().ProcessPacket(packet, session);
 }
 
 Session* GameServer::AcquireSession(SOCKET new_socket)
@@ -164,7 +176,7 @@ Session* GameServer::AcquireSession(SOCKET new_socket)
 	for (int i = 0; i < MAX_PLAYER_COUNT; ++i) {
 		if (sessions_[i].InitSession(i, session_id, new_socket, iocp_handle_)) {
 			const SessionKey session_key = sessions_[i].GetSessionKey();
-			EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::ADD_SESSION, session_key));
+			EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::SESSION_ADDED, session_key));
 			return &sessions_[i];
 		}
 	}
@@ -178,6 +190,12 @@ std::uint64_t GameServer::GenerateSessionID()
 		if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&session_id), sizeof(session_id), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) return 0;
 	}
 	return session_id;
+}
+
+// 세션 상태를 바꿔 로비 목록에 있어야 하는지가 달라진 쪽이 호출한다.
+void GameServer::SyncLobbyList(int session_index)
+{
+	thread_manager_->GetLobbyThreadManager().SyncLobbyList(session_index);
 }
 
 Session* GameServer::FindSessionByIndex(int session_index)
@@ -196,24 +214,11 @@ Session* GameServer::FindSession(SessionKey session_key)
 	return session;
 }
 
-SP<GameRoom> GameServer::GetRoomByIndex(int room_index) const
+// 방 자리를 반환한다. 자리가 비었는지, 어떤 방인지는 방 상태와 방 키로 확인한다.
+GameRoom* GameServer::GetRoomByIndex(int room_index)
 {
 	if (room_index < 0 || room_index >= MAX_ROOM_COUNT) return nullptr;
-	return rooms_[room_index].load();
-}
-
-bool GameServer::TryAddRoom(int room_index, const SP<GameRoom>& room)
-{
-	if (room_index < 0 || room_index >= MAX_ROOM_COUNT || !room) return false;
-	SP<GameRoom> expected_room;
-	return std::atomic_compare_exchange_strong(&rooms_[room_index], &expected_room, room);
-}
-
-bool GameServer::TryRemoveRoom(int room_index, const SP<GameRoom>& room)
-{
-	if (room_index < 0 || room_index >= MAX_ROOM_COUNT || !room) return false;
-	SP<GameRoom> expected_room = room;
-	return std::atomic_compare_exchange_strong(&rooms_[room_index], &expected_room, SP<GameRoom>{});
+	return &rooms_[room_index];
 }
 
 void GameServer::RequestDisconnect(SessionKey session_key)
@@ -224,52 +229,25 @@ void GameServer::RequestDisconnect(SessionKey session_key)
 void GameServer::CompleteSessionIO(SessionKey session_key)
 {
 	auto* session = FindSession(session_key);
-	if (session && session->CompleteIO(session_key))
-		EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::DISCONNECT, session_key));
+	if (session && session->CompleteIO(session_key)) TryReleaseSession(*session);
 }
 
-void GameServer::CompleteRoomDisconnect(SessionKey session_key)
+// 연결이 닫힌 세션을 담당자가 자기 목록에서 정리한 뒤 호출한다. 담당 상태를 비우고 슬롯 정리를 시도한다.
+void GameServer::ReleaseOwnership(Session& session)
 {
-	auto* session = FindSession(session_key);
-	if (session && session->CompleteRoomRemoval(session_key))
-		EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::DISCONNECT, session_key));
+	if (session.GetLifeState() != LifeState::CLOSED) return;
+	session.ReleaseMode();
+	TryReleaseSession(session);
 }
 
-bool GameServer::FinalizeDisconnect(SessionKey session_key)
+// 담당자 정리와 마지막 입출력 완료 중 늦게 끝난 쪽이 슬롯을 정리한다.
+void GameServer::TryReleaseSession(Session& session)
 {
-	auto* session = FindSession(session_key);
-	if (!session || session->GetLifeState() != LifeState::DISCONNECTING) return true;
-	if (!session->TryStartTaskProcessing()) return false;
-	if (!session->MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::DISCONNECTING) {
-		session->CompleteTaskProcessing();
-		return true;
-	}
-
-	const SessionKey current_session_key = session->GetSessionKey();
-	const RoomSnapshot room_snapshot = session->GetRoomSnapshot();
-	if (room_snapshot.mode_state == ModeState::ROOM) {
-		auto room = GetRoomByIndex(room_snapshot.room_index);
-		if (room) {
-			RoomTask task;
-			task.task_type = RoomTaskType::REMOVE_PLAYER;
-			task.session_key = current_session_key;
-			const bool is_enqueued = room->AddRoomTask(std::move(task));
-			session->CompleteTaskProcessing();
-			return is_enqueued;
-		}
-		CompleteRoomDisconnect(current_session_key);
-		session->CompleteTaskProcessing();
-		return true;
-	}
-
-	active_players_.RemovePlayer(current_session_key.player_id, current_session_key);
-	auto& lobby_thread_manager = thread_manager_->GetLobbyThreadManager();
-	auto* lobby_session = lobby_thread_manager.GetLobbySession(current_session_key.session_index);
-	if (lobby_session && lobby_session->Clear(current_session_key)) lobby_thread_manager.RemoveActiveSession(current_session_key);
-	session->DiscardTasks();
-	session->CompleteTaskProcessing();
-	session->FinalizeDisconnect(current_session_key);
-	return true;
+	if (!session.TryBeginRelease()) return;
+	const SessionKey session_key = session.GetSessionKey();
+	active_players_.RemovePlayer(session_key.player_id, session_key);
+	session.DiscardTasks();
+	session.CompleteRelease();
 }
 
 void GameServer::StringToCharBuf(const std::string& str, char* buf, int buf_size)
@@ -284,4 +262,13 @@ std::string GameServer::CharBufToString(const char* buf, int buf_size)
 	size_t copy_size = strnlen(buf, static_cast<size_t>(buf_size));
 	std::string str(buf, copy_size);
 	return str;
+}
+
+// 고정 길이 문자 배열을 복사한다. 첫 0 뒤의 값은 버리고 남는 부분을 0으로 채워, 배열 전체 비교가 정확하게 되도록 한다.
+void GameServer::CopyCharBuf(char* dst, int dst_size, const char* src, int src_size)
+{
+	ZeroMemory(dst, dst_size);
+	if (!src) return;
+	const size_t copy_size = std::min(strnlen(src, static_cast<size_t>(src_size)), static_cast<size_t>(dst_size));
+	memcpy(dst, src, copy_size);
 }

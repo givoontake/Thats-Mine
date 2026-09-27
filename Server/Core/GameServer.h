@@ -26,7 +26,8 @@ class GameServer
 	IOOverlapped accept_over_;
 	ActivePlayerManager active_players_;
 	std::array<Session, MAX_PLAYER_COUNT> sessions_;
-	std::array<std::atomic<SP<GameRoom>>, MAX_ROOM_COUNT> rooms_;
+	// 방은 미리 만들어 둔 고정 배열의 자리를 재사용한다. 자리 재사용은 방 키(생성마다 새 난수)로 구분한다.
+	std::array<GameRoom, MAX_ROOM_COUNT> rooms_;
 
 	std::atomic<bool> is_running_ = true;
 	std::unique_ptr<ServerThreadManager> thread_manager_;
@@ -46,26 +47,27 @@ public:
 	ActivePlayerManager& GetActivePlayerManager() { return active_players_; }
 
 	Session* FindSessionByIndex(int session_index);
+	void SyncLobbyList(int session_index);
 	Session* FindSession(SessionKey session_key);
-	SP<GameRoom> GetRoomByIndex(int room_index) const;
-	bool TryAddRoom(int room_index, const SP<GameRoom>& room);
-	bool TryRemoveRoom(int room_index, const SP<GameRoom>& room);
+	GameRoom* GetRoomByIndex(int room_index);
 
 	void RequestDisconnect(SessionKey session_key);
 	void CompleteSessionIO(SessionKey session_key);
-	void CompleteRoomDisconnect(SessionKey session_key);
-	bool FinalizeDisconnect(SessionKey session_key);
+	void ReleaseOwnership(Session& session);
+	void TryReleaseSession(Session& session);
 	void StartServer();
 	void CompleteAccept();
 	void StartThreads();
 	void CloseThreads();
 	void JoinThreads();
-	void RoutePacket(char* packet, Session& session);
-	SessionTaskProcessResult ProcessSessionTask(Session& session, std::unique_ptr<SessionTask> task);
+	void RoutePacket(char* packet, Session& session, GameRoom* room);
+	void ProcessSessionTask(Session& session, std::unique_ptr<SessionTask> task, GameRoom* room);
+	SessionDrainResult DrainSessionTasks(Session& session, GameRoom* room);
 	bool EnqueueSessionTask(SessionKey session_key, std::unique_ptr<SessionTask> task);
 	void EnqueueLobbyTask(std::unique_ptr<LobbyTask> task);
 	void EnqueueRoomLifecycleTask(std::unique_ptr<RoomLifecycleTask> task);
 	void StringToCharBuf(const std::string& str, char* buf, int buf_size);
 	std::string CharBufToString(const char* buf, int buf_size);
+	void CopyCharBuf(char* dst, int dst_size, const char* src, int src_size);
 	void SendError(Session& session, int error_code);
 };

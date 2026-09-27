@@ -1,3 +1,4 @@
+#include <cstring>
 #include <random>
 #include <utility>
 #include "GameRoom.h"
@@ -8,32 +9,70 @@
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
-GameRoom::GameRoom(GameServer* server, PublicRoomInitData data)
-{
-	// 생성이 끝난 방만 방 배열에 게시된다.
-	server_ = server;
-	room_name_ = std::move(data.room_name);
-	room_password_.clear();
-	room_index_ = data.room_index;
-	room_key_ = data.room_key;
-	room_state_.store(RoomState::EMPTY);
-
-	current_player_count_.store(0);
-}
-
-GameRoom::GameRoom(GameServer* server, PrivateRoomInitData data)
-{
-	server_ = server;
-	room_name_ = std::move(data.room_name);
-	room_password_ = std::move(data.room_password);
-	room_index_ = data.room_index;
-	room_key_ = data.room_key;
-	room_state_.store(RoomState::EMPTY);
-	current_player_count_.store(0);
-}
-
 GameRoom::~GameRoom()
 {
+}
+
+// 서버가 방 배열을 만들 때 한 번 호출한다. 방 번호는 배열 위치이므로 바뀌지 않는다.
+void GameRoom::AttachToServer(GameServer* server, int room_index)
+{
+	server_ = server;
+	room_index_ = room_index;
+}
+
+// 빈 자리를 새 방 생성에 차지한다. 방 번호 뮤텍스 안에서 호출된다.
+bool GameRoom::TryClaim()
+{
+	RoomState expected_state = RoomState::EMPTY;
+	return room_state_.compare_exchange_strong(expected_state, RoomState::INITIALIZING);
+}
+
+// 차지한 자리에 새 방 정보를 기록하고, 마지막에 새 방 키를 공개한다.
+void GameRoom::Initialize(const RoomInitData& data)
+{
+	memcpy(room_name_, data.room_name, sizeof(room_name_));
+	memcpy(room_password_, data.room_password, sizeof(room_password_));
+	is_private_.store(room_password_[0] != 0);
+	host_id_ = -1;
+	current_player_count_.store(0);
+	room_key_.store(data.room_key, std::memory_order_release);
+}
+
+// 삭제 대기 중인 방을 초기화하기 위해 처리권을 가져온다. 이전 틱이 처리 중이면 실패하고, 호출한 쪽이 다음에 다시 시도한다.
+bool GameRoom::TryBeginReset()
+{
+	RoomProcessState expected_state = RoomProcessState::COMPLETE;
+	return processing_state_.compare_exchange_strong(expected_state, RoomProcessState::FREE);
+}
+
+// 방 자리를 비운다. 처리 상태가 FREE인 동안(처리 중인 게임 스레드가 없을 때)만 호출한다.
+// 방 키를 먼저 0으로 바꿔, 방 정보를 읽던 쪽이 전후 키 비교로 재사용을 알아채게 한다.
+void GameRoom::Reset()
+{
+	room_key_.store(0, std::memory_order_relaxed);
+	std::atomic_thread_fence(std::memory_order_release);
+	memset(room_name_, 0, sizeof(room_name_));
+	memset(room_password_, 0, sizeof(room_password_));
+	is_private_.store(false);
+	for (auto& room_player : room_players_) room_player.ClearPlayer();
+	host_id_ = -1;
+	current_player_count_.store(0);
+	room_state_.store(RoomState::EMPTY);
+}
+
+// 방 정보를 복사한다. 읽는 도중 방이 초기화·재사용됐으면 방 키가 달라지므로 false를 반환하고, 복사한 값은 버린다.
+bool GameRoom::TryGetRoomInfoSnapshot(RoomInfoSnapshot& snapshot) const
+{
+	const RoomKey room_key = room_key_.load(std::memory_order_acquire);
+	if (room_key == 0) return false;
+	snapshot.room_key = room_key;
+	snapshot.room_state = room_state_.load();
+	snapshot.max_player_count = MAX_ROOM_PLAYER_COUNT;
+	snapshot.current_player_count = static_cast<int>(current_player_count_.load());
+	memcpy(snapshot.room_name, room_name_, sizeof(snapshot.room_name));
+	snapshot.is_private = is_private_.load();
+	std::atomic_thread_fence(std::memory_order_acquire);
+	return room_key_.load(std::memory_order_relaxed) == room_key;
 }
 
 int GameRoom::GetCurrentPlayerCount() const
@@ -41,19 +80,9 @@ int GameRoom::GetCurrentPlayerCount() const
 	return static_cast<int>(current_player_count_.load());
 }
 
-bool GameRoom::InitHostSession(Session& session, SessionKey session_key)
-{
-	auto& room_players = room_players_;
-	if (room_players.empty()) return false;
-	if (room_players[0].HasSession()) return false;
-	if (!room_players[0].InitPlayer(session, session_key, room_index_)) return false;
-	current_player_count_.store(1);
-	return true;
-}
-
 Session* GameRoom::FindSession(const Player& player) const
 {
-	if (!player.IsActive()) return nullptr;
+	if (!player.HasSession()) return nullptr;
 	return server_->FindSession(player.GetSessionKey());
 }
 
@@ -66,142 +95,116 @@ Player* GameRoom::FindPlayer(SessionKey session_key)
 	return nullptr;
 }
 
-SessionKey GameRoom::ClearPlayer(Player& player)
+// 이 방이 담당 중인 플레이어인지 확인한다. 담당 상태가 ROOM이고 이 방 슬롯에 있으면 이 방 소속이다.
+bool GameRoom::IsOwnedPlayer(const Session& session, SessionKey session_key)
 {
-	const SessionKey session_key = player.GetSessionKey();
+	return session.GetModeState() == ModeState::ROOM && FindPlayer(session_key) != nullptr;
+}
+
+// 방이 담당 중인 세션을 로비로 넘긴다. 전환 대기로 먼저 바꾼 뒤 방에서 제거하고, 로비 통지는 마지막에 넣는다.
+void GameRoom::LeaveToLobby(SessionKey session_key, RoomExitType exit_type)
+{
+	if (!FindPlayer(session_key)) return;
 	auto* session = server_->FindSession(session_key);
-	player.ClearPlayer();
-	if (!session) return {};
-	const LifeState life_state = session->GetLifeState();
-	return life_state == LifeState::DISCONNECT_PENDING || life_state == LifeState::DISCONNECTING ? session_key : SessionKey{};
-}
-
-bool GameRoom::RequestLobbyTransition(SessionKey session_key, RoomExitType exit_type)
-{
-	auto* player = FindPlayer(session_key);
-	if (!player || !player->TrySetPending(session_key)) return false;
+	if (!session || !session->TryChangeMode(ModeState::ROOM, ModeState::LOBBY_PENDING)) return;
 	CompletePlayerRemoval(session_key, exit_type);
-	auto task = std::make_unique<LobbyTask>(LobbyTaskType::ENTER_LOBBY, session_key);
-	task->room_index = room_index_;
-	server_->EnqueueLobbyTask(std::move(task));
+	// 방을 떠나 로비 목록에 있어야 하는 상태가 되었으므로 목록을 맞춘다.
+	server_->SyncLobbyList(session_key.session_index);
+	server_->EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, session_key));
+}
+
+bool GameRoom::AddHostSession(SessionKey session_key)
+{
+	auto& room_players = room_players_;
+	if (!room_players[0].InitPlayer(session_key)) return false;
+	current_player_count_.store(1);
+	host_id_ = session_key.player_id;
 	return true;
 }
 
-bool GameRoom::ActivatePlayer(SessionKey session_key)
+// 비밀번호는 남는 부분이 0으로 채워진 고정 길이 배열이므로 배열 전체를 비교한다.
+int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char* room_password)
 {
-	auto* player = FindPlayer(session_key);
-	return player && player->Activate(session_key);
-}
-bool GameRoom::AddHostSession(Session& session, SessionKey session_key)
-{
-	if (!InitHostSession(session, session_key)) return false;
-	host_id_ = session.GetSessionKey().player_id;
-	return true;
-}
-
-int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const std::string& room_password)
-{
-	if (new_session.GetLifeState() != LifeState::ACTIVE || new_session.GetModeState() != ModeState::LOBBY) return ErrorCode::INVALID_REQUEST;
-	if (room_password_ != room_password) return ErrorCode::ROOM_INVALID_PASSWORD;
+	if (new_session.GetLifeState() != LifeState::ACTIVE || new_session.GetModeState() != ModeState::ROOM_PENDING) return ErrorCode::INVALID_REQUEST;
+	if (memcmp(room_password_, room_password, sizeof(room_password_)) != 0) return ErrorCode::ROOM_INVALID_PASSWORD;
 	const RoomState room_state = room_state_.load();
 	if (room_state == RoomState::PLAY) return ErrorCode::ROOM_IN_GAME;
 	if (room_state != RoomState::WAIT) return ErrorCode::ROOM_NOT_FOUND;
 	auto& room_players = room_players_;
 	if (FindPlayer(session_key)) return ErrorCode::INVALID_REQUEST;
-	int result = ErrorCode::ROOM_FULL;
 	int added_slot = -1;
 	for (int i = 0; i < room_players.size(); ++i) {
-		auto& room_player = room_players[i];
-		if (room_player.HasSession()) continue;
-		if (!room_player.InitPlayer(new_session, session_key, room_index_)) return ErrorCode::INVALID_REQUEST;
-		++current_player_count_;
-		result = SUCCESS;
+		if (room_players[i].HasSession()) continue;
 		added_slot = i;
 		break;
 	}
+	if (added_slot < 0) return ErrorCode::ROOM_FULL;
 
-	if (result == SUCCESS) {
-		if (room_password_.empty()) {
-			S2C_ADD_PUBLIC_ROOM_PACKET public_p;
-			public_p.header.size = static_cast<std::uint16_t>(sizeof(public_p));
-			public_p.header.type = S2C_ADD_PUBLIC_ROOM;
-			public_p.room_key = room_key_;
-			public_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
-			server_->StringToCharBuf(room_name_, public_p.room_name, sizeof(public_p.room_name));
-			new_session.SendPacket(reinterpret_cast<char*>(&public_p), public_p.header.size);
-		}
-		else {
-			S2C_ADD_PRIVATE_ROOM_PACKET private_p;
-			private_p.header.size = static_cast<std::uint16_t>(sizeof(private_p));
-			private_p.header.type = S2C_ADD_PRIVATE_ROOM;
-			private_p.room_key = room_key_;
-			private_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
-			server_->StringToCharBuf(room_name_, private_p.room_name, sizeof(private_p.room_name));
-			server_->StringToCharBuf(room_password_, private_p.room_password, sizeof(private_p.room_password));
-			new_session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
-		}
+	// 방이 받는 쪽으로서 입장을 확정한다. 확정된 뒤부터 이 방이 세션 작업을 처리한다.
+	if (!new_session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) return ErrorCode::INVALID_REQUEST;
+	room_players[added_slot].InitPlayer(session_key);
+	++current_player_count_;
 
-		// 본인의 입장을 본인 제외 나머지에게(방 생성 시 본인은 방에 추가된다)
-		for (int i = 0; i < room_players.size(); ++i) {
-			if (i == added_slot) continue;
-			auto& room_player = room_players[i];
-			auto session = FindSession(room_player);
-			if (!session) continue;
-			S2C_ADD_PLAYER_PACKET add_p;
-			add_p.header.size = static_cast<std::uint16_t>(sizeof(add_p));
-			add_p.header.type = S2C_ADD_PLAYER;
-			add_p.player_id = new_session.GetSessionKey().player_id;
-			server_->StringToCharBuf(new_session.GetNickname(), add_p.nickname, sizeof(add_p.nickname));
-			session->SendPacket(reinterpret_cast<char*>(&add_p), add_p.header.size);
-		}
-
-		// 본인 제외 나머지 플레이어를 본인에게
-		for (int i = 0; i < room_players.size(); ++i)	{
-			if (i == added_slot) continue;
-			auto& room_player = room_players[i];
-			auto session = FindSession(room_player);
-			if (!session) continue;
-			S2C_ADD_PLAYER_PACKET add_p;
-			add_p.header.size = static_cast<std::uint16_t>(sizeof(add_p));
-			add_p.header.type = S2C_ADD_PLAYER;
-			add_p.player_id = session->GetSessionKey().player_id;
-			server_->StringToCharBuf(session->GetNickname(), add_p.nickname, sizeof(add_p.nickname));
-			new_session.SendPacket(reinterpret_cast<char*>(&add_p), add_p.header.size);
-			S2C_READY_PACKET ready_p{};
-			ready_p.header = {sizeof(ready_p), S2C_READY};
-			ready_p.player_id = add_p.player_id;
-			ready_p.is_ready = room_player.GetRoomPlayerState() == RoomPlayerState::READY;
-			new_session.SendPacket(reinterpret_cast<const char*>(&ready_p), sizeof(ready_p));
-		}
-
-		// 새로 입장한 세션에게 방장이 누구인지
-		S2C_UPDATE_HOST_PACKET host_p;
-		host_p.header.size = static_cast<std::uint16_t>(sizeof(host_p));
-		host_p.header.type = S2C_UPDATE_HOST;
-		host_p.new_host_id = host_id_;
-		new_session.SendPacket(reinterpret_cast<char*>(&host_p), host_p.header.size);
-		return result;
+	if (!IsPrivate()) {
+		S2C_ADD_PUBLIC_ROOM_PACKET public_p;
+		public_p.header.size = static_cast<std::uint16_t>(sizeof(public_p));
+		public_p.header.type = S2C_ADD_PUBLIC_ROOM;
+		public_p.room_key = GetRoomKey();
+		public_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
+		memcpy(public_p.room_name, room_name_, sizeof(public_p.room_name));
+		new_session.SendPacket(reinterpret_cast<char*>(&public_p), public_p.header.size);
+	}
+	else {
+		S2C_ADD_PRIVATE_ROOM_PACKET private_p;
+		private_p.header.size = static_cast<std::uint16_t>(sizeof(private_p));
+		private_p.header.type = S2C_ADD_PRIVATE_ROOM;
+		private_p.room_key = GetRoomKey();
+		private_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
+		memcpy(private_p.room_name, room_name_, sizeof(private_p.room_name));
+		memcpy(private_p.room_password, room_password_, sizeof(private_p.room_password));
+		new_session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
 	}
 
-	return result;
-}
+	// 본인의 입장을 본인 제외 나머지에게(방 생성 시 본인은 방에 추가된다)
+	for (int i = 0; i < room_players.size(); ++i) {
+		if (i == added_slot) continue;
+		auto& room_player = room_players[i];
+		auto session = FindSession(room_player);
+		if (!session) continue;
+		S2C_ADD_PLAYER_PACKET add_p;
+		add_p.header.size = static_cast<std::uint16_t>(sizeof(add_p));
+		add_p.header.type = S2C_ADD_PLAYER;
+		add_p.player_id = new_session.GetSessionKey().player_id;
+		server_->StringToCharBuf(new_session.GetNickname(), add_p.nickname, sizeof(add_p.nickname));
+		session->SendPacket(reinterpret_cast<char*>(&add_p), add_p.header.size);
+	}
 
-RoomInfoSnapshot GameRoom::GetRoomInfoSnapshot()
-{
-	RoomInfoSnapshot snapshot;
-	snapshot.room_key = room_key_;
-	snapshot.max_player_count = static_cast<int>(MAX_ROOM_PLAYER_COUNT);
-	snapshot.current_player_count = static_cast<int>(current_player_count_.load());
-	snapshot.room_name = room_name_;
-	snapshot.is_private = !room_password_.empty();
-	snapshot.room_state = room_state_.load();
-	return snapshot;
-}
+	// 본인 제외 나머지 플레이어를 본인에게
+	for (int i = 0; i < room_players.size(); ++i)	{
+		if (i == added_slot) continue;
+		auto& room_player = room_players[i];
+		auto session = FindSession(room_player);
+		if (!session) continue;
+		S2C_ADD_PLAYER_PACKET add_p;
+		add_p.header.size = static_cast<std::uint16_t>(sizeof(add_p));
+		add_p.header.type = S2C_ADD_PLAYER;
+		add_p.player_id = session->GetSessionKey().player_id;
+		server_->StringToCharBuf(session->GetNickname(), add_p.nickname, sizeof(add_p.nickname));
+		new_session.SendPacket(reinterpret_cast<char*>(&add_p), add_p.header.size);
+		S2C_READY_PACKET ready_p{};
+		ready_p.header = {sizeof(ready_p), S2C_READY};
+		ready_p.player_id = add_p.player_id;
+		ready_p.is_ready = room_player.GetRoomPlayerState() == RoomPlayerState::READY;
+		new_session.SendPacket(reinterpret_cast<const char*>(&ready_p), sizeof(ready_p));
+	}
 
-bool GameRoom::IsPlayerInRoom(const Session& session) const
-{
-	const RoomSnapshot snapshot = session.GetRoomSnapshot();
-	return snapshot.mode_state == ModeState::ROOM && snapshot.room_index == room_index_;
+	// 새로 입장한 세션에게 방장이 누구인지
+	S2C_UPDATE_HOST_PACKET host_p;
+	host_p.header.size = static_cast<std::uint16_t>(sizeof(host_p));
+	host_p.header.type = S2C_UPDATE_HOST;
+	host_p.new_host_id = host_id_;
+	new_session.SendPacket(reinterpret_cast<char*>(&host_p), host_p.header.size);
+	return SUCCESS;
 }
 
 void GameRoom::HandlePacket(char* packet, Session& request_session)
@@ -211,6 +214,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		RoomTask task;
 		task.task_type = RoomTaskType::READY;
 		task.session_key = request_session.GetSessionKey();
+		task.room_key = GetRoomKey();
 		AddRoomTask(std::move(task));
 		break;
 	}
@@ -220,17 +224,19 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		task.task_type = RoomTaskType::KICK;
 		task.session_key = request_session.GetSessionKey();
 		task.target_player_id = kick_p->kick_player_id;
+		task.room_key = GetRoomKey();
 		AddRoomTask(std::move(task));
 		break;
 	}
 	case C2S_REMOVE_PLAYER: {
-		RequestLobbyTransition(request_session.GetSessionKey());
+		LeaveToLobby(request_session.GetSessionKey(), RoomExitType::LEAVE);
 		break;
 	}
 	case C2S_START: {
 		RoomTask task;
 		task.task_type = RoomTaskType::START;
 		task.session_key = request_session.GetSessionKey();
+		task.room_key = GetRoomKey();
 		AddRoomTask(std::move(task));
 		break;
 	}
@@ -239,121 +245,77 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	}
 }
 
+// 방 키가 다르면 같은 자리에 새로 만들어진 다른 방이므로 받지 않는다.
 bool GameRoom::AddRoomTask(RoomTask task)
 {
 	std::lock_guard<std::mutex> lock(room_mutex_);
 	const RoomState state = room_state_.load();
 	if (state != RoomState::WAIT && state != RoomState::PLAY) return false;
+	if (task.room_key != GetRoomKey()) return false;
 	room_tasks_.Enqueue(std::move(task));
 	return true;
 }
 
+// 이 방이 담당하는 세션의 작업만 처리한다. 연결이 닫힌 세션은 방에서 제거한 뒤 담당을 놓는다.
 void GameRoom::ProcessSessionTasks()
 {
 	auto& room_players = room_players_;
 	for (auto& room_player : room_players) {
-		if (!room_player.IsActive()) continue;
+		if (!room_player.HasSession()) continue;
 		const SessionKey session_key = room_player.GetSessionKey();
 		auto* session = server_->FindSession(session_key);
-		if (!session || session->GetLifeState() != LifeState::ACTIVE) continue;
-		RoomSnapshot room_snapshot = session->GetRoomSnapshot();
-		if (room_snapshot.mode_state != ModeState::ROOM || room_snapshot.room_index != room_index_) continue;
-		if (!session->TryStartTaskProcessing()) continue;
+		if (!session) continue;
+		const SessionState state = session->GetState();
+		if (state.mode != ModeState::ROOM) continue;
 
-		room_snapshot = session->GetRoomSnapshot();
-		if (!room_player.IsActive() || !room_player.MatchesSessionKey(session_key) || !session->MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::ACTIVE || room_snapshot.mode_state != ModeState::ROOM || room_snapshot.room_index != room_index_) {
-			session->CompleteTaskProcessing();
-			continue;
-		}
-
-		const std::size_t task_count = session->ClaimTaskCount();
-		for (std::size_t i = 0; i < task_count; ++i) {
-			const SessionTaskProcessResult result = server_->ProcessSessionTask(*session, session->DequeueTask());
-			if (result == SessionTaskProcessResult::DISCARD_REMAINING) {
-				for (++i; i < task_count; ++i) session->DequeueTask();
-				session->DiscardTasks();
-				break;
-			}
-
-			room_snapshot = session->GetRoomSnapshot();
-			if (result == SessionTaskProcessResult::RESTORE_REMAINING || !room_player.IsActive() || !room_player.MatchesSessionKey(session_key) || session->GetLifeState() != LifeState::ACTIVE || room_snapshot.mode_state != ModeState::ROOM || room_snapshot.room_index != room_index_) {
-				session->RestoreClaimedTaskCount(task_count - i - 1);
-				break;
-			}
-		}
-		session->CompleteTaskProcessing();
+		const SessionDrainResult result = state.life == LifeState::ACTIVE ? server_->DrainSessionTasks(*session, this) : SessionDrainResult::CLOSED;
+		if (result != SessionDrainResult::CLOSED) continue;
+		CompletePlayerRemoval(session_key, RoomExitType::LEAVE);
+		server_->ReleaseOwnership(*session);
 	}
 }
 
-bool GameRoom::TryProcessRoomTask(const RoomTask& task)
+// 받는 쪽으로서 입장 요청을 확정한다. 성공하면 ROOM, 실패하면 돌려보내며 모든 분기가 결과로 끝난다.
+// 빠른 매칭에서 온 요청이 실패하면 매칭 상태로 되돌리고, 매치메이커가 다음 주기에 다시 배정한다.
+void GameRoom::ProcessJoinTask(const RoomTask& task)
 {
-	if (task.task_type == RoomTaskType::JOIN) return TryProcessJoinTask(task);
-
+	// 한 세션에 걸린 전환 요청은 하나뿐이므로, 전환 대기가 아니면 이 요청의 대상이 아니다.
 	auto* session = server_->FindSession(task.session_key);
-	if (!session) {
-		if (task.task_type == RoomTaskType::REMOVE_PLAYER) RemovePlayer(task.session_key);
-		return true;
-	}
-	if (!session->TryStartTaskProcessing()) return false;
-	if (!session->MatchesSessionKey(task.session_key)) {
-		session->CompleteTaskProcessing();
-		return true;
-	}
-	if (task.task_type == RoomTaskType::REMOVE_PLAYER) {
-		RemovePlayer(task.session_key);
-		session->CompleteTaskProcessing();
-		return true;
-	}
-	auto* player = FindPlayer(task.session_key);
-	if (!player || !player->IsActive()) {
-		session->CompleteTaskProcessing();
-		return true;
-	}
-	const RoomSnapshot room_snapshot = session->GetRoomSnapshot();
-	if (session->GetLifeState() != LifeState::ACTIVE || room_snapshot.mode_state != ModeState::ROOM || room_snapshot.room_index != room_index_) {
-		session->CompleteTaskProcessing();
-		return true;
-	}
-	const bool is_processed = ProcessSpecificRoomTask(task);
-	session->CompleteTaskProcessing();
-	return is_processed;
-}
+	if (!session || session->GetModeState() != ModeState::ROOM_PENDING) return;
 
-bool GameRoom::TryProcessJoinTask(const RoomTask& task)
-{
-	int result = ErrorCode::INVALID_REQUEST;
-	auto* session = server_->FindSession(task.session_key);
-	if (session) {
-		if (!session->TryStartTaskProcessing()) return false;
-		if (session->MatchesSessionKey(task.session_key) && session->GetLifeState() == LifeState::ACTIVE && session->GetModeState() == ModeState::LOBBY) {
-			result = AddPlayer(*session, task.session_key, task.room_password);
-			if (result == SUCCESS) ActivatePlayer(task.session_key);
-		}
-		session->CompleteTaskProcessing();
+	// 다른 방으로 재사용되기 전의 입장 요청이면 방을 찾지 못한 것으로 거절한다.
+	const int result = task.room_key == GetRoomKey() ? AddPlayer(*session, task.session_key, task.room_password) : ErrorCode::ROOM_NOT_FOUND;
+	if (result == SUCCESS) {
+		// ROOM이 되어 로비 목록에 있으면 안 되므로 목록을 맞춘다.
+		server_->SyncLobbyList(task.session_key.session_index);
+		return;
 	}
 
-	auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::ROOM_TRANSITION_RESULT, task.session_key);
+	if (task.is_matching) {
+		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::MATCHING);
+		return;
+	}
+	session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
+	auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, task.session_key);
 	lobby_task->result = result;
-	lobby_task->matching_max_player_count = task.matching_max_player_count;
 	server_->EnqueueLobbyTask(std::move(lobby_task));
-	return true;
+}
+
+void GameRoom::ProcessRoomTask(const RoomTask& task)
+{
+	if (task.task_type == RoomTaskType::JOIN) {
+		ProcessJoinTask(task);
+		return;
+	}
+	auto* session = server_->FindSession(task.session_key);
+	if (!session || !IsOwnedPlayer(*session, task.session_key)) return;
+	ProcessSpecificRoomTask(task);
 }
 
 void GameRoom::ProcessRoomTasks()
 {
-	if (pending_room_task_) {
-		if (!TryProcessRoomTask(*pending_room_task_)) return;
-		pending_room_task_.reset();
-	}
-
 	const std::size_t task_count = room_tasks_.ClaimTaskCount();
-	for (std::size_t i = 0; i < task_count; ++i) {
-		RoomTask task = room_tasks_.Dequeue();
-		if (TryProcessRoomTask(task)) continue;
-		pending_room_task_ = std::move(task);
-		room_tasks_.RestoreClaimedTaskCount(task_count - i - 1);
-		return;
-	}
+	for (std::size_t i = 0; i < task_count; ++i) ProcessRoomTask(room_tasks_.Dequeue());
 	TryPostRoomDelete();
 }
 
@@ -365,10 +327,9 @@ void GameRoom::ProcessRoomTick(long long tick_time_ms)
 	if (room_state_.load() == RoomState::PLAY) ProcessGameTick(tick_time_ms);
 }
 
+// 생성이 끝난 방을 대기 상태로 열고, 처리 상태를 FREE에서 COMPLETE로 바꿔 게임 스레드가 처리하기 시작하게 한다.
 void GameRoom::CompleteRoomInitialization()
 {
-	auto& room_players = room_players_;
-	if (!room_players.empty() && room_players[0].HasSession()) room_players[0].Activate(room_players[0].GetSessionKey());
 	StoreRoomState(RoomState::WAIT);
 	processing_state_.store(RoomProcessState::COMPLETE);
 }
@@ -386,7 +347,7 @@ void GameRoom::TryPostRoomDelete()
 		if (room_state_.load() != RoomState::WAITING_DELETE || room_tasks_.GetTaskCount() != 0) return;
 		StoreRoomState(RoomState::DELETE_POST);
 	}
-	server_->EnqueueRoomLifecycleTask(std::make_unique<RoomLifecycleTask>(room_index_));
+	server_->EnqueueRoomLifecycleTask(std::make_unique<RoomLifecycleTask>(room_index_, GetRoomKey()));
 }
 
 void GameRoom::ClearGame()
@@ -400,19 +361,15 @@ void GameRoom::ClearGame()
 	}
 }
 
+// 방에 남은 플레이어를 모두 로비로 돌려보낸다.
 void GameRoom::ClearRoom()
 {
 	auto& room_players = room_players_;
-	std::vector<SessionKey> disconnected_session_keys(room_players.size());
-	int disconnected_session_count = 0;
 	for (auto& room_player : room_players) {
-		const SessionKey session_key = ClearPlayer(room_player);
-		if (session_key.session_index >= 0) disconnected_session_keys[disconnected_session_count++] = session_key;
+		if (room_player.HasSession()) LeaveToLobby(room_player.GetSessionKey(), RoomExitType::LEAVE);
 	}
 	current_player_count_.store(0);
 	StoreRoomState(RoomState::EMPTY);
-	for (int i = 0; i < disconnected_session_count; ++i)
-		server_->CompleteRoomDisconnect(disconnected_session_keys[i]);
 }
 
 void GameRoom::StoreRoomState(RoomState new_state)
@@ -426,67 +383,54 @@ bool GameRoom::TryChangeRoomState(RoomState expected, RoomState desired)
 }
 
 
-void GameRoom::RemovePlayer(SessionKey session_key)
-{
-	auto* session = server_->FindSession(session_key);
-	if (session && session->GetLifeState() == LifeState::ACTIVE) {
-		RequestLobbyTransition(session_key);
-		return;
-	}
-	CompletePlayerRemoval(session_key, RoomExitType::LEAVE);
-}
-
+// 슬롯을 먼저 비운 뒤 남은 플레이어에게 퇴장을 알린다. 퇴장자는 로비 복귀 시 로비가 별도로 알린다.
 void GameRoom::CompletePlayerRemoval(SessionKey session_key, RoomExitType exit_type)
 {
-	auto& room_players = room_players_;
-	for (auto& room_player : room_players) {
-		if (room_player.MatchesSessionKey(session_key)) { // 삭제할 세션 검색
-			const int player_id = room_player.GetSessionKey().player_id;
-			if (current_player_count_.load() == 1) BeginRoomDelete();
-			S2C_REMOVE_PLAYER_PACKET p;
-			p.header.size = static_cast<std::uint16_t>(sizeof(p));
-			p.header.type = S2C_REMOVE_PLAYER;
-			p.player_id = player_id;
-
-			Broadcast(reinterpret_cast<char*>(&p));
-			if (exit_type == RoomExitType::KICK) {
-				auto* session = server_->FindSession(session_key);
-				if (session) {
-					S2C_INFO_PACKET info_p;
-					info_p.header.size = static_cast<std::uint16_t>(sizeof(info_p));
-					info_p.header.type = S2C_INFO;
-					info_p.info_code = InfoCode::KICKED;
-					session->SendPacket(reinterpret_cast<char*>(&info_p), info_p.header.size);
-				}
-			}
-			const SessionKey disconnected_session_key = ClearPlayer(room_player);
-			--current_player_count_;
-			if (player_id == host_id_) FindNewHost(); // 여기서 찾기 및 못찾을 경우 삭제까지 같이 함
-			if (disconnected_session_key.session_index >= 0) server_->CompleteRoomDisconnect(disconnected_session_key);
-			break;
+	auto* room_player = FindPlayer(session_key);
+	if (!room_player) return;
+	const int player_id = room_player->GetSessionKey().player_id;
+	if (current_player_count_.load() == 1) BeginRoomDelete();
+	if (exit_type == RoomExitType::KICK) {
+		auto* session = server_->FindSession(session_key);
+		if (session) {
+			S2C_INFO_PACKET info_p;
+			info_p.header.size = static_cast<std::uint16_t>(sizeof(info_p));
+			info_p.header.type = S2C_INFO;
+			info_p.info_code = InfoCode::KICKED;
+			session->SendPacket(reinterpret_cast<char*>(&info_p), info_p.header.size);
 		}
 	}
+	room_player->ClearPlayer();
+	--current_player_count_;
+
+	S2C_REMOVE_PLAYER_PACKET p;
+	p.header.size = static_cast<std::uint16_t>(sizeof(p));
+	p.header.type = S2C_REMOVE_PLAYER;
+	p.player_id = player_id;
+	Broadcast(reinterpret_cast<char*>(&p));
+
+	if (player_id == host_id_) FindNewHost(); // 여기서 찾기 및 못찾을 경우 삭제까지 같이 함
 }
 
 void GameRoom::SendCreateRoom(Session& session)
 {
-	if (room_password_.empty()) {
+	if (!IsPrivate()) {
 		S2C_ADD_PUBLIC_ROOM_PACKET public_p;
 		public_p.header.size = static_cast<std::uint16_t>(sizeof(public_p));
 		public_p.header.type = S2C_ADD_PUBLIC_ROOM;
-		public_p.room_key = room_key_;
+		public_p.room_key = GetRoomKey();
 		public_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
-		server_->StringToCharBuf(room_name_, public_p.room_name, sizeof(public_p.room_name));
+		memcpy(public_p.room_name, room_name_, sizeof(public_p.room_name));
 		session.SendPacket(reinterpret_cast<char*>(&public_p), public_p.header.size);
 	}
 	else {
 		S2C_ADD_PRIVATE_ROOM_PACKET private_p;
 		private_p.header.size = static_cast<std::uint16_t>(sizeof(private_p));
 		private_p.header.type = S2C_ADD_PRIVATE_ROOM;
-		private_p.room_key = room_key_;
+		private_p.room_key = GetRoomKey();
 		private_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
-		server_->StringToCharBuf(room_name_, private_p.room_name, sizeof(private_p.room_name));
-		server_->StringToCharBuf(room_password_, private_p.room_password, sizeof(private_p.room_password));
+		memcpy(private_p.room_name, room_name_, sizeof(private_p.room_name));
+		memcpy(private_p.room_password, room_password_, sizeof(private_p.room_password));
 		session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
 	}
 	S2C_UPDATE_HOST_PACKET host_p{};
@@ -524,27 +468,17 @@ void GameRoom::TogglePlayerReady(int player_id)
 	}
 }
 
-bool GameRoom::KickPlayer(int requester_id, int kick_player_id)
+void GameRoom::KickPlayer(int requester_id, int kick_player_id)
 {
-	if (requester_id != host_id_) return true;
-	if (kick_player_id == host_id_) return true;
+	if (requester_id != host_id_) return;
+	if (kick_player_id == host_id_) return;
 	auto& room_players = room_players_;
 
 	for (auto& room_player : room_players) {
-		if (room_player.GetSessionKey().player_id != kick_player_id) continue;
-		auto session = FindSession(room_player);
-		if (!session) continue;
-		if (!session->TryStartTaskProcessing()) return false;
-		if (!session->MatchesSessionKey(room_player.GetSessionKey()) || !IsPlayerInRoom(*session)) {
-			session->CompleteTaskProcessing();
-			return true;
-		}
-
-		RequestLobbyTransition(room_player.GetSessionKey(), RoomExitType::KICK);
-		session->CompleteTaskProcessing();
-		return true;
+		if (!room_player.HasSession() || room_player.GetSessionKey().player_id != kick_player_id) continue;
+		LeaveToLobby(room_player.GetSessionKey(), RoomExitType::KICK);
+		return;
 	}
-	return true;
 }
 
 void GameRoom::StartGame(int requester_id)
@@ -599,24 +533,22 @@ void GameRoom::StartGame(int requester_id)
 	}
 }
 
-bool GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
+void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
 {
-	auto session = server_->FindSession(task.session_key);
-	if (!session) return true;
+	const int requester_id = task.session_key.player_id;
 	switch (task.task_type) {
 	case RoomTaskType::READY:
-		if (IsPlayerInRoom(*session)) TogglePlayerReady(session->GetSessionKey().player_id);
+		TogglePlayerReady(requester_id);
 		break;
 	case RoomTaskType::KICK:
-		if (IsPlayerInRoom(*session)) return KickPlayer(session->GetSessionKey().player_id, task.target_player_id);
+		KickPlayer(requester_id, task.target_player_id);
 		break;
 	case RoomTaskType::START:
-		if (IsPlayerInRoom(*session)) StartGame(session->GetSessionKey().player_id);
+		StartGame(requester_id);
 		break;
 	default:
 		break;
 	}
-	return true;
 }
 
 void GameRoom::ProcessGameTick(long long)
@@ -627,7 +559,7 @@ void GameRoom::FindNewHost()
 {
 	bool has_found_host = false;
 	auto& room_players = room_players_;
-	
+
 	if (GetCurrentPlayerCount() != 0) {
 		for (auto& room_player : room_players) {
 			auto session = FindSession(room_player);

@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <condition_variable>
 #include <memory>
@@ -8,13 +9,15 @@
 #include <vector>
 #include "ActiveList.h"
 #include "ConcurrentTaskQueue.h"
-#include "IndexRegistry.h"
-#include "Lobby/LobbySession.h"
+#include "ExOverlapped.h"
 #include "LobbyThread.h"
+#include "Matchmaker.h"
 #include "lobby_tasks.h"
+#include "settings.h"
 
 class GameServer;
 class Session;
+struct SessionState;
 
 class LobbyThreadManager
 {
@@ -26,31 +29,32 @@ private:
 	std::mutex lobby_mutex_;
 	std::condition_variable lobby_cv_;
 	ConcurrentTaskQueue<std::unique_ptr<LobbyTask>> lifecycle_tasks_;
-	std::array<LobbySession, MAX_PLAYER_COUNT> lobby_sessions_;
-	ActiveList<std::uint64_t> active_session_keys_; // 활성 로비 세션만 순회하여 로비 처리 비용을 줄인다.
-	IndexRegistry<std::uint64_t> session_index_registry_; // session_key의 session_id로 고정 세션 배열의 session_index를 빠르게 찾는다.
+	// 로비 목록: 로비가 순회할 세션(방에 있지 않은 활성 세션)의 세션 번호를 담는다. 실제 처리 여부는 세션 담당 상태로 판단한다.
+	ActiveList<MAX_PLAYER_COUNT> lobby_list_;
+	// 빠른 매칭 담당. 로비 단계 안의 매칭 단계에서 한 스레드가 실행한다.
+	Matchmaker matchmaker_;
+	// 현재 로비 단계의 틱 시각. 로비 단계를 시작할 때 기록하고, 매칭 등록 시각 등에 같은 값을 쓴다.
+	std::atomic<long long> tick_time_ms_{ 0 };
 	std::vector<std::unique_ptr<LobbyThread>> thread_objects_;
 	std::vector<std::thread> threads_;
 
 	friend class LobbyThread;
 
 	void ProcessTask(std::unique_ptr<LobbyTask> task);
-	void FindMatch(SessionKey session_key, int max_player_count);
+	static bool ShouldBeListed(const SessionState& state);
+	static bool IsInLobby(ModeState mode_state);
+	Session* FindLobbySession(int lobby_index);
 	void BroadcastToLobby(char* packet);
 	void SendRoomList(Session& session);
 	void SendLobbyPlayerList(Session& session);
-	bool AddActiveSession(SessionKey session_key);
-	Session* GetActiveSession(std::size_t active_session_index);
 
 public:
 	explicit LobbyThreadManager(GameServer& game_server);
 
 	void Start();
-	void StartLobbyPhase();
+	void StartLobbyPhase(long long tick_time_ms);
 	void Enqueue(std::unique_ptr<LobbyTask> task);
-	LobbySession* GetLobbySession(int session_index);
-	void RemoveActiveSession(SessionKey session_key);
-	bool BeginRoomTransition(SessionKey session_key);
+	void SyncLobbyList(int session_index);
 	void ProcessPacket(char* packet, Session& session);
 	void Close();
 	void Join();

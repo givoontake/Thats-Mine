@@ -1,5 +1,5 @@
+#include <cstring>
 #include "Player.h"
-#include "Session.h"
 
 Player::Player()
 {
@@ -11,42 +11,14 @@ Player::~Player()
 
 }
 
-bool Player::InitPlayer(Session& session, SessionKey session_key, int room_index)
+bool Player::InitPlayer(SessionKey session_key)
 {
-	if (session.GetLifeState() != LifeState::ACTIVE) return false;
-	if (!session.MatchesSessionKey(session_key)) return false;
-	ActiveEntryState expected_state = ActiveEntryState::EMPTY;
-	if (!active_state_.compare_exchange_strong(expected_state, ActiveEntryState::PENDING)) return false;
+	if (HasSession() || session_key.session_id == 0) return false;
 	session_key_ = session_key;
-	const RoomSnapshot room_snapshot = session.GetRoomSnapshot();
-	if (room_snapshot.mode_state == ModeState::LOBBY) {
-		if (!session.TrySetRoomMode(session_key, room_index)) {
-			ClearPlayer();
-			return false;
-		}
-	}
-	else if (room_snapshot.mode_state != ModeState::ROOM || room_snapshot.room_index != room_index) {
-		ClearPlayer();
-		return false;
-	}
 	room_player_state_.store(RoomPlayerState::WAIT);
 
 	ClearSendBuffer();
 	return true;
-}
-
-bool Player::Activate(SessionKey session_key)
-{
-	if (!MatchesSessionKey(session_key)) return false;
-	ActiveEntryState expected_state = ActiveEntryState::PENDING;
-	return active_state_.compare_exchange_strong(expected_state, ActiveEntryState::ACTIVE);
-}
-
-bool Player::TrySetPending(SessionKey session_key)
-{
-	if (!MatchesSessionKey(session_key)) return false;
-	ActiveEntryState expected_state = ActiveEntryState::ACTIVE;
-	return active_state_.compare_exchange_strong(expected_state, ActiveEntryState::PENDING);
 }
 
 bool Player::MatchesSessionKey(SessionKey session_key) const
@@ -63,7 +35,6 @@ void Player::ClearPlayer()
 	room_player_state_.store(RoomPlayerState::WAIT);
 
 	ClearSendBuffer();
-	active_state_.store(ActiveEntryState::EMPTY);
 }
 
 void Player::ResetGameData()
