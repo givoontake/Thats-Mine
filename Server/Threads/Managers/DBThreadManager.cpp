@@ -12,6 +12,7 @@ DBThreadManager::DBThreadManager(GameServer& game_server)
 void DBThreadManager::Start()
 {
     login_thread_.Init(game_server_.GetIOCPHandle(), driver_);
+    login_thread_.SetGameServer(game_server_);
     for (auto& db_thread : game_threads_)
         db_thread.Init(game_server_.GetIOCPHandle(), driver_);
 

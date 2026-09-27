@@ -11,10 +11,9 @@
 #include "packet_types.h"
 #include "room_packets.h"
 #include "room_lifecycle_tasks.h"
-#include "database_packets.h"
 
 LobbyThreadManager::LobbyThreadManager(GameServer& game_server)
-	: game_server_(game_server), matchmaker_(game_server)
+	: game_server_(game_server), login_manager_(game_server), matchmaker_(game_server)
 {
 }
 
@@ -54,10 +53,11 @@ void LobbyThreadManager::Enqueue(std::unique_ptr<LobbyTask> task)
 	lifecycle_tasks_.Enqueue(std::move(task));
 }
 
-// 로비 목록에 있어야 하는 세션이다. 방에 있지 않은 활성 세션이면 전환 대기 중이어도 포함한다.
+// 로비 목록에 있어야 하는 세션이다. 로그인했고 방에 있지 않은 활성 세션이면 전환 대기 중이어도 포함한다.
+// 로그인 전 세션은 로그인 목록에 따로 있으므로 로비 방송을 받지 않는다.
 bool LobbyThreadManager::ShouldBeListed(const SessionState& state)
 {
-	return state.life == LifeState::ACTIVE && state.mode != ModeState::NONE && state.mode != ModeState::ROOM;
+	return state.life == LifeState::ACTIVE && state.mode != ModeState::NONE && state.mode != ModeState::ROOM && !LoginManager::IsLoginMode(state.mode);
 }
 
 // 세션의 로비 목록 등록 여부를 현재 세션 상태에 맞춘다. 어느 스레드에서 호출해도 된다.
@@ -164,14 +164,12 @@ void LobbyThreadManager::SendLobbyPlayerList(Session& session)
 void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 {
 	if (!packet) return;
-	switch (reinterpret_cast<PACKET_HEADER*>(packet)->type) {
-	case C2S_LOGIN: {
-		if (session.GetModeState() != ModeState::LOGIN) return;
-		const auto* request = reinterpret_cast<const C2S_LOGIN_PACKET*>(packet);
-		DBLoginTask task{session.GetSessionKey(), CharBufToString(request->login_id, sizeof(request->login_id)), CharBufToString(request->login_password, sizeof(request->login_password))};
-		game_server_.GetThreadManager().GetDBThreadManager().Enqueue(std::move(task));
-		break;
+	// 로그인 전 세션의 패킷은 로그인 처리로만 보낸다. 아래의 로비 처리는 로그인한 세션만 받는다.
+	if (LoginManager::IsLoginMode(session.GetModeState())) {
+		login_manager_.ProcessPacket(packet, session);
+		return;
 	}
+	switch (reinterpret_cast<PACKET_HEADER*>(packet)->type) {
 	case C2S_MESSAGE: {
 		if (!IsInLobby(session.GetModeState())) return;
 		C2S_MESSAGE_PACKET* recv_p = reinterpret_cast<C2S_MESSAGE_PACKET*>(packet);
@@ -247,7 +245,10 @@ void LobbyThreadManager::ProcessTask(std::unique_ptr<LobbyTask> task)
 	if (!task) return;
 	switch (task->task_type) {
 	case LobbyTaskType::SESSION_ADDED:
-		SyncLobbyList(task->session_key.session_index);
+		login_manager_.AddSession(task->session_key);
+		break;
+	case LobbyTaskType::LOGIN_RESULT:
+		login_manager_.ApplyLoginResult(task->session_key, task->login_result);
 		break;
 	case LobbyTaskType::RETURN_TO_LOBBY: {
 		// 로비가 받는 쪽으로서 로비 복귀를 확정한다. 실패 조건 없이 LOBBY로 바꾼다.

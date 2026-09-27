@@ -117,7 +117,7 @@ DBLoginResult DBThread::ProcessTask(const DBLoginTask&)
 	return {};
 }
 
-void DBThread::PostResult(SessionKey session_key, DBLoginResult result)
+void DBThread::HandleResult(SessionKey session_key, DBLoginResult result)
 {
 	auto over = std::make_unique<DBOverlapped>();
 	over->ex_over.op_type = OPType::DB;
@@ -137,7 +137,7 @@ void DBThread::Run()
 			is_running_.store(false);
 		}
 		while (!task_queue_.empty()) {
-			PostResult(task_queue_.front().session_key, {});
+			HandleResult(task_queue_.front().session_key, {});
 			task_queue_.pop();
 		}
 		Disconnect();
@@ -165,7 +165,7 @@ void DBThread::Run()
 		catch (const std::exception& e) {
 			PrintErrorLog(__func__, e);
 		}
-		PostResult(task.session_key, std::move(result));
+		HandleResult(task.session_key, std::move(result));
 	}
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex_);

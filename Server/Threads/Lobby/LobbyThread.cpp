@@ -29,14 +29,31 @@ void LobbyThread::Run()
 		while (is_running_.load() && manager_.game_server_.IsRunning() && !current_phase_context->is_matching_complete.load())
 			_mm_pause();
 
-		// 로비 목록을 경계까지 순회한다. 목록에는 전환 대기 중인 세션도 있으므로, 로비가 담당하는 상태(LOGIN, LOBBY, MATCHING)인 세션만 처리한다.
+		// 로그인 목록을 경계까지 순회한다. 로그인 전 세션(LOGIN, AUTHENTICATING)만 처리한다.
+		auto& login_manager = manager_.login_manager_;
+		while (is_running_.load() && manager_.game_server_.IsRunning()) {
+			const int login_index = current_phase_context->next_login_index.fetch_add(1);
+			if (login_index >= login_manager.GetLoginListEnd()) break;
+			auto* session = login_manager.FindLoginSession(login_index);
+			if (!session) continue;
+			const SessionState state = session->GetState();
+			if (!LoginManager::IsLoginMode(state.mode)) continue;
+
+			const SessionDrainResult result = state.life == LifeState::ACTIVE ? manager_.game_server_.DrainSessionTasks(*session, nullptr) : SessionDrainResult::CLOSED;
+			if (result != SessionDrainResult::CLOSED) continue;
+			// 연결이 닫힌 세션은 로그인 목록에서 뺀 뒤 세션 정리를 시도한다.
+			login_manager.SyncLoginList(session->GetSessionKey().session_index);
+			manager_.game_server_.GetSessionManager().ReleaseOwnership(*session);
+		}
+
+		// 로비 목록을 경계까지 순회한다. 목록에는 전환 대기 중인 세션도 있으므로, 로비가 담당하는 상태(LOBBY, MATCHING)인 세션만 처리한다.
 		while (is_running_.load() && manager_.game_server_.IsRunning()) {
 			const int lobby_index = current_phase_context->next_lobby_index.fetch_add(1);
 			if (lobby_index >= manager_.lobby_list_.GetEnd()) break;
 			auto* session = manager_.FindLobbySession(lobby_index);
 			if (!session) continue;
 			const SessionState state = session->GetState();
-			if (state.mode != ModeState::LOGIN && state.mode != ModeState::LOBBY && state.mode != ModeState::MATCHING) continue;
+			if (state.mode != ModeState::LOBBY && state.mode != ModeState::MATCHING) continue;
 
 			const SessionDrainResult result = state.life == LifeState::ACTIVE ? manager_.game_server_.DrainSessionTasks(*session, nullptr) : SessionDrainResult::CLOSED;
 			if (result != SessionDrainResult::CLOSED) continue;

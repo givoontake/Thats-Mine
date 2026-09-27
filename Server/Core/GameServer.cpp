@@ -132,7 +132,7 @@ SessionDrainResult GameServer::DrainSessionTasks(Session& session, GameRoom* roo
 {
 	const auto is_owned = [room](ModeState mode_state) {
 		if (room) return mode_state == ModeState::ROOM;
-		return mode_state == ModeState::LOGIN || mode_state == ModeState::LOBBY || mode_state == ModeState::MATCHING;
+		return mode_state == ModeState::LOGIN || mode_state == ModeState::AUTHENTICATING || mode_state == ModeState::LOBBY || mode_state == ModeState::MATCHING;
 	};
 
 	const std::size_t task_count = session.ClaimTaskCount();

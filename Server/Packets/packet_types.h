@@ -6,6 +6,7 @@ constexpr std::uint8_t S2C_LOGIN = 1;
 constexpr std::uint8_t C2S_LOGIN = 2;
 constexpr std::uint8_t S2C_MESSAGE = 3;
 constexpr std::uint8_t C2S_MESSAGE = 4;
+constexpr std::uint8_t S2C_LOGIN_READY = 5;
 constexpr std::uint8_t C2S_DISCONNECT = 8;
 constexpr std::uint8_t C2S_ADD_PUBLIC_ROOM = 9;
 constexpr std::uint8_t S2C_ADD_PUBLIC_ROOM = 10;

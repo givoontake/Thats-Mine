@@ -64,6 +64,13 @@ public:
 		return value;
 	}
 
+	// 대상이 목록에 들어 있는지 확인한다. 수정 중(UPDATING)이면 아직 결과가 공개되지 않았으므로 false다.
+	bool IsListed(int value) const
+	{
+		if (value < 0 || value >= static_cast<int>(CAPACITY)) return false;
+		return lookup_[value].load() >= 0;
+	}
+
 	// 순회 경계: 사용 중인 가장 큰 목록 인덱스 + 1
 	int GetEnd() const { return end_.load(); }
 

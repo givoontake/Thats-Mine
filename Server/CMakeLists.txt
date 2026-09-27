@@ -23,6 +23,7 @@ add_executable(GameServer
     Core/main.cpp
     Core/GameServer.cpp
     Game/Player.cpp
+    Lobby/LoginManager.cpp
     Lobby/Matchmaker.cpp
     Managers/ActivePlayerManager.cpp
     Network/Session.cpp
@@ -62,6 +63,7 @@ add_executable(GameServer
     Database/DBResultHandler.h
     Game/Player.h
     Lobby/lobby_tasks.h
+    Lobby/LoginManager.h
     Lobby/Matchmaker.h
     Managers/ActivePlayerManager.h
     Network/ExOverlapped.h

@@ -213,13 +213,23 @@ bool Session::TryChangeMode(ModeState expected_mode, ModeState desired_mode)
 	return false;
 }
 
+// 세션 키가 같을 때만 모드를 바꾼다. 세션을 처리하지 않는 스레드가 키로 찾은 세션을 바꿀 때 쓴다.
+// 세션을 비우거나 새 접속에 배정하는 쪽도 같은 잠금 안에서 키를 바꾸므로, 찾은 뒤 다른 연결로 재사용된 세션은 바꾸지 않는다.
+bool Session::TryChangeMode(SessionKey session_key, ModeState expected_mode, ModeState desired_mode)
+{
+	std::lock_guard<std::mutex> lock(session_mutex_);
+	if (!session_key_.IsSameSession(session_key)) return false;
+	return TryChangeMode(expected_mode, desired_mode);
+}
+
+// 로그인 조회에 성공한 세션(AUTHENTICATING)에 플레이어 정보를 기록하고 로비 상태로 바꾼다.
 bool Session::ApplyLoginResult(const DBLoginResult& result)
 {
 	std::lock_guard<std::mutex> lock(session_mutex_);
-	if (GetLifeState() != LifeState::ACTIVE || GetModeState() != ModeState::LOGIN) return false;
+	if (GetLifeState() != LifeState::ACTIVE || GetModeState() != ModeState::AUTHENTICATING) return false;
 	session_key_.player_id = result.player_id;
 	nickname_ = result.nickname;
-	return TryChangeMode(ModeState::LOGIN, ModeState::LOBBY);
+	return TryChangeMode(ModeState::AUTHENTICATING, ModeState::LOBBY);
 }
 
 std::string Session::GetNickname() const

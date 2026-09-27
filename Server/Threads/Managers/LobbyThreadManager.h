@@ -12,6 +12,7 @@
 #include "enum_class.h"
 #include "types.h"
 #include "LobbyThread.h"
+#include "LoginManager.h"
 #include "Matchmaker.h"
 #include "lobby_tasks.h"
 #include "settings.h"
@@ -32,6 +33,8 @@ private:
 	ConcurrentTaskQueue<std::unique_ptr<LobbyTask>> lifecycle_tasks_;
 	// 로비 목록: 로비가 순회할 세션(방에 있지 않은 활성 세션)의 세션 번호를 담는다. 실제 처리 여부는 세션 담당 상태로 판단한다.
 	ActiveList<MAX_PLAYER_COUNT> lobby_list_;
+	// 로그인 전 세션의 목록과 로그인 처리. 로그인에 성공한 세션만 로비 목록으로 옮겨 온다.
+	LoginManager login_manager_;
 	// 빠른 매칭 담당. 로비 단계 안의 매칭 단계에서 한 스레드가 실행한다.
 	Matchmaker matchmaker_;
 	// 현재 로비 단계의 틱 시각. 로비 단계를 시작할 때 기록하고, 매칭 등록 시각 등에 같은 값을 쓴다.

@@ -79,4 +79,5 @@ public:
 	bool MatchesSessionKey(SessionKey session_key) const;
 	void AdjustRemainingDataSize(int data_size_delta);
 	bool TryChangeMode(ModeState expected_mode, ModeState desired_mode);
+	bool TryChangeMode(SessionKey session_key, ModeState expected_mode, ModeState desired_mode);
 };
