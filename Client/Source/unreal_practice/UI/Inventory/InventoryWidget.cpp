@@ -228,7 +228,6 @@ FReply UInventoryWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const
 {
 	if (event.GetKey() == EKeys::M)
 	{
-		if (!event.IsRepeat()) { on_map_requested_.ExecuteIfBound(); }
 		return FReply::Handled();
 	}
 	if (event.GetKey() == EKeys::Tab || event.GetKey() == EKeys::Escape)
@@ -243,7 +242,7 @@ FReply UInventoryWidget::NativeOnKeyDown(const FGeometry& geometry, const FKeyEv
 {
 	const FKey key = event.GetKey();
 	return key == EKeys::W || key == EKeys::A || key == EKeys::S || key == EKeys::D || key == EKeys::SpaceBar
-		|| key == EKeys::One || key == EKeys::Two || key == EKeys::Three || key == EKeys::M ? FReply::Unhandled() : FReply::Handled();
+		|| key == EKeys::One || key == EKeys::Two || key == EKeys::Three ? FReply::Unhandled() : FReply::Handled();
 }
 
 FReply UInventoryWidget::NativeOnMouseButtonDown(const FGeometry& geometry, const FPointerEvent& event)

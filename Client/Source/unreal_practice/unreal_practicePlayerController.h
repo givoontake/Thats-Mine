@@ -25,6 +25,7 @@ public:
 
 	/** Constructor */
 	Aunreal_practicePlayerController();
+	virtual void FlushPressedKeys() override;
 
 protected:
 

@@ -21,7 +21,6 @@ class UNREAL_PRACTICE_API UWorldMapWidget : public UUserWidget
 public:
 	UWorldMapWidget(const FObjectInitializer& object_initializer);
 	FOnWorldMapCloseRequested on_close_requested_;
-	FOnWorldMapCloseRequested on_inventory_requested_;
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

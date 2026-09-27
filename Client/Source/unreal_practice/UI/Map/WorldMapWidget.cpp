@@ -177,7 +177,6 @@ FReply UWorldMapWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const 
 {
 	if (event.GetKey() == EKeys::Tab)
 	{
-		if (!event.IsRepeat()) { on_inventory_requested_.ExecuteIfBound(); }
 		return FReply::Handled();
 	}
 	if (event.GetKey() == EKeys::M || event.GetKey() == EKeys::Escape)

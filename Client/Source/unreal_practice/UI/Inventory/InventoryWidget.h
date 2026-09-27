@@ -22,7 +22,6 @@ class UNREAL_PRACTICE_API UInventoryWidget : public UUserWidget
 public:
 	UInventoryWidget(const FObjectInitializer& object_initializer);
 	FOnInventoryCloseRequested on_close_requested_;
-	FOnInventoryCloseRequested on_map_requested_;
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

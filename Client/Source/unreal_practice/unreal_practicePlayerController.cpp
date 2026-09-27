@@ -4,6 +4,9 @@
 #include "unreal_practicePlayerController.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SWindow.h"
 #include "InputMappingContext.h"
 #include "unreal_practiceCameraManager.h"
 #include "Blueprint/UserWidget.h"
@@ -18,6 +21,23 @@ Aunreal_practicePlayerController::Aunreal_practicePlayerController()
 	// set the player camera manager class
 	PlayerCameraManagerClass = Aunreal_practiceCameraManager::StaticClass();
 	map_widget_class_ = UWorldMapWidget::StaticClass();
+}
+
+void Aunreal_practicePlayerController::FlushPressedKeys()
+{
+	const UUserWidget* screen = map_widget_ && map_widget_->IsInViewport() ? static_cast<UUserWidget*>(map_widget_)
+		: inventory_widget_ && inventory_widget_->IsInViewport() ? static_cast<UUserWidget*>(inventory_widget_) : nullptr;
+	if (screen && FSlateApplication::IsInitialized() && FSlateApplication::Get().IsActive())
+	{
+		const UGameViewportClient* viewport = GetWorld()->GetGameViewport();
+		const TSharedPtr<SWindow> window = viewport ? viewport->GetWindow() : nullptr;
+		// 화면 내부로 포커스를 옮길 때는 이동 키를 유지하고, 게임 창을 벗어나면 기존대로 해제한다.
+		if (window && window->IsActive() && (screen->HasUserFocus(this) || screen->HasUserFocusedDescendants(this)))
+		{
+			return;
+		}
+	}
+	Super::FlushPressedKeys();
 }
 
 void Aunreal_practicePlayerController::BeginPlay()
@@ -102,7 +122,10 @@ void Aunreal_practicePlayerController::ToggleMap()
 	{
 		return;
 	}
-	CloseInventory();
+	if (inventory_widget_ && inventory_widget_->IsInViewport())
+	{
+		return;
+	}
 	if (!map_widget_)
 	{
 		map_widget_ = CreateWidget<UWorldMapWidget>(this, map_widget_class_);
@@ -111,7 +134,6 @@ void Aunreal_practicePlayerController::ToggleMap()
 		return;
 		}
 		map_widget_->on_close_requested_.BindUObject(this, &Aunreal_practicePlayerController::CloseMap);
-		map_widget_->on_inventory_requested_.BindUObject(this, &Aunreal_practicePlayerController::ToggleInventory);
 	}
 	was_mouse_cursor_visible_ = bShowMouseCursor;
 	SetIgnoreLookInput(true);
@@ -147,12 +169,14 @@ void Aunreal_practicePlayerController::ToggleInventory()
 	{
 		return;
 	}
-	CloseMap();
+	if (map_widget_ && map_widget_->IsInViewport())
+	{
+		return;
+	}
 	if (!inventory_widget_)
 	{
 		inventory_widget_ = CreateWidget<UInventoryWidget>(this, UInventoryWidget::StaticClass());
 		inventory_widget_->on_close_requested_.BindUObject(this, &Aunreal_practicePlayerController::CloseInventory);
-		inventory_widget_->on_map_requested_.BindUObject(this, &Aunreal_practicePlayerController::ToggleMap);
 	}
 	was_mouse_cursor_visible_ = bShowMouseCursor;
 	SetIgnoreLookInput(true);
