@@ -26,6 +26,9 @@ struct FWeaponSettings
 	FActionSettings primary_action;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<UAnimMontage> equip_montage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	FMeleeHitSettings melee_hit;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
@@ -37,13 +40,16 @@ struct FWeaponSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	bool uses_rifle_pose = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose", ClampMin = "0", ClampMax = "89", Units = "deg"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	bool uses_pistol_pose = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose || uses_pistol_pose", ClampMin = "0", ClampMax = "89", Units = "deg"))
 	float aim_pitch_up_limit = 60.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose", ClampMin = "0", ClampMax = "89", Units = "deg"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose || uses_pistol_pose", ClampMin = "0", ClampMax = "89", Units = "deg"))
 	float aim_pitch_down_limit = 45.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose", ClampMin = "0.1"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose || uses_pistol_pose", ClampMin = "0.1"))
 	float aim_pitch_interp_speed = 12.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")

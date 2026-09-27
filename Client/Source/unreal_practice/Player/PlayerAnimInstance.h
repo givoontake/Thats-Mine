@@ -29,6 +29,9 @@ protected:
 	bool is_holding_rifle_ = false;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	bool is_holding_pistol_ = false;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	bool is_aiming_ = false;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")

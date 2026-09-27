@@ -126,6 +126,8 @@ private:
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
 	TMap<EWeaponType, double> next_fire_times_;
 
+	bool is_equipping_ = false;
+	uint32 equip_id_ = 0;
 	uint32 action_id_ = 0;
 	int32 active_montage_instance_id_ = INDEX_NONE;
 	bool has_pending_melee_hit_ = false;

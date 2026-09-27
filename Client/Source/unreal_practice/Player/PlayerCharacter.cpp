@@ -25,20 +25,31 @@ APlayerCharacter::APlayerCharacter()
 
 	FWeaponSettings pickaxe;
 	pickaxe.display_name = NSLOCTEXT("Equipment", "Pickaxe", "PICKAXE");
-	pickaxe.selection_key = EKeys::One;
+	pickaxe.selection_key = EKeys::Three;
 	pickaxe.mesh.ComponentProperty = TEXT("Pickaxe");
 	pickaxe.melee_hit.is_enabled = true;
 	weapon_settings_.Add(EWeaponType::PICKAXE, pickaxe);
 
 	FWeaponSettings sniper;
 	sniper.display_name = NSLOCTEXT("Equipment", "Sniper", "SNIPER");
-	sniper.selection_key = EKeys::Two;
+	sniper.selection_key = EKeys::One;
 	sniper.mesh.ComponentProperty = TEXT("Sniper");
 	sniper.hitscan.is_enabled = true;
 	sniper.can_aim = true;
 	sniper.uses_rifle_pose = true;
 	sniper.left_hand_grip_socket = TEXT("LeftHandGrip");
 	weapon_settings_.Add(EWeaponType::SNIPER, sniper);
+
+	FWeaponSettings pistol;
+	pistol.display_name = NSLOCTEXT("Equipment", "Pistol", "PISTOL");
+	pistol.selection_key = EKeys::Two;
+	pistol.mesh.ComponentProperty = TEXT("Pistol");
+	pistol.hitscan.is_enabled = true;
+	pistol.hitscan.magazine_capacity = 7;
+	pistol.hitscan.fire_interval = 0.2f;
+	pistol.primary_action.play_rate = (14.0f / 30.0f) / 0.18f;
+	pistol.uses_pistol_pose = true;
+	weapon_settings_.Add(EWeaponType::PISTOL, pistol);
 
 	first_person_camera_reference_.ComponentProperty = TEXT("FirstPersonCamera");
 	third_person_camera_reference_.ComponentProperty = TEXT("ThirdPersonCamera");
@@ -218,20 +229,67 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	const bool has_weapon_changed = current_weapon_ != weapon;
 	if (has_weapon_changed)
 	{
+		++equip_id_;
+		is_equipping_ = false;
 		has_pending_melee_hit_ = false;
 		const FWeaponSettings* previous_settings = GetCurrentWeaponSettings();
-		if (UAnimInstance* anim_instance = GetMesh()->GetAnimInstance(); anim_instance && previous_settings && previous_settings->hitscan.reload_montage)
+		if (UAnimInstance* anim_instance = GetMesh()->GetAnimInstance(); anim_instance && previous_settings)
 		{
-			anim_instance->Montage_Stop(0.1f, previous_settings->hitscan.reload_montage);
+			if (previous_settings->equip_montage)
+			{
+				anim_instance->Montage_Stop(0.1f, previous_settings->equip_montage);
+			}
+			if (previous_settings->hitscan.reload_montage)
+			{
+				anim_instance->Montage_Stop(0.1f, previous_settings->hitscan.reload_montage);
+			}
+			if (previous_settings->hitscan.is_enabled && previous_settings->primary_action.montage)
+			{
+				anim_instance->Montage_Stop(0.1f, previous_settings->primary_action.montage);
+			}
 		}
 	}
 	current_weapon_ = weapon;
+	UpdateWeaponVisuals();
+	SetAiming(false);
+	const FWeaponSettings* settings = GetCurrentWeaponSettings();
+	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+	if (has_weapon_changed && anim_instance)
+	{
+		anim_instance->RequestSlotGroupInertialization(TEXT("EquipGroup"), 0.2f);
+	}
+	if (has_weapon_changed && settings->equip_montage && anim_instance)
+	{
+		if (anim_instance->Montage_Play(settings->equip_montage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, false) > 0.0f)
+		{
+			is_equipping_ = true;
+			const uint32 equip_id = equip_id_;
+			FOnMontageEnded ended;
+			ended.BindWeakLambda(this, [this, equip_id](UAnimMontage*, bool is_interrupted)
+			{
+				// 빠른 무기 전환 시 이전 장착 동작의 종료가 새 장착 상태를 해제하지 않게 한다.
+				if (equip_id != equip_id_)
+				{
+					return;
+				}
+				is_equipping_ = false;
+				if (!is_interrupted)
+				{
+					if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_); ammo && ammo->rounds == 0)
+					{
+						BeginReload(current_weapon_);
+					}
+					PlayReloadAnimation(current_weapon_);
+					UpdateEquipmentDisplay();
+				}
+			});
+			anim_instance->Montage_SetEndDelegate(ended, settings->equip_montage);
+		}
+	}
 	if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon); ammo && ammo->rounds == 0)
 	{
 		BeginReload(weapon);
 	}
-	UpdateWeaponVisuals();
-	SetAiming(false);
 	if (has_weapon_changed)
 	{
 		PlayReloadAnimation(weapon);
@@ -389,7 +447,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	UWorld* world = GetWorld();
 	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
 	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
-	if (is_action_locked_ || !world || IsActorBeingDestroyed() || !IsValid(weapon_mesh) || !IsValid(camera) || !camera->IsActive() || !weapon_mesh->DoesSocketExist(settings.muzzle_socket))
+	if (is_equipping_ || is_action_locked_ || !world || IsActorBeingDestroyed() || !IsValid(weapon_mesh) || !IsValid(camera) || !camera->IsActive() || !weapon_mesh->DoesSocketExist(settings.muzzle_socket))
 	{
 		return;
 	}
@@ -452,9 +510,38 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		}
 	}
 
-	if (ammo->rounds == 0)
+	if (ammo->rounds == 0 && shot.weapon != EWeaponType::PISTOL)
 	{
 		BeginReload(shot.weapon);
+	}
+	const FWeaponSettings* weapon_settings = GetCurrentWeaponSettings();
+	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+	float fire_duration = 0.0f;
+	if (anim_instance && weapon_settings && weapon_settings->primary_action.montage)
+	{
+		const FActionSettings& action = weapon_settings->primary_action;
+		fire_duration = anim_instance->Montage_Play(action.montage, action.play_rate, EMontagePlayReturnType::Duration, 0.0f, false);
+	}
+	if (ammo->rounds == 0 && shot.weapon == EWeaponType::PISTOL)
+	{
+		if (fire_duration > 0.0f)
+		{
+			// 마지막 권총 반동이 끝난 뒤 재장전을 시작한다. 대기 중에는 재장전 동작을 재생하지 않는다.
+			ammo->is_waiting_for_shot = true;
+			const FTimerDelegate completed = FTimerDelegate::CreateWeakLambda(this, [this, weapon = shot.weapon]()
+			{
+				FWeaponAmmoState& ammo = weapon_ammo_.FindChecked(weapon);
+				ammo.is_waiting_for_shot = false;
+				GetWorldTimerManager().ClearTimer(ammo.reload_timer);
+				BeginReload(weapon);
+				UpdateEquipmentDisplay();
+			});
+			GetWorldTimerManager().SetTimer(ammo->reload_timer, completed, fire_duration, false);
+		}
+		else
+		{
+			BeginReload(shot.weapon);
+		}
 	}
 	UpdateEquipmentDisplay();
 	on_shot_fired_.Broadcast(shot);
@@ -507,7 +594,7 @@ FEquipmentDisplay APlayerCharacter::GetEquipmentDisplay() const
 
 void APlayerCharacter::Reload()
 {
-	if (is_action_locked_ || !GetWorld() || IsActorBeingDestroyed())
+	if (is_equipping_ || is_action_locked_ || !GetWorld() || IsActorBeingDestroyed())
 	{
 		return;
 	}
@@ -519,7 +606,7 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if (!ammo || !settings || !settings->hitscan.is_enabled || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if ((weapon == current_weapon_ && is_equipping_) || !ammo || !settings || !settings->hitscan.is_enabled || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
 	{
 		return;
 	}
@@ -534,7 +621,7 @@ void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
 	const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	if (weapon != current_weapon_ || is_action_locked_ || !ammo || !settings || !settings->hitscan.reload_montage || !anim_instance || !GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if (weapon != current_weapon_ || is_equipping_ || is_action_locked_ || !ammo || ammo->is_waiting_for_shot || !settings || !settings->hitscan.reload_montage || !anim_instance || !GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
 	{
 		return;
 	}

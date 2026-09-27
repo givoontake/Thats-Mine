@@ -26,6 +26,7 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 		direction_ = 0.0;
 		is_in_air_ = false;
 		is_holding_rifle_ = false;
+		is_holding_pistol_ = false;
 		is_aiming_ = false;
 		left_hand_ik_location_ = FVector::ZeroVector;
 		aim_pitch_ = 0.0f;
@@ -42,6 +43,7 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 	is_in_air_ = character->GetCharacterMovement()->IsFalling();
 	const FWeaponSettings* settings = character->GetCurrentWeaponSettings();
 	is_holding_rifle_ = settings && settings->uses_rifle_pose;
+	is_holding_pistol_ = settings && settings->uses_pistol_pose;
 	is_aiming_ = character->IsAiming();
 	const float view_pitch = FMath::FindDeltaAngleDegrees(character->GetActorRotation().Pitch, character->GetViewRotation().Pitch);
 	const float head_pitch = FMath::Clamp(view_pitch, -FMath::Clamp(head_pitch_down_limit_, 0.0f, 89.0f), FMath::Clamp(head_pitch_up_limit_, 0.0f, 89.0f));
@@ -49,7 +51,7 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 	const FVector head_direction = character->GetActorQuat().RotateVector(FRotator(head_pitch, 0.0f, 0.0f).Vector());
 	head_look_location_ = character->GetMesh()->GetSocketLocation(TEXT("head")) + head_direction * 100000.0;
 	head_look_alpha_ = 1.0f;
-	if (is_holding_rifle_)
+	if (is_holding_rifle_ || is_holding_pistol_)
 	{
 		const float target_pitch = FMath::Clamp(view_pitch, -FMath::Clamp(settings->aim_pitch_down_limit, 0.0f, 89.0f), FMath::Clamp(settings->aim_pitch_up_limit, 0.0f, 89.0f));
 		aim_pitch_ = FMath::FInterpTo(aim_pitch_, target_pitch, delta_seconds, FMath::Max(0.1f, settings->aim_pitch_interp_speed));
