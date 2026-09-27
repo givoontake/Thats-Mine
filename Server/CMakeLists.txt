@@ -27,6 +27,7 @@ add_executable(GameServer
     Managers/ActivePlayerManager.cpp
     Network/Session.cpp
     Network/SendBuffer.cpp
+    Network/SessionManager.cpp
     Rooms/GameRoom.cpp
     Rooms/GameRoomPackets.cpp
     Threads/ServerThread.cpp
@@ -46,6 +47,7 @@ add_executable(GameServer
     Threads/Managers/LobbyThreadManager.cpp
     Threads/Managers/TimerThreadManager.cpp
     Common/ActiveList.h
+    Common/char_buffer.h
     Common/ConcurrentTaskQueue.h
     Common/enum_class.h
     Common/error_code.h
@@ -66,6 +68,7 @@ add_executable(GameServer
     Network/SendBuffer.h
     Network/session_tasks.h
     Network/Session.h
+    Network/SessionManager.h
     Packets/common_packets.h
     Packets/database_packets.h
     Packets/lobby_packets.h

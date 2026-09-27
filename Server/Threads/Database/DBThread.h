@@ -1,5 +1,6 @@
 // DBThread.h
 #pragma once
+#include <WinSock2.h>
 #include <condition_variable>
 #include <queue>
 #include "db_login_task.h"

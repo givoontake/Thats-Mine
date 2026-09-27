@@ -11,7 +11,6 @@
 #include "DBThread.h"
 #include "DBOverlapped.h"
 
-#undef min
 
 // -------------------- 유틸(로컬) --------------------
 static inline void Trim(std::string& s)

@@ -5,12 +5,7 @@
 #include <MSWSock.h>
 #include "settings.h"
 #include "enum_class.h"
-
-struct SessionKey {
-	int session_index = -1;
-	int player_id = -1;
-	std::uint64_t session_id = 0;
-};
+#include "types.h"
 
 constexpr ULONG_PTR LISTEN_IO_COMPLETION = 1;
 constexpr ULONG_PTR SESSION_IO_COMPLETION = 2;

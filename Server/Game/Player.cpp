@@ -23,10 +23,7 @@ bool Player::InitPlayer(SessionKey session_key)
 
 bool Player::MatchesSessionKey(SessionKey session_key) const
 {
-	return HasSession() &&
-		session_key_.session_index == session_key.session_index &&
-		session_key_.player_id == session_key.player_id &&
-		session_key_.session_id == session_key.session_id;
+	return HasSession() && session_key_ == session_key;
 }
 
 void Player::ClearPlayer()
@@ -57,5 +54,5 @@ bool Player::AddToSendBuffer(const char* data, int data_size)
 void Player::ClearSendBuffer()
 {
 	send_data_size_ = 0;
-	ZeroMemory(send_buffer_, sizeof(send_buffer_));
+	memset(send_buffer_, 0, sizeof(send_buffer_));
 }

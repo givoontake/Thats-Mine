@@ -4,6 +4,7 @@
 #include "GamePhaseContext.h"
 #include "GameThreadManager.h"
 #include "GameServer.h"
+#include "GameRoom.h"
 
 GameThread::GameThread(GameThreadManager& manager) : manager_(manager)
 {
@@ -47,7 +48,7 @@ void GameThread::Run()
         while (true) {
 			const int room_index = current_phase_context->next_room_index.fetch_add(1);
 			if (room_index >= manager_.GetRoomIndexEnd()) break;
-			auto* room = manager_.game_server_.GetRoomByIndex(room_index);
+			auto* room = manager_.GetRoomByIndex(room_index);
 			// 삭제 대기 방은 새로 처리하지 않아, 삭제 쪽이 처리권을 얻어 자리를 비울 수 있게 한다.
 			if (!room || room->GetRoomState() == RoomState::DELETE_POST) continue;
 			RoomProcessState expected_state = RoomProcessState::COMPLETE;

@@ -1,7 +1,7 @@
 #pragma once
 #include <mutex>
 #include <unordered_map>
-#include "ExOverlapped.h"
+#include "types.h"
 
 class Session;
 struct DBLoginResult;
@@ -14,6 +14,5 @@ class ActivePlayerManager
 public:
 	bool AddPlayer(Session& session, const DBLoginResult& result);
 	void RemovePlayer(int player_id, SessionKey session_key);
-	SessionKey FindSessionKeyByID(int player_id) const;
 	void Clear();
 };

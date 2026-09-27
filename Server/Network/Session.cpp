@@ -92,7 +92,7 @@ bool Session::MatchesSessionKey(SessionKey session_key) const
 	const LifeState life_state = GetLifeState();
 	if (life_state == LifeState::NONE || life_state == LifeState::INITIALIZING) return false;
 	std::lock_guard<std::mutex> lock(session_mutex_);
-	return session_key_.session_index == session_key.session_index && session_key_.session_id == session_key.session_id;
+	return session_key_.IsSameSession(session_key);
 }
 
 void Session::AdjustRemainingDataSize(int data_size_delta)
@@ -106,7 +106,7 @@ bool Session::BeginDisconnect(SessionKey session_key)
 {
 	std::unique_lock<std::shared_mutex> socket_lock(socket_mutex_);
 	std::lock_guard<std::mutex> session_lock(session_mutex_);
-	if (session_key_.session_index != session_key.session_index || session_key_.session_id != session_key.session_id) return false;
+	if (!session_key_.IsSameSession(session_key)) return false;
 	SessionState current_state = state_.load();
 	while (current_state.life == LifeState::ACTIVE) {
 		if (state_.compare_exchange_weak(current_state, { LifeState::CLOSED, current_state.mode })) break;
@@ -165,7 +165,7 @@ bool Session::TryEnqueueTask(SessionKey session_key, std::unique_ptr<SessionTask
 	if (!task) return false;
 	std::lock_guard<std::mutex> session_lock(session_mutex_);
 	if (GetLifeState() != LifeState::ACTIVE) return false;
-	if (session_key_.session_index != session_key.session_index || session_key_.session_id != session_key.session_id) return false;
+	if (!session_key_.IsSameSession(session_key)) return false;
 	session_tasks_.Enqueue(std::move(task));
 	return true;
 }

@@ -1,5 +1,6 @@
 #include <cstring>
 #include "GameRoom.h"
+#include "Session.h"
 #include "GameServer.h"
 #include "packet_types.h"
 #include "common_packets.h"
@@ -44,29 +45,6 @@ void GameRoom::BroadcastPackets()
 		room_player.ClearSendBuffer();
 	}
 }
-
-//void GameRoom::BroadcastPackets()
-//{
-//	auto& room_players = room_players_;
-//	for (auto& source : room_players) {
-//		auto source_session = FindSession(source);
-//		if (!source_session) continue;
-//		const int source_data_size = source.GetSendDataSize();
-//		if (source_data_size <= 0) continue;
-//
-//		for (auto& target : room_players) {
-//			auto target_session = FindSession(target);
-//			if (!target_session) continue;
-//			target_session->SendPacket(source.GetSendBuffer(), source_data_size);
-//		}
-//	}
-//
-//	for (auto& room_player : room_players) {
-//		auto session = FindSession(room_player);
-//		if (!session) continue;
-//		room_player.ClearSendBuffer();
-//	}
-//}
 
 void GameRoom::Broadcast(char* packet)
 {

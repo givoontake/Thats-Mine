@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include "ExOverlapped.h"
+#include "types.h"
 
 struct DBLoginTask
 {

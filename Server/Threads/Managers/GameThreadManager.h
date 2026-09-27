@@ -31,6 +31,9 @@ private:
     std::mutex tick_mutex_;
     std::condition_variable tick_cv_;
 	TickWaitPolicy tick_wait_policy_;
+	// 방은 미리 만들어 둔 고정 배열(MAX_ROOM_COUNT개)의 자리를 재사용한다. 자리 재사용은 방 키(생성마다 새 난수)로 구분한다.
+	// 헤더에 GameRoom 정의를 끌어오지 않도록 배열을 힙에 두고 포인터로 가진다.
+	std::unique_ptr<GameRoom[]> rooms_;
 	ConcurrentTaskQueue<std::unique_ptr<RoomLifecycleTask>> lifecycle_tasks_; // 방 생성 전에는 방 내부 큐를 사용할 수 없으므로 생성 요청은 여기서 처리한다. 최종 방 삭제 요청도 여기서 처리한다.
 	IndexRegistry<RoomKey> room_index_registry_; // room_key로 고정 방 배열의 room_index를 빠르게 찾는다.
 	// 방은 활성 목록 대신 고정 방 배열을 이 경계까지 순회한다. 이전 틱이 끝나기 전에 다음 틱을 처리하므로,
@@ -58,11 +61,13 @@ private:
 
 public:
     GameThreadManager(GameServer& game_server, TickWaitPolicy tick_policy);
+    ~GameThreadManager();
 
     void Start();
 	bool StartGamePhase(long long tick_time_ms);
 	void Enqueue(std::unique_ptr<RoomLifecycleTask> task);
 	int TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password);
+	GameRoom* GetRoomByIndex(int room_index) const;
 	int GetRoomIndexEnd() const { return room_index_end_.load(); }
     void Close();
     void Join();

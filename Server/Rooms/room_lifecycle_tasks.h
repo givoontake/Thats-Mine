@@ -1,7 +1,6 @@
 #pragma once
 #include <memory>
 #include <vector>
-#include "ExOverlapped.h"
 #include "types.h"
 
 enum class RoomLifecycleTaskType { CREATE_PUBLIC, CREATE_PRIVATE, DELETE_ROOM };

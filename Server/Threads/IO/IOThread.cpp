@@ -1,6 +1,7 @@
 #include <iostream>
 #include "IOThread.h"
 #include "GameServer.h"
+#include "SessionManager.h"
 #include "common_packets.h"
 #include "packet_types.h"
 #include "session_tasks.h"
@@ -28,7 +29,7 @@ void IOThread::Run()
 
 		case DB_SESSION_COMPLETION: {
 			std::unique_ptr<DBOverlapped> db_over(reinterpret_cast<DBOverlapped*>(ex_over));
-			game_server_.EnqueueSessionTask(db_over->ex_over.session_key, std::make_unique<SessionDBResultTask>(std::move(db_over->result)));
+			game_server_.GetSessionManager().EnqueueSessionTask(db_over->ex_over.session_key, std::make_unique<SessionDBResultTask>(std::move(db_over->result)));
 			break;
 		}
 		case SESSION_IO_COMPLETION:
@@ -62,7 +63,7 @@ void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, Ex
 
 	switch (ex_over->op_type) {
 	case OPType::RECV: {
-		auto* session = game_server_.FindSession(ex_over->session_key);
+		auto* session = game_server_.GetSessionManager().FindSession(ex_over->session_key);
 		if (!session) return;
 		ProcessReceiveCompletion(result, transferred_bytes, *session, ex_over->session_key);
 		break;
@@ -81,14 +82,14 @@ void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, Ex
 void IOThread::ProcessReceiveCompletion(BOOL result, DWORD transferred_bytes, Session& session, SessionKey session_key)
 {
 	if (!result || transferred_bytes == 0) {
-		game_server_.RequestDisconnect(session_key);
-		game_server_.CompleteSessionIO(session_key);
+		game_server_.GetSessionManager().RequestDisconnect(session_key);
+		game_server_.GetSessionManager().CompleteSessionIO(session_key);
 		return;
 	}
 
 	const bool should_receive = ProcessRecvBuffer(session, transferred_bytes);
 	if (should_receive) session.RecvPacket();
-	game_server_.CompleteSessionIO(session_key);
+	game_server_.GetSessionManager().CompleteSessionIO(session_key);
 }
 
 bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
@@ -96,7 +97,7 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 	const SessionKey session_key = session.GetSessionKey();
 	const int current_data_size = session.GetRemainingDataSize();
 	if (recv_bytes < 0 || current_data_size < 0 || current_data_size > BUF_SIZE || recv_bytes > BUF_SIZE - current_data_size) {
-		game_server_.RequestDisconnect(session_key);
+		game_server_.GetSessionManager().RequestDisconnect(session_key);
 		return false;
 	}
 
@@ -112,14 +113,14 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 		const auto* header = reinterpret_cast<const PACKET_HEADER*>(packet);
 		const int packet_size = header->size;
 		if (packet_size < PACKET_HEADER_SIZE || packet_size > BUF_SIZE) {
-			game_server_.RequestDisconnect(session_key);
+			game_server_.GetSessionManager().RequestDisconnect(session_key);
 			should_receive = false;
 			break;
 		}
 		if (remaining_data_size - offset < packet_size) break;
 
 		auto task = std::make_unique<SessionPacketTask>(packet, packet_size);
-		if (!game_server_.EnqueueSessionTask(session_key, std::move(task))) {
+		if (!game_server_.GetSessionManager().EnqueueSessionTask(session_key, std::move(task))) {
 			should_receive = false;
 			break;
 		}
@@ -134,11 +135,11 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 
 void IOThread::ProcessSendCompletion(BOOL result, DWORD transferred_bytes, SendBuffer* send_buffer, SessionKey session_key)
 {
-	if (!result || transferred_bytes == 0) game_server_.RequestDisconnect(session_key);
+	if (!result || transferred_bytes == 0) game_server_.GetSessionManager().RequestDisconnect(session_key);
 
 	if (send_buffer->ex_over.op_type == OPType::POOLED_SEND) send_buffer->Clear();
 	else delete send_buffer;
-	game_server_.CompleteSessionIO(session_key);
+	game_server_.GetSessionManager().CompleteSessionIO(session_key);
 }
 
 void IOThread::Close()

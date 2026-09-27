@@ -1,9 +1,8 @@
-#include <algorithm>
 #include <iostream>
 #include "GameServer.h"
-#include <Windows.h>
-#include <bcrypt.h>
+#include "GameRoom.h"
 #include "ServerThreadManager.h"
+#include "SessionManager.h"
 #include "common_packets.h"
 #include "lobby_tasks.h"
 #include "packet_types.h"
@@ -11,29 +10,25 @@
 #include "session_tasks.h"
 #include "DBResultHandler.h"
 
-#undef min
-
-#pragma comment(lib, "bcrypt.lib")
-
 GameServer::GameServer()
 {
 	WSAStartup(MAKEWORD(2, 2), &wsa_data_);
+	session_manager_ = std::make_unique<SessionManager>();
 
-	listen_socket_ = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-	accept_socket_ = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	listen_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	accept_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	memset(&server_addr_, 0, sizeof(server_addr_));
 	server_addr_.sin_family = AF_INET;
 	server_addr_.sin_port = htons(SERVER_PORT);
 	server_addr_.sin_addr.S_un.S_addr = INADDR_ANY;
 
 	accept_over_.SetOperationType(OPType::ACCEPT);
-	for (int room_index = 0; room_index < MAX_ROOM_COUNT; ++room_index) rooms_[room_index].AttachToServer(this, room_index);
 
 }
 
 GameServer::~GameServer()
 {
-	active_players_.Clear();
+	session_manager_->GetActivePlayerManager().Clear();
 	closesocket(listen_socket_);
 	closesocket(accept_socket_);
 	WSACleanup();
@@ -61,15 +56,17 @@ void GameServer::StartServer()
 
 void GameServer::CompleteAccept()
 {
-	auto* new_session = AcquireSession(accept_socket_);
+	auto* new_session = session_manager_->AcquireSession(accept_socket_, iocp_handle_);
 	if (new_session) {
 		CreateIoCompletionPort(reinterpret_cast<HANDLE>(accept_socket_), iocp_handle_, SESSION_IO_COMPLETION, 0);
+		// 세션 관리는 로비를 알지 않으므로, 새 세션을 로비 목록에 넣도록 서버가 로비에 알린다.
+		EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::SESSION_ADDED, new_session->GetSessionKey()));
 		new_session->RecvPacket();
 	}
 	else {
 		closesocket(accept_socket_);
 	}
-	accept_socket_ = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	accept_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 
 	if (accept_socket_ != INVALID_SOCKET) {
 		ZeroMemory(&accept_over_.ex_over.over, sizeof(accept_over_.ex_over.over));
@@ -93,15 +90,6 @@ void GameServer::CloseThreads()
 void GameServer::JoinThreads()
 {
 	if (thread_manager_) thread_manager_->JoinThreads();
-}
-
-bool GameServer::EnqueueSessionTask(SessionKey session_key, std::unique_ptr<SessionTask> task)
-{
-	if (!task) return false;
-	auto* session = FindSession(session_key);
-	if (!session) return false;
-	task->session_key = session_key;
-	return session->TryEnqueueTask(session_key, std::move(task));
 }
 
 void GameServer::EnqueueLobbyTask(std::unique_ptr<LobbyTask> task)
@@ -169,106 +157,8 @@ void GameServer::RoutePacket(char* packet, Session& session, GameRoom* room)
 	else thread_manager_->GetLobbyThreadManager().ProcessPacket(packet, session);
 }
 
-Session* GameServer::AcquireSession(SOCKET new_socket)
-{
-	const std::uint64_t session_id = GenerateSessionID();
-	if (session_id == 0) return nullptr;
-	for (int i = 0; i < MAX_PLAYER_COUNT; ++i) {
-		if (sessions_[i].InitSession(i, session_id, new_socket, iocp_handle_)) {
-			const SessionKey session_key = sessions_[i].GetSessionKey();
-			EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::SESSION_ADDED, session_key));
-			return &sessions_[i];
-		}
-	}
-	return nullptr;
-}
-
-std::uint64_t GameServer::GenerateSessionID()
-{
-	std::uint64_t session_id = 0;
-	while (session_id == 0) {
-		if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&session_id), sizeof(session_id), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) return 0;
-	}
-	return session_id;
-}
-
 // 세션 상태를 바꿔 로비 목록에 있어야 하는지가 달라진 쪽이 호출한다.
 void GameServer::SyncLobbyList(int session_index)
 {
 	thread_manager_->GetLobbyThreadManager().SyncLobbyList(session_index);
-}
-
-Session* GameServer::FindSessionByIndex(int session_index)
-{
-	if (session_index < 0 || session_index >= MAX_PLAYER_COUNT) return nullptr;
-	auto* session = &sessions_[session_index];
-	const LifeState life_state = session->GetLifeState();
-	if (life_state == LifeState::NONE || life_state == LifeState::INITIALIZING) return nullptr;
-	return session;
-}
-
-Session* GameServer::FindSession(SessionKey session_key)
-{
-	auto* session = FindSessionByIndex(session_key.session_index);
-	if (!session || !session->MatchesSessionKey(session_key)) return nullptr;
-	return session;
-}
-
-// 방 자리를 반환한다. 자리가 비었는지, 어떤 방인지는 방 상태와 방 키로 확인한다.
-GameRoom* GameServer::GetRoomByIndex(int room_index)
-{
-	if (room_index < 0 || room_index >= MAX_ROOM_COUNT) return nullptr;
-	return &rooms_[room_index];
-}
-
-void GameServer::RequestDisconnect(SessionKey session_key)
-{
-	EnqueueSessionTask(session_key, std::make_unique<SessionDisconnectTask>());
-}
-
-void GameServer::CompleteSessionIO(SessionKey session_key)
-{
-	auto* session = FindSession(session_key);
-	if (session && session->CompleteIO(session_key)) TryReleaseSession(*session);
-}
-
-// 연결이 닫힌 세션을 담당자가 자기 목록에서 정리한 뒤 호출한다. 담당 상태를 비우고 슬롯 정리를 시도한다.
-void GameServer::ReleaseOwnership(Session& session)
-{
-	if (session.GetLifeState() != LifeState::CLOSED) return;
-	session.ReleaseMode();
-	TryReleaseSession(session);
-}
-
-// 담당자 정리와 마지막 입출력 완료 중 늦게 끝난 쪽이 슬롯을 정리한다.
-void GameServer::TryReleaseSession(Session& session)
-{
-	if (!session.TryBeginRelease()) return;
-	const SessionKey session_key = session.GetSessionKey();
-	active_players_.RemovePlayer(session_key.player_id, session_key);
-	session.DiscardTasks();
-	session.CompleteRelease();
-}
-
-void GameServer::StringToCharBuf(const std::string& str, char* buf, int buf_size)
-{
-	ZeroMemory(buf, buf_size);
-	size_t copy_size = std::min(str.size(), static_cast<size_t>(buf_size));
-	memcpy(buf, str.data(), copy_size);
-}
-
-std::string GameServer::CharBufToString(const char* buf, int buf_size)
-{
-	size_t copy_size = strnlen(buf, static_cast<size_t>(buf_size));
-	std::string str(buf, copy_size);
-	return str;
-}
-
-// 고정 길이 문자 배열을 복사한다. 첫 0 뒤의 값은 버리고 남는 부분을 0으로 채워, 배열 전체 비교가 정확하게 되도록 한다.
-void GameServer::CopyCharBuf(char* dst, int dst_size, const char* src, int src_size)
-{
-	ZeroMemory(dst, dst_size);
-	if (!src) return;
-	const size_t copy_size = std::min(strnlen(src, static_cast<size_t>(src_size)), static_cast<size_t>(dst_size));
-	memcpy(dst, src, copy_size);
 }

@@ -2,6 +2,7 @@
 #include <utility>
 #include "Matchmaker.h"
 #include "GameServer.h"
+#include "SessionManager.h"
 #include "ServerThreadManager.h"
 #include "GameThreadManager.h"
 #include "GameRoom.h"
@@ -33,7 +34,7 @@ void Matchmaker::RunCycle(long long tick_time_ms)
 	for (int match_index = 0; match_index < match_list_end; ++match_index) {
 		const int session_index = match_list_.GetValue(match_index);
 		if (session_index < 0) continue;
-		auto* session = game_server_.FindSessionByIndex(session_index);
+		auto* session = game_server_.GetSessionManager().FindSessionByIndex(session_index);
 		const SessionState state = session ? session->GetState() : SessionState{};
 		if (state.life == LifeState::ACTIVE && state.mode == ModeState::ROOM_PENDING) {
 			const int target_room_index = target_room_index_[session_index];
@@ -56,7 +57,7 @@ void Matchmaker::RunCycle(long long tick_time_ms)
 	for (int match_index = 0; match_index < match_list_end && start_room_index < room_index_end; ++match_index) {
 		const int session_index = match_list_.GetValue(match_index);
 		if (session_index < 0) continue;
-		auto* session = game_server_.FindSessionByIndex(session_index);
+		auto* session = game_server_.GetSessionManager().FindSessionByIndex(session_index);
 		if (!session || session->GetLifeState() != LifeState::ACTIVE || session->GetModeState() != ModeState::MATCHING) continue;
 		start_room_index = TryAssignRoom(*session, session_index, start_room_index, room_index_end);
 	}
@@ -67,8 +68,9 @@ void Matchmaker::RunCycle(long long tick_time_ms)
 // 반환값은 다음 세션이 탐색을 시작할 방 번호다. 빈자리가 있는 방이 없으면 room_index_end를 반환한다.
 int Matchmaker::TryAssignRoom(Session& session, int session_index, int start_room_index, int room_index_end)
 {
+	auto& game_thread_manager = game_server_.GetThreadManager().GetGameThreadManager();
 	for (int room_index = start_room_index; room_index < room_index_end; ++room_index) {
-		auto* room = game_server_.GetRoomByIndex(room_index);
+		auto* room = game_thread_manager.GetRoomByIndex(room_index);
 		if (!room || room->GetRoomState() != RoomState::WAIT || room->IsPrivate()) continue;
 		if (room->GetCurrentPlayerCount() + joining_counts_[room_index] >= MAX_ROOM_PLAYER_COUNT) continue;
 		const RoomKey room_key = room->GetRoomKey();

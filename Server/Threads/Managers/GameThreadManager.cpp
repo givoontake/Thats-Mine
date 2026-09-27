@@ -3,6 +3,8 @@
 #include "GameThreadManager.h"
 #include "GameRoom.h"
 #include "GameServer.h"
+#include "char_buffer.h"
+#include "SessionManager.h"
 #include "ServerThreadManager.h"
 #include "GamePhaseContext.h"
 #include "LobbyThreadManager.h"
@@ -10,8 +12,19 @@
 #include "room_packets.h"
 
 GameThreadManager::GameThreadManager(GameServer& game_server, TickWaitPolicy tick_policy)
-    : game_server_(game_server), tick_wait_policy_(tick_policy), room_index_registry_(MAX_ROOM_COUNT)
+    : game_server_(game_server), tick_wait_policy_(tick_policy), rooms_(std::make_unique<GameRoom[]>(MAX_ROOM_COUNT)), room_index_registry_(MAX_ROOM_COUNT)
 {
+	for (int room_index = 0; room_index < MAX_ROOM_COUNT; ++room_index) rooms_[room_index].AttachToServer(&game_server_, room_index);
+}
+
+// GameRoom 정의가 있는 이 파일에서 소멸자를 만들어야 헤더의 전방 선언만으로 방 배열을 가질 수 있다.
+GameThreadManager::~GameThreadManager() = default;
+
+// 방 자리를 반환한다. 자리가 비었는지, 어떤 방인지는 방 상태와 방 키로 확인한다.
+GameRoom* GameThreadManager::GetRoomByIndex(int room_index) const
+{
+	if (room_index < 0 || room_index >= MAX_ROOM_COUNT) return nullptr;
+	return &rooms_[room_index];
 }
 
 void GameThreadManager::Start()
@@ -79,7 +92,7 @@ void GameThreadManager::Enqueue(std::unique_ptr<RoomLifecycleTask> task)
 // room_password는 패킷의 고정 길이 비밀번호 배열이며, 공개방 입장이면 nullptr이다.
 int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password)
 {
-	auto* session = game_server_.FindSession(session_key);
+	auto* session = game_server_.GetSessionManager().FindSession(session_key);
 	if (!session || session->GetModeState() != ModeState::LOBBY) return ErrorCode::INVALID_REQUEST;
 	auto* room = FindRoomByKey(room_key);
 	if (!room) return ErrorCode::ROOM_NOT_FOUND;
@@ -88,7 +101,7 @@ int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, con
 	task.task_type = RoomTaskType::JOIN;
 	task.session_key = session_key;
 	task.room_key = room_key;
-	game_server_.CopyCharBuf(task.room_password, sizeof(task.room_password), room_password, MAX_ROOM_PASSWORD_SIZE);
+	CopyCharBuf(task.room_password, sizeof(task.room_password), room_password, MAX_ROOM_PASSWORD_SIZE);
 	if (!room->AddRoomTask(std::move(task))) {
 		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
 		auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, session_key);
@@ -107,7 +120,7 @@ void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 		return;
 	}
 	// 한 세션에 걸린 전환 요청은 하나뿐이므로, 전환 대기가 아니면 이 요청의 대상이 아니다.
-	auto* session = game_server_.FindSession(task->session_key);
+	auto* session = game_server_.GetSessionManager().FindSession(task->session_key);
 	if (!session || session->GetModeState() != ModeState::ROOM_PENDING) return;
 
 	int result = ErrorCode::INVALID_REQUEST;
@@ -139,7 +152,7 @@ int GameThreadManager::PublishRoom(const RoomInitData& data, Session& session, S
 	{
 		std::lock_guard<std::mutex> lock(room_index_mutex_);
 		for (int room_index = 0; room_index < MAX_ROOM_COUNT; ++room_index) {
-			auto* room = game_server_.GetRoomByIndex(room_index);
+			auto* room = GetRoomByIndex(room_index);
 			if (!room->TryClaim()) continue;
 			new_room = room;
 			break;
@@ -174,7 +187,7 @@ int GameThreadManager::CreatePublicRoom(char* packet, Session& session, SessionK
 	RoomInitData data;
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	if (public_p->max_player_count != MAX_ROOM_PLAYER_COUNT) return ErrorCode::INVALID_REQUEST;
-	game_server_.CopyCharBuf(data.room_name, sizeof(data.room_name), public_p->room_name, sizeof(public_p->room_name));
+	CopyCharBuf(data.room_name, sizeof(data.room_name), public_p->room_name, sizeof(public_p->room_name));
 	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::INVALID_REQUEST;
 	data.room_key = GenerateRoomKey();
 	if (data.room_key == 0) return ErrorCode::SERVER_ERROR;
@@ -190,8 +203,8 @@ int GameThreadManager::CreatePrivateRoom(char* packet, Session& session, Session
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	constexpr size_t MIN_ROOM_PASSWORD_LENGTH = 4;
 	if (private_p->max_player_count != MAX_ROOM_PLAYER_COUNT) return ErrorCode::INVALID_REQUEST;
-	game_server_.CopyCharBuf(data.room_name, sizeof(data.room_name), private_p->room_name, sizeof(private_p->room_name));
-	game_server_.CopyCharBuf(data.room_password, sizeof(data.room_password), private_p->room_password, sizeof(private_p->room_password));
+	CopyCharBuf(data.room_name, sizeof(data.room_name), private_p->room_name, sizeof(private_p->room_name));
+	CopyCharBuf(data.room_password, sizeof(data.room_password), private_p->room_password, sizeof(private_p->room_password));
 	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH || strnlen(data.room_password, sizeof(data.room_password)) < MIN_ROOM_PASSWORD_LENGTH) return ErrorCode::INVALID_REQUEST;
 	data.room_key = GenerateRoomKey();
 	if (data.room_key == 0) return ErrorCode::SERVER_ERROR;
@@ -205,7 +218,7 @@ int GameThreadManager::CreatePrivateRoom(char* packet, Session& session, Session
 void GameThreadManager::DeleteRoom(int room_index, RoomKey room_key)
 {
 	std::lock_guard<std::mutex> lock(room_index_mutex_);
-	auto* room = game_server_.GetRoomByIndex(room_index);
+	auto* room = GetRoomByIndex(room_index);
 	if (!room || room->GetRoomKey() != room_key || room->GetRoomState() != RoomState::DELETE_POST) return;
 	if (!room->TryBeginReset()) {
 		Enqueue(std::make_unique<RoomLifecycleTask>(room_index, room_key));
@@ -216,7 +229,7 @@ void GameThreadManager::DeleteRoom(int room_index, RoomKey room_key)
 
 	int room_index_end = room_index_end_.load();
 	if (room_index != room_index_end - 1) return;
-	while (room_index_end > 0 && game_server_.GetRoomByIndex(room_index_end - 1)->GetRoomState() == RoomState::EMPTY) --room_index_end;
+	while (room_index_end > 0 && GetRoomByIndex(room_index_end - 1)->GetRoomState() == RoomState::EMPTY) --room_index_end;
 	room_index_end_.store(room_index_end);
 }
 
@@ -224,7 +237,7 @@ GameRoom* GameThreadManager::FindRoomByKey(RoomKey room_key) const
 {
 	const auto room_index = room_index_registry_.Find(room_key);
 	if (!room_index) return nullptr;
-	auto* room = game_server_.GetRoomByIndex(*room_index);
+	auto* room = GetRoomByIndex(*room_index);
 	if (!room || room->GetRoomKey() != room_key) return nullptr;
 	return room;
 }

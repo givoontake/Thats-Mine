@@ -3,6 +3,7 @@
 #include "LobbyPhaseContext.h"
 #include "LobbyThreadManager.h"
 #include "GameServer.h"
+#include "SessionManager.h"
 #include "Session.h"
 
 LobbyThread::LobbyThread(LobbyThreadManager& manager) : manager_(manager)
@@ -42,7 +43,7 @@ void LobbyThread::Run()
 			// 연결이 닫힌 세션은 로비 목록에서 뺀 뒤 담당을 놓는다. 연결이 닫혀 목록에 있으면 안 되는 상태이므로 맞추기로 빠진다.
 			const int session_index = session->GetSessionKey().session_index;
 			manager_.SyncLobbyList(session_index);
-			manager_.game_server_.ReleaseOwnership(*session);
+			manager_.game_server_.GetSessionManager().ReleaseOwnership(*session);
 		}
 
 		phase_context_.reset();

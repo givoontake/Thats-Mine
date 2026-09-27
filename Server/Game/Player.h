@@ -3,7 +3,7 @@
 #include <string>
 #include "types.h"
 #include "settings.h"
-#include "ExOverlapped.h"
+#include "enum_class.h"
 
 // 방 슬롯 하나를 나타낸다. 방을 처리하는 스레드만 변경하므로 슬롯 사용 여부는 세션 키 유무로 판단한다.
 class Player

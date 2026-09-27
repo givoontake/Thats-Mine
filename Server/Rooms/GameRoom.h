@@ -9,7 +9,7 @@
 #include <mutex>
 #include "ConcurrentTaskQueue.h"
 #include "Player.h"
-#include "Session.h"
+class Session;
 
 class GameServer;
 class GameThread;
@@ -108,7 +108,6 @@ public:
 	RoomState GetRoomState() const { return room_state_.load(); }
 	int GetRoomIndex() const { return room_index_; }
 	bool IsPrivate() const { return is_private_.load(); }
-	int GetMaxPlayerCount() const { return MAX_ROOM_PLAYER_COUNT; }
 	int GetCurrentPlayerCount() const;
 	bool TryGetRoomInfoSnapshot(RoomInfoSnapshot& snapshot) const;
 
@@ -123,8 +122,7 @@ public:
 	bool TryChangeRoomState(RoomState expected, RoomState desired);
 	
 	void ClearGame();
-	
-	void ClearRoom();
+
 	void BroadcastPackets();
 	void Broadcast(char* packet);
 };

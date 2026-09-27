@@ -9,7 +9,8 @@
 #include <vector>
 #include "ActiveList.h"
 #include "ConcurrentTaskQueue.h"
-#include "ExOverlapped.h"
+#include "enum_class.h"
+#include "types.h"
 #include "LobbyThread.h"
 #include "Matchmaker.h"
 #include "lobby_tasks.h"
