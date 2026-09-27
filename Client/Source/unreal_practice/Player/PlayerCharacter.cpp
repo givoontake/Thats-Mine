@@ -572,8 +572,13 @@ void APlayerCharacter::UnPossessed()
 
 FEquipmentDisplay APlayerCharacter::GetEquipmentDisplay() const
 {
+	return GetWeaponDisplay(current_weapon_);
+}
+
+FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
+{
 	FEquipmentDisplay display;
-	if (const FWeaponSettings* settings = GetCurrentWeaponSettings())
+	if (const FWeaponSettings* settings = weapon_settings_.Find(weapon))
 	{
 		display.name = settings->display_name;
 		display.uses_ammo = settings->hitscan.is_enabled;
@@ -582,7 +587,7 @@ FEquipmentDisplay APlayerCharacter::GetEquipmentDisplay() const
 		{
 			display.capacity = FMath::Max(1, settings->hitscan.magazine_capacity);
 			display.total_ammo = FText::AsCultureInvariant(TEXT("∞"));
-			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_))
+			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
 			{
 				display.rounds = ammo->rounds;
 				display.is_reloading = GetWorldTimerManager().IsTimerActive(ammo->reload_timer);
@@ -590,6 +595,20 @@ FEquipmentDisplay APlayerCharacter::GetEquipmentDisplay() const
 		}
 	}
 	return display;
+}
+
+void APlayerCharacter::AddHint(const FInventoryHint& hint)
+{
+	acquired_hints_.Add(hint);
+	on_hints_changed_.Broadcast();
+}
+
+void APlayerCharacter::MarkHintsRead()
+{
+	for (FInventoryHint& hint : acquired_hints_)
+	{
+		hint.is_new = false;
+	}
 }
 
 void APlayerCharacter::Reload()
@@ -658,6 +677,7 @@ void APlayerCharacter::FinishReload(EWeaponType weapon)
 
 void APlayerCharacter::UpdateEquipmentDisplay()
 {
+	on_equipment_changed_.Broadcast();
 	APlayerController* controller = Cast<APlayerController>(GetController());
 	if (!controller || !controller->IsLocalController() || !controller->GetLocalPlayer() || IsActorBeingDestroyed())
 	{

@@ -11,6 +11,7 @@
 #include "Widgets/Input/SVirtualJoystick.h"
 #include "Components/InputComponent.h"
 #include "UI/Map/WorldMapWidget.h"
+#include "UI/Inventory/InventoryWidget.h"
 
 Aunreal_practicePlayerController::Aunreal_practicePlayerController()
 {
@@ -52,6 +53,7 @@ void Aunreal_practicePlayerController::SetupInputComponent()
 	if (IsLocalPlayerController())
 	{
 		InputComponent->BindKey(EKeys::M, IE_Pressed, this, &Aunreal_practicePlayerController::ToggleMap);
+		InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &Aunreal_practicePlayerController::ToggleInventory);
 
 		// Add Input Mapping Context
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
@@ -83,7 +85,9 @@ bool Aunreal_practicePlayerController::ShouldUseTouchControls() const
 void Aunreal_practicePlayerController::EndPlay(const EEndPlayReason::Type end_play_reason)
 {
 	CloseMap();
+	CloseInventory();
 	map_widget_ = nullptr;
+	inventory_widget_ = nullptr;
 	Super::EndPlay(end_play_reason);
 }
 
@@ -98,6 +102,7 @@ void Aunreal_practicePlayerController::ToggleMap()
 	{
 		return;
 	}
+	CloseInventory();
 	if (!map_widget_)
 	{
 		map_widget_ = CreateWidget<UWorldMapWidget>(this, map_widget_class_);
@@ -106,6 +111,7 @@ void Aunreal_practicePlayerController::ToggleMap()
 		return;
 		}
 		map_widget_->on_close_requested_.BindUObject(this, &Aunreal_practicePlayerController::CloseMap);
+		map_widget_->on_inventory_requested_.BindUObject(this, &Aunreal_practicePlayerController::ToggleInventory);
 	}
 	was_mouse_cursor_visible_ = bShowMouseCursor;
 	SetIgnoreLookInput(true);
@@ -125,6 +131,47 @@ void Aunreal_practicePlayerController::CloseMap()
 		return;
 	}
 	map_widget_->RemoveFromParent();
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = was_mouse_cursor_visible_;
+	SetInputMode(FInputModeGameOnly());
+}
+
+void Aunreal_practicePlayerController::ToggleInventory()
+{
+	if (inventory_widget_ && inventory_widget_->IsInViewport())
+	{
+		CloseInventory();
+		return;
+	}
+	if (!IsLocalController() || !GetPawn())
+	{
+		return;
+	}
+	CloseMap();
+	if (!inventory_widget_)
+	{
+		inventory_widget_ = CreateWidget<UInventoryWidget>(this, UInventoryWidget::StaticClass());
+		inventory_widget_->on_close_requested_.BindUObject(this, &Aunreal_practicePlayerController::CloseInventory);
+		inventory_widget_->on_map_requested_.BindUObject(this, &Aunreal_practicePlayerController::ToggleMap);
+	}
+	was_mouse_cursor_visible_ = bShowMouseCursor;
+	SetIgnoreLookInput(true);
+	inventory_widget_->AddToPlayerScreen(200);
+	bShowMouseCursor = true;
+	FInputModeGameAndUI input_mode;
+	input_mode.SetWidgetToFocus(inventory_widget_->TakeWidget());
+	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	input_mode.SetHideCursorDuringCapture(false);
+	SetInputMode(input_mode);
+}
+
+void Aunreal_practicePlayerController::CloseInventory()
+{
+	if (!inventory_widget_ || !inventory_widget_->IsInViewport())
+	{
+		return;
+	}
+	inventory_widget_->RemoveFromParent();
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());

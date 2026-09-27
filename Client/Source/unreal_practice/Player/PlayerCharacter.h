@@ -7,6 +7,7 @@
 #include "shot_result.h"
 #include "weapon_ammo_state.h"
 #include "equipment_display.h"
+#include "inventory_hint.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -17,6 +18,9 @@ struct FInputActionValue;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMeleeHit, const FHitResult&, hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnShotFired, const FShotResult&, shot);
+
+DECLARE_MULTICAST_DELEGATE(FOnEquipmentChanged);
+DECLARE_MULTICAST_DELEGATE(FOnHintsChanged);
 
 UCLASS()
 class UNREAL_PRACTICE_API APlayerCharacter : public ACharacter
@@ -30,6 +34,18 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	FEquipmentDisplay GetEquipmentDisplay() const;
+
+	FEquipmentDisplay GetWeaponDisplay(EWeaponType weapon) const;
+	EWeaponType GetCurrentWeapon() const { return current_weapon_; }
+	int32 GetPickaxeCharges() const { return pickaxe_charges_; }
+	const TArray<FInventoryHint>& GetAcquiredHints() const { return acquired_hints_; }
+
+	UFUNCTION(BlueprintCallable, Category = "Player|Inventory")
+	void AddHint(const FInventoryHint& hint);
+
+	void MarkHintsRead();
+	FOnEquipmentChanged on_equipment_changed_;
+	FOnHintsChanged on_hints_changed_;
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Weapon")
 	void SelectWeapon(EWeaponType weapon);
@@ -125,6 +141,11 @@ private:
 
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
 	TMap<EWeaponType, double> next_fire_times_;
+
+	UPROPERTY(Transient)
+	TArray<FInventoryHint> acquired_hints_;
+
+	int32 pickaxe_charges_ = 3;
 
 	bool is_equipping_ = false;
 	uint32 equip_id_ = 0;

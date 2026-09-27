@@ -9,6 +9,7 @@
 class UInputMappingContext;
 class UUserWidget;
 class UWorldMapWidget;
+class UInventoryWidget;
 
 /**
  *  Simple first person Player Controller
@@ -64,8 +65,13 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UWorldMapWidget> map_widget_;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UInventoryWidget> inventory_widget_;
+
 	bool was_mouse_cursor_visible_ = false;
 
 	void ToggleMap();
 	void CloseMap();
+	void ToggleInventory();
+	void CloseInventory();
 };
