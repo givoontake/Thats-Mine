@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <utility>
 #include "Matchmaker.h"
 #include "GameServer.h"
@@ -24,8 +25,9 @@ void Matchmaker::Register(int session_index, long long tick_time_ms)
 // 매칭 단계 한 주기. 로비 단계 안에서 한 스레드만 호출한다.
 void Matchmaker::RunCycle(long long tick_time_ms)
 {
-	std::array<int, MAX_ROOM_COUNT> joining_counts{};  // 방별로 입장 요청을 보내고 결과를 기다리는 인원
 	const int match_list_end = match_list_.GetEnd();
+	const int room_index_end = game_server_.GetThreadManager().GetGameThreadManager().GetRoomIndexEnd();
+	std::fill(joining_counts_.begin(), joining_counts_.begin() + room_index_end, 0);
 
 	// 1. 세션 상태로 입장 결과를 판단한다. 끝난 티켓(성공, 기한 초과, 연결 끊김 등)은 풀에서 뺀다.
 	for (int match_index = 0; match_index < match_list_end; ++match_index) {
@@ -35,7 +37,7 @@ void Matchmaker::RunCycle(long long tick_time_ms)
 		const SessionState state = session ? session->GetState() : SessionState{};
 		if (state.life == LifeState::ACTIVE && state.mode == ModeState::ROOM_PENDING) {
 			const int target_room_index = target_room_index_[session_index];
-			if (target_room_index >= 0 && target_room_index < MAX_ROOM_COUNT) ++joining_counts[target_room_index];
+			if (target_room_index >= 0 && target_room_index < room_index_end) ++joining_counts_[target_room_index];
 			continue;
 		}
 		if (state.life == LifeState::ACTIVE && state.mode == ModeState::MATCHING) {
@@ -48,29 +50,33 @@ void Matchmaker::RunCycle(long long tick_time_ms)
 	}
 
 	// 2. 대기 중인 티켓을 방에 나눠 배정한다.
-	const int room_index_end = game_server_.GetThreadManager().GetGameThreadManager().GetRoomIndexEnd();
-	for (int match_index = 0; match_index < match_list_end; ++match_index) {
+	// 앞 세션이 배정받은 방보다 앞쪽 방은 이번 주기에 빈자리가 없으므로, 다음 세션은 그 방부터 찾는다.
+	// 끝까지 찾아도 빈자리가 없으면 뒤의 세션도 배정받을 수 없으므로 이번 주기를 끝낸다.
+	int start_room_index = 0;
+	for (int match_index = 0; match_index < match_list_end && start_room_index < room_index_end; ++match_index) {
 		const int session_index = match_list_.GetValue(match_index);
 		if (session_index < 0) continue;
 		auto* session = game_server_.FindSessionByIndex(session_index);
 		if (!session || session->GetLifeState() != LifeState::ACTIVE || session->GetModeState() != ModeState::MATCHING) continue;
-		TryAssignRoom(*session, session_index, joining_counts, room_index_end);
+		start_room_index = TryAssignRoom(*session, session_index, start_room_index, room_index_end);
 	}
 }
 
 // 빈자리(정원 − 방 인원 − 이미 보낸 요청 수)가 있는 공개 대기방에 입장 요청을 보낸다.
 // 방 정보는 원자 변수만 읽는다. 그사이 방이 바뀌었으면 방이 입장 요청을 거절하고, 세션은 MATCHING으로 돌아와 다음 주기에 다시 배정된다.
-bool Matchmaker::TryAssignRoom(Session& session, int session_index, std::array<int, MAX_ROOM_COUNT>& joining_counts, int room_index_end)
+// 반환값은 다음 세션이 탐색을 시작할 방 번호다. 빈자리가 있는 방이 없으면 room_index_end를 반환한다.
+int Matchmaker::TryAssignRoom(Session& session, int session_index, int start_room_index, int room_index_end)
 {
-	for (int room_index = 0; room_index < room_index_end; ++room_index) {
+	for (int room_index = start_room_index; room_index < room_index_end; ++room_index) {
 		auto* room = game_server_.GetRoomByIndex(room_index);
 		if (!room || room->GetRoomState() != RoomState::WAIT || room->IsPrivate()) continue;
-		if (room->GetCurrentPlayerCount() + joining_counts[room_index] >= MAX_ROOM_PLAYER_COUNT) continue;
+		if (room->GetCurrentPlayerCount() + joining_counts_[room_index] >= MAX_ROOM_PLAYER_COUNT) continue;
 		const RoomKey room_key = room->GetRoomKey();
 		if (room_key == 0) continue;
 
 		// 전환 대기로 먼저 바꾼 뒤 입장 요청을 넣는다.
-		if (!session.TryChangeMode(ModeState::MATCHING, ModeState::ROOM_PENDING)) return false;
+		// 세션 상태가 바뀌어 전환하지 못한 것은 방 때문이 아니므로, 다음 세션은 이 방부터 다시 찾는다.
+		if (!session.TryChangeMode(ModeState::MATCHING, ModeState::ROOM_PENDING)) return room_index;
 		RoomTask task;
 		task.task_type = RoomTaskType::JOIN;
 		task.session_key = session.GetSessionKey();
@@ -82,8 +88,8 @@ bool Matchmaker::TryAssignRoom(Session& session, int session_index, std::array<i
 			continue;
 		}
 		target_room_index_[session_index] = room_index;
-		++joining_counts[room_index];
-		return true;
+		++joining_counts_[room_index];
+		return room_index;
 	}
-	return false;
+	return room_index_end;
 }

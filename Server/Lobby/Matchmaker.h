@@ -23,8 +23,11 @@ class Matchmaker
 	std::array<long long, MAX_PLAYER_COUNT> registered_time_ms_{};
 	// 세션 번호별로 입장 요청을 보낸 방 번호. 매칭 단계만 쓰며, 방별 요청 중 인원을 세어 빈자리 계산에 반영한다.
 	std::array<int, MAX_PLAYER_COUNT> target_room_index_{};
+	// 방 번호별 예약 인원(입장 요청을 보내고 결과를 기다리는 인원). 매칭 주기마다 순회 경계까지 0으로 초기화하고 다시 센다.
+	// 주기마다 지역 배열로 만들면 방 수가 늘어날 때 스택 사용량도 같이 늘어나므로 멤버로 둔다.
+	std::array<int, MAX_ROOM_COUNT> joining_counts_{};
 
-	bool TryAssignRoom(Session& session, int session_index, std::array<int, MAX_ROOM_COUNT>& joining_counts, int room_index_end);
+	int TryAssignRoom(Session& session, int session_index, int start_room_index, int room_index_end);
 
 public:
 	explicit Matchmaker(GameServer& game_server);
