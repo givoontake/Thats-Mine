@@ -15,6 +15,13 @@
 #include "Interaction/HintBox.h"
 #include "UI/EquipmentWidget.h"
 
+#if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
+#include "LocalDebug/Combat/CombatDebug.h"
+#define WITH_LOCAL_COMBAT_DEBUG 1
+#else
+#define WITH_LOCAL_COMBAT_DEBUG 0
+#endif
+
 APlayerCharacter::APlayerCharacter()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -436,6 +443,10 @@ void APlayerCharacter::ProcessMeleeHit(int32 montage_instance_id)
 	FHitResult hit;
 	const bool has_hit = world->LineTraceSingleByChannel(hit, start, end, active_melee_settings_.trace_channel, query);
 
+#if WITH_LOCAL_COMBAT_DEBUG
+	CombatDebug::DrawMelee(world, start, end, has_hit, hit);
+#endif
+
 	if (has_hit)
 	{
 		on_melee_hit_.Broadcast(hit);
@@ -509,6 +520,10 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 			shot.trace_end = shot.hit.ImpactPoint;
 		}
 	}
+
+#if WITH_LOCAL_COMBAT_DEBUG
+	CombatDebug::DrawShot(world, body_start, shot);
+#endif
 
 	if (ammo->rounds == 0 && shot.weapon != EWeaponType::PISTOL)
 	{
