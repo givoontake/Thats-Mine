@@ -10,6 +10,6 @@ public class Thats_MineEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
-		ExtraModuleNames.Add("unreal_practice");
+		ExtraModuleNames.Add("ThatsMine");
 	}
 }

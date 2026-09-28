@@ -10,6 +10,6 @@ public class Thats_MineTarget : TargetRules
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
-		ExtraModuleNames.Add("unreal_practice");
+		ExtraModuleNames.Add("ThatsMine");
 	}
 }
