@@ -378,7 +378,7 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		FinishRequest();
 		room_.is_playing = true;
 		flow->ChangeState(EClientState::LOADING);
-		UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Lvl_FirstPerson"));
+		UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Demo_Landmass"));
 		break;
 	}
 	case S2C_INFO: {

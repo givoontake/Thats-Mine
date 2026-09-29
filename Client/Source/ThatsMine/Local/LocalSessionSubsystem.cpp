@@ -151,7 +151,7 @@ void ULocalSessionSubsystem::StartGame()
 		}
 	}
 	state->ChangeState(EClientState::PLAYING);
-	UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Lvl_FirstPerson"));
+	UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Demo_Landmass"));
 }
 
 void ULocalSessionSubsystem::ReturnToLobby()
