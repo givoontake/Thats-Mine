@@ -56,3 +56,6 @@ Desktop.ini
 /Content/__ExternalActors__/Variant_Shooter/
 /Content/__ExternalObjects__/Variant_Horror/
 /Content/__ExternalObjects__/Variant_Shooter/
+
+# Claude Code local settings
+/.claude/
