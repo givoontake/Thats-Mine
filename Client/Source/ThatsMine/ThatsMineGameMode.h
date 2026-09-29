@@ -16,6 +16,10 @@ class AThatsMineGameMode : public AGameModeBase
 
 public:
 	AThatsMineGameMode();
+	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* new_player, AActor* start_spot) override;
+
+private:
+	TOptional<FTransform> GetStartDomeSpawn() const;
 };
 
 

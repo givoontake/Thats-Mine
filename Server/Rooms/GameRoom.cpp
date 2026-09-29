@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstring>
 #include <random>
 #include <utility>
@@ -8,6 +9,8 @@
 #include "packet_types.h"
 #include "common_packets.h"
 #include "room_packets.h"
+#include "game_packets.h"
+#include "spawn_points.h"
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
@@ -513,6 +516,23 @@ void GameRoom::StartGame(int requester_id)
 	}
 
 	if(!TryChangeRoomState(RoomState::WAIT, RoomState::PLAY)) return; // 상태 전환에 성공한 요청만 게임을 시작한다.
+
+	// 시작 좌표는 방 슬롯 번호로 정하고, 레벨을 열기 전에 받도록 시작 알림보다 먼저 보낸다.
+	S2C_SPAWN_PACKET spawn_p;
+	spawn_p.player_count = 0;
+	for (int slot = 0; slot < MAX_ROOM_PLAYER_COUNT; ++slot) {
+		if (!FindSession(room_players[slot])) continue;
+		const SpawnPoint& point = START_DOME_SPAWN_POINTS[slot];
+		auto& entry = spawn_p.entries[spawn_p.player_count++];
+		entry.player_id = room_players[slot].GetSessionKey().player_id;
+		entry.location[0] = point.x;
+		entry.location[1] = point.y;
+		entry.location[2] = point.z;
+		entry.yaw = point.yaw;
+	}
+	spawn_p.header.size = static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + spawn_p.player_count * sizeof(S2C_SPAWN_ENTRY));
+	spawn_p.header.type = S2C_SPAWN;
+	Broadcast(reinterpret_cast<char*>(&spawn_p));
 
 	S2C_MULTI_START_PACKET start_p;
 	start_p.header.size = static_cast<std::uint16_t>(sizeof(start_p));

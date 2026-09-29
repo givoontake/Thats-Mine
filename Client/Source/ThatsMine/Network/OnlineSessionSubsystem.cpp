@@ -12,7 +12,7 @@
 #include "game_protocol.h"
 
 #define LOCTEXT_NAMESPACE "OnlineSession"
-constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_INFO};
+constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_SPAWN, S2C_MULTI_START, S2C_INFO};
 
 template<typename T>
 static TOptional<T> ReadPacket(const TArray<uint8>& payload)
@@ -372,6 +372,23 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		for (auto& member : members_) member.is_host = member.player_key == host_key_;
 		break;
 	}
+	case S2C_SPAWN: {
+		// 항목 수만큼만 오는 가변 길이 패킷이다.
+		constexpr int32 ENTRIES_OFFSET = static_cast<int32>(offsetof(S2C_SPAWN_PACKET, entries) - sizeof(PACKET_HEADER));
+		if (payload.Num() < ENTRIES_OFFSET) { valid = false; break; }
+		const int32 player_count = payload[0];
+		if (player_count > MAX_ROOM_PLAYER_COUNT || payload.Num() != ENTRIES_OFFSET + player_count * static_cast<int32>(sizeof(S2C_SPAWN_ENTRY))) { valid = false; break; }
+		if (state != EClientState::ROOM) return;
+		spawn_transform_.Reset();
+		for (int32 index = 0; index < player_count; ++index)
+		{
+			S2C_SPAWN_ENTRY entry;
+			FMemory::Memcpy(&entry, payload.GetData() + ENTRIES_OFFSET + index * sizeof(S2C_SPAWN_ENTRY), sizeof(entry));
+			if (entry.player_id != player_key_) continue;
+			spawn_transform_ = FTransform(FRotator(0.0, entry.yaw, 0.0), FVector(entry.location[0], entry.location[1], entry.location[2]));
+		}
+		break;
+	}
 	case S2C_MULTI_START: {
 		if (!ReadPacket<S2C_MULTI_START_PACKET>(payload)) { valid = false; break; }
 		if (state != EClientState::ROOM) return;
@@ -408,6 +425,7 @@ void UOnlineSessionSubsystem::ResetSession()
 	room_ = {};
 	player_key_ = 0;
 	host_key_ = 0;
+	spawn_transform_.Reset();
 	nickname_.Reset();
 }
 

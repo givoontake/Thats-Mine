@@ -28,4 +28,5 @@ constexpr std::uint8_t C2S_JOIN_PRIVATE_ROOM = 50;
 constexpr std::uint8_t C2S_FAST_MATCHING = 51;  
 constexpr std::uint8_t C2S_REQUEST_LOBBY_PLAYER_LIST = 58;
 constexpr std::uint8_t S2C_LOBBY_PLAYER_INFO = 59;
+constexpr std::uint8_t S2C_SPAWN = 65;
 constexpr std::uint8_t S2C_INFO = 100;

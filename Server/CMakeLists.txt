@@ -55,6 +55,7 @@ add_executable(GameServer
     Common/IndexRegistry.h
     Common/info_code.h
     Common/settings.h
+    Common/spawn_points.h
     Common/types.h
     Core/GameServer.h
     Database/db_login_result.h
@@ -73,6 +74,7 @@ add_executable(GameServer
     Network/SessionManager.h
     Packets/common_packets.h
     Packets/database_packets.h
+    Packets/game_packets.h
     Packets/lobby_packets.h
     Packets/packet_types.h
     Packets/room_packets.h
