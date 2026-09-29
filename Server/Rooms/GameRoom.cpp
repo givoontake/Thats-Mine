@@ -62,6 +62,7 @@ void GameRoom::Reset()
 	for (auto& room_player : room_players_) room_player.ClearPlayer();
 	host_id_ = -1;
 	current_player_count_.store(0);
+	pending_action_count_ = 0;
 	room_state_.store(RoomState::EMPTY);
 }
 
@@ -245,6 +246,26 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		AddRoomTask(std::move(task));
 		break;
 	}
+	case C2S_MOVE:
+	case C2S_MOVE_INPUT: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player) break;
+		const bool is_input_change = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_MOVE_INPUT;
+		room_player->SetMoveState(reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state, tick_time_ms_, is_input_change);
+		break;
+	}
+	case C2S_ACTION: {
+		if (room_state_.load() != RoomState::PLAY || pending_action_count_ >= pending_actions_.size()) break;
+		const auto* request_p = reinterpret_cast<C2S_ACTION_PACKET*>(packet);
+		auto& action_p = pending_actions_[pending_action_count_++];
+		action_p.header = { sizeof(action_p), S2C_ACTION };
+		action_p.player_id = request_session.GetSessionKey().player_id;
+		action_p.server_time_ms = tick_time_ms_;
+		action_p.action = request_p->action;
+		action_p.weapon = request_p->weapon;
+		break;
+	}
 	default:
 		break;
 	}
@@ -326,6 +347,7 @@ void GameRoom::ProcessRoomTasks()
 
 void GameRoom::ProcessRoomTick(long long tick_time_ms)
 {
+	tick_time_ms_ = tick_time_ms;
 	ProcessRoomTasks();
 	ProcessSessionTasks();
 	ProcessRoomTasks();
@@ -562,8 +584,44 @@ void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
 	}
 }
 
-void GameRoom::ProcessGameTick(long long)
+// 중계할 이동 상태와 이번 틱에 받은 동작을 모아 받는 사람마다 한 번에 보낸다. 보낸 사람 것도 포함되며 클라이언트가 거른다.
+void GameRoom::ProcessGameTick(long long tick_time_ms)
 {
+	char send_buffer[BUF_SIZE];
+	int send_data_size = 0;
+	const auto flush = [&]() {
+		if (send_data_size == 0) return;
+		for (auto& room_player : room_players_) {
+			auto session = FindSession(room_player);
+			if (!session) continue;
+			session->SendPacket(send_buffer, send_data_size);
+		}
+		send_data_size = 0;
+	};
+	const auto append = [&](const void* packet, int packet_size) {
+		if (send_data_size + packet_size > BUF_SIZE) flush();
+		memcpy(send_buffer + send_data_size, packet, packet_size);
+		send_data_size += packet_size;
+	};
+
+	S2C_MOVE_PACKET move_p;
+	move_p.player_count = 0;
+	for (auto& room_player : room_players_) {
+		if (!room_player.HasSession() || !room_player.CanRelayMoveState(tick_time_ms)) continue;
+		auto& entry = move_p.entries[move_p.player_count++];
+		entry.player_id = room_player.GetSessionKey().player_id;
+		entry.server_time_ms = room_player.GetMoveTimeMs();
+		entry.move_state = room_player.GetMoveState();
+		room_player.MarkMoveStateRelayed(tick_time_ms);
+	}
+	if (move_p.player_count > 0) {
+		const int move_size = static_cast<int>(offsetof(S2C_MOVE_PACKET, entries) + move_p.player_count * sizeof(S2C_MOVE_ENTRY));
+		move_p.header = { static_cast<std::uint16_t>(move_size), S2C_MOVE };
+		append(&move_p, move_size);
+	}
+	for (std::size_t i = 0; i < pending_action_count_; ++i) append(&pending_actions_[i], sizeof(pending_actions_[i]));
+	pending_action_count_ = 0;
+	flush();
 }
 
 void GameRoom::FindNewHost()

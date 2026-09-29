@@ -72,6 +72,11 @@ private:
 	std::array<Player, MAX_ROOM_PLAYER_COUNT> room_players_;
 	int host_id_ = -1;
 	std::atomic<char> current_player_count_{ 0 };
+	// 현재 처리 중인 틱 시각. 받은 이동 상태와 동작에 서버 시각으로 기록한다.
+	long long tick_time_ms_ = 0;
+	// 이번 틱에 받은 동작. 덮어쓰지 않고 틱 끝에 이동 상태와 함께 보낸다.
+	std::array<S2C_ACTION_PACKET, MAX_ROOM_ACTIONS_PER_TICK> pending_actions_{};
+	std::size_t pending_action_count_ = 0;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);

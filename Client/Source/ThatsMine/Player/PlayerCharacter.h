@@ -8,6 +8,7 @@
 #include "weapon_ammo_state.h"
 #include "equipment_display.h"
 #include "inventory_hint.h"
+#include "player_action.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -21,6 +22,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnShotFired, const FShotResult&, sh
 
 DECLARE_MULTICAST_DELEGATE(FOnEquipmentChanged);
 DECLARE_MULTICAST_DELEGATE(FOnHintsChanged);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnActionStarted, EPlayerAction, EWeaponType);
 
 UCLASS()
 class THATSMINE_API APlayerCharacter : public ACharacter
@@ -31,6 +33,16 @@ public:
 	APlayerCharacter();
 	virtual void PawnClientRestart() override;
 	virtual void UnPossessed() override;
+	virtual FRotator GetViewRotation() const override;
+
+	// 이동 입력(X 오른쪽, Y 앞쪽)을 이동 계산에 넣는다. 다른 플레이어는 받은 입력으로 호출한다.
+	void ApplyMovementInput(const FVector2D& movement);
+
+	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
+	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
+
+	// 내 캐릭터가 동작을 시작했을 때 알린다.
+	FOnActionStarted on_action_started_;
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	FEquipmentDisplay GetEquipmentDisplay() const;
@@ -159,7 +171,7 @@ private:
 	void SelectWeaponFromKey(FKey key);
 	void UpdateWeaponVisuals();
 	void SetAiming(bool is_aiming);
-	void PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit = nullptr);
+	bool PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit = nullptr);
 	void FinishAction(uint32 action_id);
 	void FireHitscan(const FHitscanSettings& settings);
 	void BeginReload(EWeaponType weapon);

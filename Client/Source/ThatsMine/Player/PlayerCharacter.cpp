@@ -13,6 +13,7 @@
 #include "GameFramework/PlayerController.h"
 #include "InputActionValue.h"
 #include "Interaction/HintBox.h"
+#include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
@@ -182,7 +183,11 @@ void APlayerCharacter::Interact()
 
 void APlayerCharacter::Move(const FInputActionValue& value)
 {
-	const FVector2D movement = value.Get<FVector2D>();
+	ApplyMovementInput(value.Get<FVector2D>());
+}
+
+void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
+{
 	GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? forward_speed_ * 0.5f : forward_speed_;
 	AddMovementInput(GetActorForwardVector(), movement.Y);
 	AddMovementInput(GetActorRightVector(), movement.X);
@@ -339,28 +344,31 @@ void APlayerCharacter::PrimaryAction()
 		{
 			FireHitscan(settings->hitscan);
 		}
-		else
+		else if (PlayAction(settings->primary_action, &settings->melee_hit))
 		{
-			PlayAction(settings->primary_action, &settings->melee_hit);
+			on_action_started_.Broadcast(EPlayerAction::MELEE, current_weapon_);
 		}
 	}
 }
 
 void APlayerCharacter::PickUp()
 {
-	PlayAction(pickup_action_);
+	if (PlayAction(pickup_action_))
+	{
+		on_action_started_.Broadcast(EPlayerAction::PICKUP, current_weapon_);
+	}
 }
 
-void APlayerCharacter::PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit)
+bool APlayerCharacter::PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit)
 {
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
 	if (is_action_locked_ || GetCharacterMovement()->IsFalling() || !action.montage || !anim_instance || action.play_rate <= 0.0f)
 	{
-		return;
+		return false;
 	}
 	if (anim_instance->Montage_Play(action.montage, action.play_rate) <= 0.0f)
 	{
-		return;
+		return false;
 	}
 
 	is_action_locked_ = true;
@@ -389,6 +397,7 @@ void APlayerCharacter::PlayAction(const FActionSettings& action, const FMeleeHit
 		}
 	});
 	anim_instance->Montage_SetBlendingOutDelegate(blending_out, action.montage);
+	return true;
 }
 
 void APlayerCharacter::FinishAction(uint32 action_id)
@@ -476,6 +485,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
 	next_fire_times_.Add(current_weapon_, now + FMath::Max(0.01f, settings.fire_interval));
 	--ammo->rounds;
+	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
@@ -575,6 +585,63 @@ void APlayerCharacter::PawnClientRestart()
 	UpdateEquipmentDisplay();
 }
 
+FRotator APlayerCharacter::GetViewRotation() const
+{
+	// 조종자가 없는 다른 플레이어는 받은 시선 상하 각도를 쓴다.
+	if (!GetController())
+	{
+		if (const URemoteMovementComponent* remote_movement = FindComponentByClass<URemoteMovementComponent>())
+		{
+			return FRotator(remote_movement->GetViewPitch(), GetActorRotation().Yaw, 0.0f);
+		}
+	}
+	return Super::GetViewRotation();
+}
+
+void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon)
+{
+	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+	if (!anim_instance)
+	{
+		return;
+	}
+	if (action == EPlayerAction::PICKUP)
+	{
+		if (pickup_action_.montage)
+		{
+			anim_instance->Montage_Play(pickup_action_.montage, pickup_action_.play_rate);
+		}
+		return;
+	}
+	// 재장전은 무기를 바꾼 뒤에도 이어지므로 들고 있는 무기의 재장전만 재생한다. 발사와 휘두르기는 그 무기를 든 상태에서만 일어난다.
+	if (weapon != current_weapon_)
+	{
+		if (action == EPlayerAction::RELOAD)
+		{
+			return;
+		}
+		SelectWeapon(weapon);
+	}
+	const FWeaponSettings* settings = GetCurrentWeaponSettings();
+	if (!settings)
+	{
+		return;
+	}
+	if (action == EPlayerAction::RELOAD)
+	{
+		if (UAnimMontage* montage = settings->hitscan.reload_montage)
+		{
+			anim_instance->Montage_Play(montage, montage->GetPlayLength() / FMath::Max(0.01f, settings->hitscan.reload_duration), EMontagePlayReturnType::MontageLength, 0.0f, false);
+		}
+		return;
+	}
+	// 발사와 휘두르기는 들고 있는 무기의 기본 동작을 재생한다.
+	if (settings->primary_action.montage)
+	{
+		anim_instance->Montage_Play(settings->primary_action.montage, settings->primary_action.play_rate, EMontagePlayReturnType::MontageLength, 0.0f, action == EPlayerAction::MELEE);
+	}
+}
+
 void APlayerCharacter::UnPossessed()
 {
 	if (equipment_widget_)
@@ -648,6 +715,7 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 	const FTimerDelegate completed = FTimerDelegate::CreateUObject(this, &APlayerCharacter::FinishReload, weapon);
 	GetWorldTimerManager().SetTimer(ammo->reload_timer, completed, FMath::Max(0.01f, settings->hitscan.reload_duration), false);
 	PlayReloadAnimation(weapon);
+	on_action_started_.Broadcast(EPlayerAction::RELOAD, weapon);
 }
 
 void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)

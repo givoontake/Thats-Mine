@@ -32,6 +32,7 @@ void Player::ClearPlayer()
 	room_player_state_.store(RoomPlayerState::WAIT);
 
 	ClearSendBuffer();
+	ClearMoveState();
 }
 
 void Player::ResetGameData()
@@ -39,6 +40,31 @@ void Player::ResetGameData()
 	room_player_state_.store(RoomPlayerState::WAIT);
 
 	ClearSendBuffer();
+	ClearMoveState();
+}
+
+void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change)
+{
+	move_state_ = move_state;
+	move_time_ms_ = time_ms;
+	has_new_move_state_ = true;
+	has_input_change_ = has_input_change_ || is_input_change;
+}
+
+void Player::MarkMoveStateRelayed(long long tick_time_ms)
+{
+	last_move_relay_ms_ = tick_time_ms;
+	has_new_move_state_ = false;
+	has_input_change_ = false;
+}
+
+void Player::ClearMoveState()
+{
+	move_state_ = {};
+	move_time_ms_ = 0;
+	last_move_relay_ms_ = 0;
+	has_new_move_state_ = false;
+	has_input_change_ = false;
 }
 
 bool Player::AddToSendBuffer(const char* data, int data_size)
