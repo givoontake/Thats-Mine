@@ -78,7 +78,7 @@ void GameServer::CompleteAccept()
 
 void GameServer::StartThreads()
 {
-	thread_manager_ = std::make_unique<ServerThreadManager>(*this);
+	thread_manager_ = std::make_unique<ServerThreadManager>(*this, TickWaitPolicy::FULL_SLEEP);
 	thread_manager_->StartThreads();
 }
 
