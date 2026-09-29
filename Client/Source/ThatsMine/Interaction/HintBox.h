@@ -37,8 +37,9 @@ private:
 	UPROPERTY()
 	TObjectPtr<UStaticMesh> open_mesh_;
 
+	// 나이아가라 에셋은 게임 초기화 중 클래스 기본 객체를 만들 때 불러오면 쿠킹된 빌드가 종료되므로, 경로만 두고 처음 열 때 불러온다.
 	UPROPERTY()
-	TObjectPtr<UNiagaraSystem> open_effect_;
+	TSoftObjectPtr<UNiagaraSystem> open_effect_;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USkeletalMeshComponent> animated_mesh_;
