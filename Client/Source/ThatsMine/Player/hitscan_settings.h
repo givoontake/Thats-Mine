@@ -5,6 +5,7 @@
 #include "hitscan_settings.generated.h"
 
 class UAnimMontage;
+class UNiagaraSystem;
 
 USTRUCT(BlueprintType)
 struct FHitscanSettings
@@ -31,6 +32,13 @@ struct FHitscanSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled"))
 	FName muzzle_socket = TEXT("Muzzle");
+
+	// 발사할 때 총구 소켓에 붙여 재생한다. 쓰기 전까지 불러오지 않는다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled"))
+	TSoftObjectPtr<UNiagaraSystem> muzzle_effect;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled", ClampMin = "0.01"))
+	float muzzle_effect_scale = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled", Units = "cm"))
 	float body_height = 30.0f;

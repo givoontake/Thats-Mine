@@ -12,6 +12,9 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "InputActionValue.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
@@ -486,6 +489,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	next_fire_times_.Add(current_weapon_, now + FMath::Max(0.01f, settings.fire_interval));
 	--ammo->rounds;
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
+	PlayMuzzleEffect(settings);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
@@ -598,6 +602,22 @@ FRotator APlayerCharacter::GetViewRotation() const
 	return Super::GetViewRotation();
 }
 
+void APlayerCharacter::PlayMuzzleEffect(const FHitscanSettings& settings)
+{
+	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
+	UNiagaraSystem* effect = settings.muzzle_effect.LoadSynchronous();
+	if (!effect || !IsValid(weapon_mesh))
+	{
+		return;
+	}
+	UNiagaraComponent* component = UNiagaraFunctionLibrary::SpawnSystemAttached(effect, weapon_mesh, settings.muzzle_socket, FVector::ZeroVector, FRotator::ZeroRotator, FVector(settings.muzzle_effect_scale), EAttachLocation::SnapToTarget, true, ENCPoolMethod::AutoRelease);
+	// 무기 메시는 원본 단위 때문에 배율이 매우 작아서, 이펙트 크기는 무기 배율을 물려받지 않고 설정값을 그대로 쓴다.
+	if (component)
+	{
+		component->SetUsingAbsoluteScale(true);
+	}
+}
+
 void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon)
 {
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
@@ -634,6 +654,10 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 			anim_instance->Montage_Play(montage, montage->GetPlayLength() / FMath::Max(0.01f, settings->hitscan.reload_duration), EMontagePlayReturnType::MontageLength, 0.0f, false);
 		}
 		return;
+	}
+	if (action == EPlayerAction::FIRE)
+	{
+		PlayMuzzleEffect(settings->hitscan);
 	}
 	// 발사와 휘두르기는 들고 있는 무기의 기본 동작을 재생한다.
 	if (settings->primary_action.montage)

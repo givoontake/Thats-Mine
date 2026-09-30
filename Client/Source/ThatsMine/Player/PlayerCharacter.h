@@ -174,6 +174,7 @@ private:
 	bool PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit = nullptr);
 	void FinishAction(uint32 action_id);
 	void FireHitscan(const FHitscanSettings& settings);
+	void PlayMuzzleEffect(const FHitscanSettings& settings);
 	void BeginReload(EWeaponType weapon);
 	void FinishReload(EWeaponType weapon);
 	void PlayReloadAnimation(EWeaponType weapon);
