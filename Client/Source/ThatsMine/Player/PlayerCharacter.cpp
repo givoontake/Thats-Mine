@@ -104,6 +104,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	for (auto& [weapon, ammo] : weapon_ammo_)
 	{
 		GetWorldTimerManager().ClearTimer(ammo.reload_timer);
+		GetWorldTimerManager().ClearTimer(ammo.shot_wait_timer);
 	}
 	if (equipment_widget_)
 	{
@@ -570,15 +571,14 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		{
 			// 마지막 권총 반동이 끝난 뒤 재장전을 시작한다. 대기 중에는 재장전 동작을 재생하지 않는다.
 			ammo->is_waiting_for_shot = true;
+			// 실행 중인 타이머를 지우면 이 람다도 함께 해제되므로, 람다 안에서 대기 타이머를 지우지 않는다.
 			const FTimerDelegate completed = FTimerDelegate::CreateWeakLambda(this, [this, weapon = shot.weapon]()
 			{
-				FWeaponAmmoState& ammo = weapon_ammo_.FindChecked(weapon);
-				ammo.is_waiting_for_shot = false;
-				GetWorldTimerManager().ClearTimer(ammo.reload_timer);
+				weapon_ammo_.FindChecked(weapon).is_waiting_for_shot = false;
 				BeginReload(weapon);
 				UpdateEquipmentDisplay();
 			});
-			GetWorldTimerManager().SetTimer(ammo->reload_timer, completed, fire_duration, false);
+			GetWorldTimerManager().SetTimer(ammo->shot_wait_timer, completed, fire_duration, false);
 		}
 		else
 		{
@@ -709,7 +709,7 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
 			{
 				display.rounds = ammo->rounds;
-				display.is_reloading = GetWorldTimerManager().IsTimerActive(ammo->reload_timer);
+				display.is_reloading = ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer);
 			}
 		}
 	}
@@ -744,7 +744,7 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if ((weapon == current_weapon_ && is_equipping_) || !ammo || !settings || !settings->hitscan.is_enabled || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if ((weapon == current_weapon_ && is_equipping_) || !ammo || !settings || !settings->hitscan.is_enabled || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
 	{
 		return;
 	}
