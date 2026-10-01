@@ -34,4 +34,6 @@ constexpr std::uint8_t C2S_ACTION = 62;
 constexpr std::uint8_t S2C_ACTION = 63;
 constexpr std::uint8_t C2S_MOVE_INPUT = 64; // 입력 변화가 있는 이동 상태. C2S_MOVE_PACKET과 같은 구조이며 중계 간격 없이 처리한다.
 constexpr std::uint8_t S2C_SPAWN = 65;
+constexpr std::uint8_t C2S_LOAD_COMPLETE = 66;
+constexpr std::uint8_t S2C_PLAY_START = 67;
 constexpr std::uint8_t S2C_INFO = 100;

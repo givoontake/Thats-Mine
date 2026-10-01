@@ -77,6 +77,9 @@ private:
 	// 이번 틱에 받은 동작. 덮어쓰지 않고 틱 끝에 이동 상태와 함께 보낸다.
 	std::array<S2C_ACTION_PACKET, MAX_ROOM_ACTIONS_PER_TICK> pending_actions_{};
 	std::size_t pending_action_count_ = 0;
+	// 전원 로딩 완료를 기다리는 마감 시각과, 첫 스폰으로 플레이가 시작됐는지 여부
+	long long loading_deadline_ms_ = 0;
+	bool is_play_started_ = false;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -92,6 +95,7 @@ private:
 	int AddPlayer(Session& new_session, SessionKey session_key, const char* room_password);
 	void ProcessSpecificRoomTask(const RoomTask& task);
 	void ProcessGameTick(long long tick_time_ms);
+	void ProcessLoadedPlayers();
 	void StartGame(int requester_id);
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환

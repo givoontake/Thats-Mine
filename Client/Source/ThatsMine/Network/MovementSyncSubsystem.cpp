@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/GameModeBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameNetworkSubsystem.h"
 #include "OnlineSessionSubsystem.h"
@@ -241,7 +242,8 @@ void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)
 		APlayerCharacter* remote = FindRemotePlayer(entry.player_id);
 		if (!remote)
 		{
-			remote = SpawnRemotePlayer(entry.player_id, state);
+			// 스폰 패킷보다 이동 패킷이 먼저 온 플레이어는 받은 위치에 만든다.
+			remote = SpawnRemotePlayer(entry.player_id, FTransform(FRotator(0.0f, state.yaw, 0.0f), state.location));
 		}
 		if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 		{
@@ -263,7 +265,7 @@ void UMovementSyncSubsystem::HandleActionPacket(const TArray<uint8>& payload)
 	{
 		return;
 	}
-	// 아직 이동 상태를 받지 못해 캐릭터가 없는 플레이어의 동작은 버린다.
+	// 아직 스폰되지 않아 캐릭터가 없는 플레이어의 동작은 버린다.
 	if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
 	{
 		remote->PlayRemoteAction(static_cast<EPlayerAction>(packet.action), ToWeaponType(packet.weapon));
@@ -300,16 +302,19 @@ APlayerCharacter* UMovementSyncSubsystem::FindRemotePlayer(int32 player_id) cons
 	return remote ? remote->Get() : nullptr;
 }
 
-APlayerCharacter* UMovementSyncSubsystem::SpawnRemotePlayer(int32 player_id, const FRemoteMoveState& state)
+APlayerCharacter* UMovementSyncSubsystem::SpawnRemotePlayer(int32 player_id, const FTransform& transform)
 {
-	const APlayerCharacter* character = local_character_.Get();
-	if (!character)
+	if (APlayerCharacter* remote = FindRemotePlayer(player_id))
+	{
+		return remote;
+	}
+	const AGameModeBase* game_mode = GetWorld()->GetAuthGameMode();
+	if (!game_mode || !game_mode->DefaultPawnClass)
 	{
 		return nullptr;
 	}
 	// 내 캐릭터와 같은 클래스로 만들되 조종자 없이 둔다.
-	const FTransform transform(FRotator(0.0f, state.yaw, 0.0f), state.location);
-	APlayerCharacter* remote = GetWorld()->SpawnActorDeferred<APlayerCharacter>(character->GetClass(), transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	APlayerCharacter* remote = GetWorld()->SpawnActorDeferred<APlayerCharacter>(game_mode->DefaultPawnClass, transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 	if (!remote)
 	{
 		return nullptr;

@@ -334,6 +334,19 @@ USceneComponent* APlayerCharacter::GetEquippedWeaponMesh() const
 	return mesh ? mesh->Get() : nullptr;
 }
 
+TArray<FSoftObjectPath> APlayerCharacter::GetPreloadAssets() const
+{
+	TArray<FSoftObjectPath> assets;
+	for (const auto& [weapon, settings] : weapon_settings_)
+	{
+		if (!settings.hitscan.muzzle_effect.IsNull())
+		{
+			assets.AddUnique(settings.hitscan.muzzle_effect.ToSoftObjectPath());
+		}
+	}
+	return assets;
+}
+
 bool APlayerCharacter::IsAiming() const
 {
 	return is_aiming_;

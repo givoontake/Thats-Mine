@@ -36,8 +36,6 @@ public:
 	bool IsPending() const { return pending_request_ != OnlineRequest::NONE; }
 	bool CanStart() const;
 	bool IsLoggedIn() const { return player_key_ > 0; }
-	// 서버가 게임 시작 직전에 정해 준 내 시작 위치. 받기 전에는 비어 있다.
-	const TOptional<FTransform>& GetSpawnTransform() const { return spawn_transform_; }
 	FOnOnlineSessionChanged on_changed_;
 
 private:
@@ -56,14 +54,12 @@ private:
 	void ResetSession();
 	void EnterRoom(const FLobbyRoomInfo& room);
 	void ReturnToLogin(const FText& message);
-	void HandleMapLoaded(UWorld* world);
 	TArray<FLobbyRoomInfo> rooms_;
 	FLobbyRoomInfo room_;
 	TArray<FRoomMemberInfo> members_;
 	int64 player_key_ = 0;
 	int64 host_key_ = 0;
 	int64 pending_kick_key_ = 0;
-	TOptional<FTransform> spawn_transform_;
 	FString nickname_;
 	FText status_;
 	OnlineRequest pending_request_ = OnlineRequest::NONE;

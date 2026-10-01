@@ -250,13 +250,15 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	case C2S_MOVE_INPUT: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const bool is_input_change = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_MOVE_INPUT;
 		room_player->SetMoveState(reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state, tick_time_ms_, is_input_change);
 		break;
 	}
 	case C2S_ACTION: {
 		if (room_state_.load() != RoomState::PLAY || pending_action_count_ >= pending_actions_.size()) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const auto* request_p = reinterpret_cast<C2S_ACTION_PACKET*>(packet);
 		auto& action_p = pending_actions_[pending_action_count_++];
 		action_p.header = { sizeof(action_p), S2C_ACTION };
@@ -264,6 +266,12 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		action_p.server_time_ms = tick_time_ms_;
 		action_p.action = request_p->action;
 		action_p.weapon = request_p->weapon;
+		break;
+	}
+	case C2S_LOAD_COMPLETE: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (room_player && room_player->GetRoomPlayerState() == RoomPlayerState::LOADING) room_player->SetRoomPlayerState(RoomPlayerState::LOADED);
 		break;
 	}
 	default:
@@ -539,31 +547,16 @@ void GameRoom::StartGame(int requester_id)
 
 	if(!TryChangeRoomState(RoomState::WAIT, RoomState::PLAY)) return; // 상태 전환에 성공한 요청만 게임을 시작한다.
 
-	// 시작 좌표는 방 슬롯 번호로 정하고, 레벨을 열기 전에 받도록 시작 알림보다 먼저 보낸다.
-	S2C_SPAWN_PACKET spawn_p;
-	spawn_p.player_count = 0;
-	for (int slot = 0; slot < MAX_ROOM_PLAYER_COUNT; ++slot) {
-		if (!FindSession(room_players[slot])) continue;
-		const SpawnPoint& point = START_DOME_SPAWN_POINTS[slot];
-		auto& entry = spawn_p.entries[spawn_p.player_count++];
-		entry.player_id = room_players[slot].GetSessionKey().player_id;
-		entry.location[0] = point.x;
-		entry.location[1] = point.y;
-		entry.location[2] = point.z;
-		entry.yaw = point.yaw;
-	}
-	spawn_p.header.size = static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + spawn_p.player_count * sizeof(S2C_SPAWN_ENTRY));
-	spawn_p.header.type = S2C_SPAWN;
-	Broadcast(reinterpret_cast<char*>(&spawn_p));
-
 	S2C_MULTI_START_PACKET start_p;
 	start_p.header.size = static_cast<std::uint16_t>(sizeof(start_p));
 	start_p.header.type = S2C_MULTI_START;
 	Broadcast(reinterpret_cast<char*>(&start_p));
-	// 시작 조건을 충족한 플레이어를 게임 상태로 전환한다.
+	// 시작 조건을 충족한 플레이어를 로딩 상태로 전환하고, 로딩 완료를 기다린다.
 	for (auto& room_player : room_players) {
-		if (FindSession(room_player)) room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
+		if (FindSession(room_player)) room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
 	}
+	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
+	is_play_started_ = false;
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -587,13 +580,14 @@ void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
 // 중계할 이동 상태와 이번 틱에 받은 동작을 모아 받는 사람마다 한 번에 보낸다. 보낸 사람 것도 포함되며 클라이언트가 거른다.
 void GameRoom::ProcessGameTick(long long tick_time_ms)
 {
+	ProcessLoadedPlayers();
 	char send_buffer[BUF_SIZE];
 	int send_data_size = 0;
 	const auto flush = [&]() {
 		if (send_data_size == 0) return;
 		for (auto& room_player : room_players_) {
 			auto session = FindSession(room_player);
-			if (!session) continue;
+			if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
 			session->SendPacket(send_buffer, send_data_size);
 		}
 		send_data_size = 0;
@@ -622,6 +616,56 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	for (std::size_t i = 0; i < pending_action_count_; ++i) append(&pending_actions_[i], sizeof(pending_actions_[i]));
 	pending_action_count_ = 0;
 	flush();
+}
+
+// 로딩을 마친 플레이어를 스폰하고 플레이를 시작시킨다.
+// 처음에는 전원이 마치거나 제한 시간이 지날 때 한 번에 시작하고, 그 뒤에 마친 플레이어는 마치는 대로 합류시킨다.
+void GameRoom::ProcessLoadedPlayers()
+{
+	bool has_loading_player = false;
+	bool has_loaded_player = false;
+	for (auto& room_player : room_players_) {
+		if (!FindSession(room_player)) continue;
+		has_loading_player |= room_player.GetRoomPlayerState() == RoomPlayerState::LOADING;
+		has_loaded_player |= room_player.GetRoomPlayerState() == RoomPlayerState::LOADED;
+	}
+	if (!has_loaded_player) return;
+	if (!is_play_started_ && has_loading_player && tick_time_ms_ < loading_deadline_ms_) return;
+
+	// 시작 좌표는 방 슬롯 번호로 정한다. 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
+	S2C_SPAWN_PACKET joined_p;
+	S2C_SPAWN_PACKET all_p;
+	joined_p.player_count = 0;
+	all_p.player_count = 0;
+	for (int slot = 0; slot < MAX_ROOM_PLAYER_COUNT; ++slot) {
+		auto& room_player = room_players_[slot];
+		if (!FindSession(room_player)) continue;
+		const RoomPlayerState state = room_player.GetRoomPlayerState();
+		if (state != RoomPlayerState::LOADED && state != RoomPlayerState::PLAY) continue;
+		const SpawnPoint& point = START_DOME_SPAWN_POINTS[slot];
+		const S2C_SPAWN_ENTRY entry{ room_player.GetSessionKey().player_id, { point.x, point.y, point.z }, point.yaw };
+		all_p.entries[all_p.player_count++] = entry;
+		if (state == RoomPlayerState::LOADED) joined_p.entries[joined_p.player_count++] = entry;
+	}
+	joined_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + joined_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
+	all_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + all_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
+	S2C_PLAY_START_PACKET start_p;
+	start_p.header = { static_cast<std::uint16_t>(sizeof(start_p)), S2C_PLAY_START };
+
+	// 합류하는 플레이어는 전원의 스폰과 시작을, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (!session) continue;
+		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
+			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
+			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
+			room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
+		}
+		else if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) {
+			session->SendPacket(reinterpret_cast<char*>(&joined_p), joined_p.header.size);
+		}
+	}
+	is_play_started_ = true;
 }
 
 void GameRoom::FindNewHost()

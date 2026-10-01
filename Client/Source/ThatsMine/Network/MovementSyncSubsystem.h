@@ -22,6 +22,8 @@ public:
 	virtual void Tick(float delta_seconds) override;
 	virtual bool IsTickable() const override;
 	virtual TStatId GetStatId() const override;
+	// 다른 플레이어 캐릭터를 조종자 없이 만든다. 이미 있으면 그 캐릭터를 돌려준다.
+	APlayerCharacter* SpawnRemotePlayer(int32 player_id, const FTransform& transform);
 
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;
@@ -34,7 +36,6 @@ private:
 	void RemoveLeftPlayers();
 	void HandleInvalidPacket();
 	APlayerCharacter* FindRemotePlayer(int32 player_id) const;
-	APlayerCharacter* SpawnRemotePlayer(int32 player_id, const FRemoteMoveState& state);
 
 	TMap<int32, TWeakObjectPtr<APlayerCharacter>> remote_players_;
 	TWeakObjectPtr<APlayerCharacter> local_character_;

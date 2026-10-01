@@ -16,10 +16,10 @@ class AThatsMineGameMode : public AGameModeBase
 
 public:
 	AThatsMineGameMode();
+	virtual bool PlayerCanRestart_Implementation(APlayerController* player) override;
 	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* new_player, AActor* start_spot) override;
-
-private:
-	TOptional<FTransform> GetStartDomeSpawn() const;
+	// 스폰 좌표 아래 바닥에 캐릭터가 서는 위치를 구한다.
+	FTransform FindStartTransform(const FTransform& spawn) const;
 };
 
 

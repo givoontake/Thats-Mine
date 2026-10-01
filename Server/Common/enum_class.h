@@ -6,7 +6,8 @@
 enum class OPType { SEND, POOLED_SEND, RECV, ACCEPT, DB };
 
 
-enum class RoomPlayerState { EMPTY, WAIT, READY, PLAY };
+// LOADING: 게임 레벨을 불러오는 중, LOADED: 로딩을 마치고 스폰을 기다리는 중
+enum class RoomPlayerState { EMPTY, WAIT, READY, LOADING, LOADED, PLAY };
 
 enum class RoomState { EMPTY, INITIALIZING, WAIT, PLAY, WAITING_DELETE, DELETE_POST };
 

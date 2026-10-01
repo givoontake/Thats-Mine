@@ -57,11 +57,21 @@ struct S2C_SPAWN_ENTRY {
 	float yaw;
 };
 
-// 게임 시작 직전에 방 인원 전체의 시작 좌표를 보낸다. 실제 크기는 player_count개의 항목까지다.
+// 로딩을 마친 플레이어들의 시작 좌표. 실제 크기는 player_count개의 항목까지다.
 struct S2C_SPAWN_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t player_count;
 	S2C_SPAWN_ENTRY entries[MAX_ROOM_PLAYER_COUNT];
+};
+
+// 게임 레벨을 불러오고 준비를 마쳤다.
+struct C2S_LOAD_COMPLETE_PACKET {
+	PACKET_HEADER header;
+};
+
+// 스폰이 끝났으니 로딩 화면을 닫고 플레이를 시작한다. 받는 플레이어의 스폰 패킷 바로 뒤에 보낸다.
+struct S2C_PLAY_START_PACKET {
+	PACKET_HEADER header;
 };
 
 #pragma pack(pop)

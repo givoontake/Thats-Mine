@@ -79,6 +79,8 @@ public:
 
 	const FWeaponSettings* GetCurrentWeaponSettings() const;
 	USceneComponent* GetEquippedWeaponMesh() const;
+	// 처음 쓸 때 불러오는 에셋 목록. 게임 시작 전에 미리 불러 둔다.
+	TArray<FSoftObjectPath> GetPreloadAssets() const;
 	bool IsAiming() const;
 
 	void ProcessMeleeHit(int32 montage_instance_id);
