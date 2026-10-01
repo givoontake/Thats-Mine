@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
+#include "locomotion_cardinal.h"
 #include "PlayerAnimInstance.generated.h"
 
 class APlayerCharacter;
@@ -21,6 +22,13 @@ protected:
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	double direction_ = 0.0;
+
+	// 이동 애니메이션을 고르는 기준 방향과, 실제 이동 방향까지 하체를 돌릴 각도
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	ELocomotionCardinal locomotion_cardinal_ = ELocomotionCardinal::FORWARD;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	float orientation_warp_angle_ = 0.0f;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	bool is_in_air_ = false;

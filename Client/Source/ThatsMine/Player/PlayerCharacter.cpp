@@ -26,6 +26,14 @@
 #define WITH_LOCAL_COMBAT_DEBUG 0
 #endif
 
+// 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
+static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
+{
+	FMontageBlendSettings settings(blend_time);
+	settings.BlendMode = EMontageBlendMode::Inertialization;
+	return settings;
+}
+
 APlayerCharacter::APlayerCharacter()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -218,7 +226,7 @@ void APlayerCharacter::OnMovementModeChanged(EMovementMode previous_movement_mod
 	FinishAction(action_id_);
 	if (montage)
 	{
-		anim_instance->Montage_Stop(0.1f, montage);
+		anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), montage);
 	}
 }
 
@@ -253,15 +261,15 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 		{
 			if (previous_settings->equip_montage)
 			{
-				anim_instance->Montage_Stop(0.1f, previous_settings->equip_montage);
+				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->equip_montage);
 			}
 			if (previous_settings->hitscan.reload_montage)
 			{
-				anim_instance->Montage_Stop(0.1f, previous_settings->hitscan.reload_montage);
+				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->hitscan.reload_montage);
 			}
 			if (previous_settings->hitscan.is_enabled && previous_settings->primary_action.montage)
 			{
-				anim_instance->Montage_Stop(0.1f, previous_settings->primary_action.montage);
+				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->primary_action.montage);
 			}
 		}
 	}
@@ -787,7 +795,7 @@ void APlayerCharacter::FinishReload(EWeaponType weapon)
 	{
 		if (UAnimInstance* anim_instance = GetMesh()->GetAnimInstance())
 		{
-			anim_instance->Montage_Stop(0.1f, settings->hitscan.reload_montage);
+			anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), settings->hitscan.reload_montage);
 		}
 	}
 	GetWorldTimerManager().ClearTimer(ammo->reload_timer);

@@ -4,6 +4,29 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
+// 기준 방향을 바꾸지 않고 유지하는 여유 각도. 경계 근처에서 기준 방향이 떨리지 않게 한다.
+static constexpr float CARDINAL_HYSTERESIS_DEGREES = 10.0f;
+// 이보다 느리면 기준 방향을 바꾸지 않는다.
+static constexpr double MIN_LOCOMOTION_SPEED = 10.0;
+
+static float GetCardinalAngle(ELocomotionCardinal cardinal)
+{
+	switch (cardinal)
+	{
+	case ELocomotionCardinal::BACKWARD: return 180.0f;
+	case ELocomotionCardinal::LEFT: return -90.0f;
+	case ELocomotionCardinal::RIGHT: return 90.0f;
+	default: return 0.0f;
+	}
+}
+
+// 앞뒤는 대각선까지 포함하고(±67.5도), 옆은 정면 옆 근처(±22.5도)만 맡는다.
+static bool IsInCardinal(ELocomotionCardinal cardinal, float direction, float margin)
+{
+	const float half_range = cardinal == ELocomotionCardinal::FORWARD || cardinal == ELocomotionCardinal::BACKWARD ? 67.5f : 22.5f;
+	return FMath::Abs(FMath::FindDeltaAngleDegrees(GetCardinalAngle(cardinal), direction)) <= half_range + margin;
+}
+
 void UPlayerAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
@@ -24,6 +47,8 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 	{
 		speed_ = 0.0;
 		direction_ = 0.0;
+		locomotion_cardinal_ = ELocomotionCardinal::FORWARD;
+		orientation_warp_angle_ = 0.0f;
 		is_in_air_ = false;
 		is_holding_rifle_ = false;
 		is_holding_pistol_ = false;
@@ -40,6 +65,25 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 	speed_ = velocity.Size2D();
 	const FVector local_velocity = character->GetActorRotation().UnrotateVector(velocity.GetSafeNormal2D());
 	direction_ = FMath::RadiansToDegrees(FMath::Atan2(local_velocity.Y, local_velocity.X));
+	if (speed_ < MIN_LOCOMOTION_SPEED)
+	{
+		orientation_warp_angle_ = 0.0f;
+	}
+	else
+	{
+		if (!IsInCardinal(locomotion_cardinal_, direction_, CARDINAL_HYSTERESIS_DEGREES))
+		{
+			for (const ELocomotionCardinal cardinal : { ELocomotionCardinal::FORWARD, ELocomotionCardinal::BACKWARD, ELocomotionCardinal::LEFT, ELocomotionCardinal::RIGHT })
+			{
+				if (IsInCardinal(cardinal, direction_, 0.0f))
+				{
+					locomotion_cardinal_ = cardinal;
+					break;
+				}
+			}
+		}
+		orientation_warp_angle_ = FMath::FindDeltaAngleDegrees(GetCardinalAngle(locomotion_cardinal_), direction_);
+	}
 	is_in_air_ = character->GetCharacterMovement()->IsFalling();
 	const FWeaponSettings* settings = character->GetCurrentWeaponSettings();
 	is_holding_rifle_ = settings && settings->uses_rifle_pose;
