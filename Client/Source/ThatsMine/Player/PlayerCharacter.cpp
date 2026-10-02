@@ -3,6 +3,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/GameViewportSubsystem.h"
 #include "Camera/CameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -18,6 +19,7 @@
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
+#include "UI/Effects/StunGaugeWidget.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
 #include "LocalDebug/Combat/CombatDebug.h"
@@ -28,6 +30,9 @@
 
 // 조준 카메라 출렁임의 기준 머리 높이가 실제 머리 높이를 따라가는 속도. 걸음마다의 출렁임보다 충분히 느려야 출렁임이 남는다.
 static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
+
+// 기절 게이지를 화면 아래 끝에서 띄우는 거리
+static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
 
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
@@ -44,6 +49,7 @@ APlayerCharacter::APlayerCharacter()
 	GetCharacterMovement()->AirControlBoostMultiplier = 1.0f;
 
 	equipment_widget_class_ = UEquipmentWidget::StaticClass();
+	stun_gauge_widget_class_ = UStunGaugeWidget::StaticClass();
 
 	FWeaponSettings pickaxe;
 	pickaxe.display_name = NSLOCTEXT("Equipment", "Pickaxe", "PICKAXE");
@@ -126,6 +132,11 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	{
 		equipment_widget_->RemoveFromParent();
 		equipment_widget_ = nullptr;
+	}
+	if (stun_gauge_widget_)
+	{
+		stun_gauge_widget_->RemoveFromParent();
+		stun_gauge_widget_ = nullptr;
 	}
 	if (scope_widget_)
 	{
@@ -383,6 +394,10 @@ TArray<FSoftObjectPath> APlayerCharacter::GetPreloadAssets() const
 			assets.AddUnique(settings.hitscan.muzzle_effect.ToSoftObjectPath());
 		}
 	}
+	if (!stun_effect_.IsNull())
+	{
+		assets.AddUnique(stun_effect_.ToSoftObjectPath());
+	}
 	return assets;
 }
 
@@ -638,6 +653,22 @@ void APlayerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
 	UpdateEquipmentDisplay();
+	APlayerController* controller = Cast<APlayerController>(GetController());
+	if (!stun_gauge_widget_ && stun_gauge_widget_class_ && controller && controller->IsLocalController())
+	{
+		stun_gauge_widget_ = CreateWidget<UStunGaugeWidget>(controller, stun_gauge_widget_class_);
+		if (stun_gauge_widget_)
+		{
+			// 화면 하단 중앙에 빈 게이지로 둔다. 누적 값은 서버에서 받아 SetStunProgress로 바꾼다.
+			// 뷰포트의 크기·위치 설정 함수는 기준점을 왼쪽 위로 되돌리므로, 기준점·정렬·위치·크기를 한 번에 정해 붙인다.
+			FGameViewportWidgetSlot slot;
+			slot.Anchors = FAnchors(0.5f, 1.0f);
+			slot.Alignment = FVector2D(0.5, 1.0);
+			slot.Offsets = FMargin(0.0f, -STUN_GAUGE_BOTTOM_MARGIN, UStunGaugeWidget::WIDGET_WIDTH, UStunGaugeWidget::WIDGET_HEIGHT);
+			slot.ZOrder = 10;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(stun_gauge_widget_, controller->GetLocalPlayer(), slot);
+		}
+	}
 }
 
 FRotator APlayerCharacter::GetViewRotation() const
@@ -666,6 +697,33 @@ void APlayerCharacter::PlayMuzzleEffect(const FHitscanSettings& settings)
 	if (component)
 	{
 		component->SetUsingAbsoluteScale(true);
+	}
+}
+
+void APlayerCharacter::SetStunEffectActive(bool is_active)
+{
+	if (!is_active)
+	{
+		if (stun_effect_component_)
+		{
+			stun_effect_component_->DestroyComponent();
+			stun_effect_component_ = nullptr;
+		}
+		return;
+	}
+	UNiagaraSystem* effect = stun_effect_.LoadSynchronous();
+	if (stun_effect_component_ || !effect)
+	{
+		return;
+	}
+	stun_effect_component_ = UNiagaraFunctionLibrary::SpawnSystemAttached(effect, GetMesh(), TEXT("head"), FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, false);
+	// 머리 뼈 위치만 따라가고, 별 고리는 뼈의 방향과 배율을 따르지 않아 늘 수평으로 같은 크기로 돈다.
+	if (stun_effect_component_)
+	{
+		stun_effect_component_->SetUsingAbsoluteRotation(true);
+		stun_effect_component_->SetUsingAbsoluteScale(true);
+		stun_effect_component_->SetWorldRotation(FRotator::ZeroRotator);
+		stun_effect_component_->SetWorldScale3D(FVector::OneVector);
 	}
 }
 
@@ -723,6 +781,11 @@ void APlayerCharacter::UnPossessed()
 	{
 		equipment_widget_->RemoveFromParent();
 		equipment_widget_ = nullptr;
+	}
+	if (stun_gauge_widget_)
+	{
+		stun_gauge_widget_->RemoveFromParent();
+		stun_gauge_widget_ = nullptr;
 	}
 	Super::UnPossessed();
 }

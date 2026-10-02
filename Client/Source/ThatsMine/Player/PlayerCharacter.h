@@ -14,6 +14,9 @@
 class UCameraComponent;
 class UEquipmentWidget;
 class UInputAction;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class UStunGaugeWidget;
 class UUserWidget;
 struct FInputActionValue;
 
@@ -40,6 +43,9 @@ public:
 
 	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
 	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
+
+	// 기절 상태 동안 머리 위에 별 이펙트를 켜고 끈다.
+	void SetStunEffectActive(bool is_active);
 
 	// 내 캐릭터가 동작을 시작했을 때 알린다.
 	FOnActionStarted on_action_started_;
@@ -114,6 +120,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Actions")
 	FActionSettings pickup_action_;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
+	TSoftObjectPtr<UNiagaraSystem> stun_effect_;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Camera", meta = (UseComponentPicker))
 	FComponentReference first_person_camera_reference_;
 
@@ -125,6 +134,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Equipment")
 	TSubclassOf<UEquipmentWidget> equipment_widget_class_;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
+	TSubclassOf<UStunGaugeWidget> stun_gauge_widget_class_;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Scope", meta = (ClampMin = "5", ClampMax = "170"))
 	float normal_field_of_view_ = 90.0f;
@@ -160,7 +172,13 @@ private:
 	TObjectPtr<UUserWidget> scope_widget_;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> stun_effect_component_;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UEquipmentWidget> equipment_widget_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStunGaugeWidget> stun_gauge_widget_;
 
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
 	TMap<EWeaponType, double> next_fire_times_;
