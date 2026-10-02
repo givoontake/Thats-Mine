@@ -8,6 +8,8 @@
 static constexpr float CARDINAL_HYSTERESIS_DEGREES = 10.0f;
 // 이보다 느리면 기준 방향을 바꾸지 않는다.
 static constexpr double MIN_LOCOMOTION_SPEED = 10.0;
+// 하체 돌리기와 상체 흔들림을 켜고 끌 때 걸리는 시간. 한 번에 바뀌어 자세가 튀지 않게 한다.
+static constexpr float POSE_ALPHA_BLEND_SECONDS = 0.2f;
 
 static float GetCardinalAngle(ELocomotionCardinal cardinal)
 {
@@ -49,10 +51,13 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 		direction_ = 0.0;
 		locomotion_cardinal_ = ELocomotionCardinal::FORWARD;
 		orientation_warp_angle_ = 0.0f;
+		orientation_warp_alpha_ = 1.0f;
 		is_in_air_ = false;
 		is_holding_rifle_ = false;
 		is_holding_pistol_ = false;
+		is_holding_pickaxe_ = false;
 		is_aiming_ = false;
+		upper_body_sway_alpha_ = 0.0f;
 		left_hand_ik_location_ = FVector::ZeroVector;
 		aim_pitch_ = 0.0f;
 		spine_aim_rotation_ = FRotator::ZeroRotator;
@@ -85,10 +90,17 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 		orientation_warp_angle_ = FMath::FindDeltaAngleDegrees(GetCardinalAngle(locomotion_cardinal_), direction_);
 	}
 	is_in_air_ = character->GetCharacterMovement()->IsFalling();
+	// 공중에서는 발이 땅에 닿지 않으므로 하체를 돌리지 않는다.
+	orientation_warp_alpha_ = FMath::FInterpConstantTo(orientation_warp_alpha_, is_in_air_ ? 0.0f : 1.0f, delta_seconds, 1.0f / POSE_ALPHA_BLEND_SECONDS);
 	const FWeaponSettings* settings = character->GetCurrentWeaponSettings();
 	is_holding_rifle_ = settings && settings->uses_rifle_pose;
 	is_holding_pistol_ = settings && settings->uses_pistol_pose;
+	is_holding_pickaxe_ = settings && settings->uses_pickaxe_pose;
 	is_aiming_ = character->IsAiming();
+	// 무기 상체 자세에만 몸통 움직임을 조금 더하고, 조준 중에는 자세가 흔들리지 않게 뺀다.
+	const bool has_upper_body_pose = is_holding_rifle_ || is_holding_pistol_ || is_holding_pickaxe_;
+	const float sway_target = has_upper_body_pose && !is_aiming_ ? upper_body_sway_ratio_ : 0.0f;
+	upper_body_sway_alpha_ = FMath::FInterpConstantTo(upper_body_sway_alpha_, sway_target, delta_seconds, FMath::Max(upper_body_sway_ratio_, 0.01f) / POSE_ALPHA_BLEND_SECONDS);
 	const float view_pitch = FMath::FindDeltaAngleDegrees(character->GetActorRotation().Pitch, character->GetViewRotation().Pitch);
 	const float head_pitch = FMath::Clamp(view_pitch, -FMath::Clamp(head_pitch_down_limit_, 0.0f, 89.0f), FMath::Clamp(head_pitch_up_limit_, 0.0f, 89.0f));
 	// 고개는 모든 자세의 최종 출력에서 같은 목표를 즉시 바라본다. 상체 회전은 중복해서 더하지 않는다.

@@ -30,6 +30,10 @@ protected:
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	float orientation_warp_angle_ = 0.0f;
 
+	// 하체 돌리기 적용 비율. 공중에서는 0으로 줄인다.
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	float orientation_warp_alpha_ = 1.0f;
+
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	bool is_in_air_ = false;
 
@@ -40,7 +44,17 @@ protected:
 	bool is_holding_pistol_ = false;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	bool is_holding_pickaxe_ = false;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	bool is_aiming_ = false;
+
+	// 무기 상체 자세에 더하는 이동 애니메이션 몸통 움직임 비율
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
+	float upper_body_sway_alpha_ = 0.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Animation", meta = (ClampMin = "0", ClampMax = "1"))
+	float upper_body_sway_ratio_ = 0.3f;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Player|Animation")
 	FVector left_hand_ik_location_ = FVector::ZeroVector;

@@ -47,6 +47,7 @@ APlayerCharacter::APlayerCharacter()
 	pickaxe.selection_key = EKeys::Three;
 	pickaxe.mesh.ComponentProperty = TEXT("Pickaxe");
 	pickaxe.melee_hit.is_enabled = true;
+	pickaxe.uses_pickaxe_pose = true;
 	weapon_settings_.Add(EWeaponType::PICKAXE, pickaxe);
 
 	FWeaponSettings sniper;
