@@ -26,6 +26,10 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Start Dome")
 	void StartDissolve();
 
+	// 연출 없이 다 사라진 상태로 만든다.
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Start Dome")
+	void HideDome();
+
 protected:
 	virtual void BeginPlay() override;
 

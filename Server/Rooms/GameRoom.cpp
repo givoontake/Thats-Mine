@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <random>
@@ -556,7 +557,8 @@ void GameRoom::StartGame(int requester_id)
 		if (FindSession(room_player)) room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
 	}
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
-	is_play_started_ = false;
+	game_start_ms_ = 0;
+	is_game_started_ = false;
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -581,6 +583,7 @@ void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
 void GameRoom::ProcessGameTick(long long tick_time_ms)
 {
 	ProcessLoadedPlayers();
+	ProcessGameStart();
 	char send_buffer[BUF_SIZE];
 	int send_data_size = 0;
 	const auto flush = [&]() {
@@ -618,19 +621,16 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	flush();
 }
 
-// 로딩을 마친 플레이어를 스폰하고 플레이를 시작시킨다.
-// 처음에는 전원이 마치거나 제한 시간이 지날 때 한 번에 시작하고, 그 뒤에 마친 플레이어는 마치는 대로 합류시킨다.
+// 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.
+// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다.
 void GameRoom::ProcessLoadedPlayers()
 {
-	bool has_loading_player = false;
 	bool has_loaded_player = false;
 	for (auto& room_player : room_players_) {
 		if (!FindSession(room_player)) continue;
-		has_loading_player |= room_player.GetRoomPlayerState() == RoomPlayerState::LOADING;
 		has_loaded_player |= room_player.GetRoomPlayerState() == RoomPlayerState::LOADED;
 	}
 	if (!has_loaded_player) return;
-	if (!is_play_started_ && has_loading_player && tick_time_ms_ < loading_deadline_ms_) return;
 
 	// 시작 좌표는 방 슬롯 번호로 정한다. 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
 	S2C_SPAWN_PACKET joined_p;
@@ -651,21 +651,57 @@ void GameRoom::ProcessLoadedPlayers()
 	all_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + all_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
 	S2C_PLAY_START_PACKET start_p;
 	start_p.header = { static_cast<std::uint16_t>(sizeof(start_p)), S2C_PLAY_START };
+	S2C_GAME_READY_PACKET ready_p;
+	ready_p.header = { static_cast<std::uint16_t>(sizeof(ready_p)), S2C_GAME_READY };
+	ready_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, game_start_ms_ - tick_time_ms_));
+	S2C_GAME_START_PACKET game_start_p;
+	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 
-	// 합류하는 플레이어는 전원의 스폰과 시작을, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
+	// 합류하는 플레이어는 전원의 스폰과 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
+			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
+			else if (game_start_ms_ != 0) session->SendPacket(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
 			room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
 		}
 		else if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) {
 			session->SendPacket(reinterpret_cast<char*>(&joined_p), joined_p.header.size);
 		}
 	}
-	is_play_started_ = true;
+}
+
+// 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.
+void GameRoom::ProcessGameStart()
+{
+	if (is_game_started_) return;
+	const auto send_to_playing = [&](char* packet, int packet_size) {
+		for (auto& room_player : room_players_) {
+			auto session = FindSession(room_player);
+			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(packet, packet_size);
+		}
+	};
+	if (game_start_ms_ == 0) {
+		bool has_loading_player = false;
+		for (auto& room_player : room_players_) {
+			if (FindSession(room_player) && room_player.GetRoomPlayerState() == RoomPlayerState::LOADING) has_loading_player = true;
+		}
+		if (has_loading_player && tick_time_ms_ < loading_deadline_ms_) return;
+		game_start_ms_ = tick_time_ms_ + GAME_READY_WAIT_MS;
+		S2C_GAME_READY_PACKET ready_p;
+		ready_p.header = { static_cast<std::uint16_t>(sizeof(ready_p)), S2C_GAME_READY };
+		ready_p.remaining_ms = GAME_READY_WAIT_MS;
+		send_to_playing(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
+		return;
+	}
+	if (tick_time_ms_ < game_start_ms_) return;
+	is_game_started_ = true;
+	S2C_GAME_START_PACKET game_start_p;
+	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
+	send_to_playing(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
 }
 
 void GameRoom::FindNewHost()

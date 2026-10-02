@@ -61,6 +61,14 @@ void AStartDome::StartDissolve()
 	SetActorTickEnabled(true);
 }
 
+void AStartDome::HideDome()
+{
+	is_dissolving_ = false;
+	SetActorTickEnabled(false);
+	dissolve_progress_ = 1.0f;
+	UpdateMaterial();
+}
+
 bool AStartDome::ShouldTickIfViewportsOnly() const
 {
 	return is_dissolving_;

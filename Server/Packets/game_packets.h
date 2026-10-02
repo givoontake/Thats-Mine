@@ -69,8 +69,19 @@ struct C2S_LOAD_COMPLETE_PACKET {
 	PACKET_HEADER header;
 };
 
-// 스폰이 끝났으니 로딩 화면을 닫고 플레이를 시작한다. 받는 플레이어의 스폰 패킷 바로 뒤에 보낸다.
+// 스폰이 끝났으니 로딩 화면을 닫고 맵을 보여 준다. 받는 플레이어의 스폰 패킷 바로 뒤에 보낸다.
 struct S2C_PLAY_START_PACKET {
+	PACKET_HEADER header;
+};
+
+// 시작 대기에 들어갔다. 남은 시간이 지나면 서버가 게임 시작을 보낸다.
+struct S2C_GAME_READY_PACKET {
+	PACKET_HEADER header;
+	std::uint32_t remaining_ms;
+};
+
+// 시작 대기가 끝나 게임을 시작한다.
+struct S2C_GAME_START_PACKET {
 	PACKET_HEADER header;
 };
 

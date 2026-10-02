@@ -6,6 +6,8 @@
 #include "Engine/GameInstance.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
+#include "Environment/StartDome.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "GameFramework/PlayerController.h"
 #include "GameNetworkSubsystem.h"
@@ -15,6 +17,7 @@
 #include "ShaderPipelineCache.h"
 #include "ThatsMineGameMode.h"
 #include "UI/Loading/LoadingScreenSubsystem.h"
+#include "UI/Timer/MatchTimerWidget.h"
 #include "UObject/UObjectGlobals.h"
 #include "game_protocol.h"
 
@@ -44,6 +47,8 @@ void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 		return;
 	}
 	network->RegisterPacketHandler(S2C_PLAY_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandlePlayStartPacket));
+	network->RegisterPacketHandler(S2C_GAME_READY, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameReadyPacket));
+	network->RegisterPacketHandler(S2C_GAME_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameStartPacket));
 	prepare_start_time_ = world.GetRealTimeSeconds();
 	const AGameModeBase* game_mode = world.GetAuthGameMode();
 	const APlayerCharacter* character = game_mode && game_mode->DefaultPawnClass ? Cast<APlayerCharacter>(game_mode->DefaultPawnClass->GetDefaultObject()) : nullptr;
@@ -64,8 +69,15 @@ void UGameStartSubsystem::Deinitialize()
 		{
 			network->UnregisterPacketHandler(S2C_SPAWN);
 			network->UnregisterPacketHandler(S2C_PLAY_START);
+			network->UnregisterPacketHandler(S2C_GAME_READY);
+			network->UnregisterPacketHandler(S2C_GAME_START);
 		}
 		is_active_ = false;
+	}
+	if (timer_widget_)
+	{
+		timer_widget_->RemoveFromParent();
+		timer_widget_ = nullptr;
 	}
 	preload_handle_.Reset();
 	Super::Deinitialize();
@@ -175,6 +187,69 @@ void UGameStartSubsystem::HandlePlayStartPacket(const TArray<uint8>& payload)
 	{
 		flow->ChangeState(EClientState::PLAYING);
 	}
+	// 게임 시작 전이면 다른 플레이어를 기다린다. 이미 시작 대기 중이거나 시작했으면 바로 뒤에 오는 패킷이 표시를 바꾼다.
+	if (UMatchTimerWidget* timer = ShowTimerWidget())
+	{
+		timer->SetMessage(LOCTEXT("WaitingOtherPlayers", "다른 플레이어를 기다리는 중입니다..."));
+	}
+}
+
+// 서버가 시작 대기에 들어갔다. 받은 남은 시간부터 직접 세어 보여 주고, 실제 시작은 서버의 게임 시작 패킷으로 한다.
+void UGameStartSubsystem::HandleGameReadyPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_GAME_READY_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	std::uint32_t remaining_ms = 0;
+	FMemory::Memcpy(&remaining_ms, payload.GetData(), sizeof(remaining_ms));
+	has_received_game_ready_ = true;
+	if (UMatchTimerWidget* timer = ShowTimerWidget())
+	{
+		timer->SetMessage(LOCTEXT("GameStartingSoon", "곧 게임을 시작합니다!"));
+		timer->StartCountdown(remaining_ms / 1000.0f);
+	}
+}
+
+void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
+{
+	if (!payload.IsEmpty())
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	if (timer_widget_)
+	{
+		timer_widget_->RemoveFromParent();
+		timer_widget_ = nullptr;
+	}
+	// 시작 돔을 위에서부터 벗겨 낸다. 게임이 시작된 뒤 합류했으면 연출 없이 바로 숨긴다.
+	for (TActorIterator<AStartDome> dome(GetWorld()); dome; ++dome)
+	{
+		if (has_received_game_ready_)
+		{
+			dome->StartDissolve();
+		}
+		else
+		{
+			dome->HideDome();
+		}
+	}
+}
+
+UMatchTimerWidget* UGameStartSubsystem::ShowTimerWidget()
+{
+	APlayerController* controller = GetWorld()->GetFirstPlayerController();
+	if (!timer_widget_ && controller && controller->IsLocalController())
+	{
+		timer_widget_ = CreateWidget<UMatchTimerWidget>(controller);
+		if (timer_widget_)
+		{
+			timer_widget_->AddToViewport(10);
+		}
+	}
+	return timer_widget_;
 }
 
 void UGameStartSubsystem::HandleInvalidPacket()
