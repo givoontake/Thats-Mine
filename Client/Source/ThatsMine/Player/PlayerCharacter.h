@@ -97,6 +97,7 @@ protected:
 	virtual void PostInitializeComponents() override;
 	virtual void OnMovementModeChanged(EMovementMode previous_movement_mode, uint8 previous_custom_mode) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* player_input_component) override;
+	virtual void CalcCamera(float delta_time, FMinimalViewInfo& out_result) override;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Input")
 	TObjectPtr<UInputAction> move_action_;
@@ -128,6 +129,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Scope", meta = (ClampMin = "5", ClampMax = "170"))
 	float normal_field_of_view_ = 90.0f;
 
+	// 조준 화면이 걸음에 따라 머리 높이를 따라 오르내리는 비율
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Scope", meta = (ClampMin = "0"))
+	float aim_camera_bob_scale_ = 6.0f;
+
 private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|State", meta = (AllowPrivateAccess = "true"))
 	EWeaponType current_weapon_ = EWeaponType::PICKAXE;
@@ -146,6 +151,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCameraComponent> third_person_camera_;
+
+	// 조준 카메라의 원래 위치와, 출렁임을 구할 때 기준이 되는 머리 높이
+	FVector first_person_camera_location_ = FVector::ZeroVector;
+	double aim_head_height_ = 0.0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> scope_widget_;

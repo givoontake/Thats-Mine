@@ -26,6 +26,9 @@
 #define WITH_LOCAL_COMBAT_DEBUG 0
 #endif
 
+// 조준 카메라 출렁임의 기준 머리 높이가 실제 머리 높이를 따라가는 속도. 걸음마다의 출렁임보다 충분히 느려야 출렁임이 남는다.
+static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
+
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
 {
@@ -82,6 +85,10 @@ void APlayerCharacter::PostInitializeComponents()
 	// 블루프린트 컴포넌트를 한 번 연결해 기존 소켓과 배치 설정을 보존한다.
 	first_person_camera_ = Cast<UCameraComponent>(first_person_camera_reference_.GetComponent(this));
 	third_person_camera_ = Cast<UCameraComponent>(third_person_camera_reference_.GetComponent(this));
+	if (first_person_camera_)
+	{
+		first_person_camera_location_ = first_person_camera_->GetRelativeLocation();
+	}
 	weapon_meshes_.Reset();
 	weapon_ammo_.Reset();
 	for (const auto& [weapon, settings] : weapon_settings_)
@@ -201,9 +208,31 @@ void APlayerCharacter::Move(const FInputActionValue& value)
 
 void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
 {
-	GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? forward_speed_ * 0.5f : forward_speed_;
+	const FWeaponSettings* settings = GetCurrentWeaponSettings();
+	if (is_aiming_ && settings)
+	{
+		// 조준 중에는 뒤로 이동할 때도 같은 속도로 천천히 움직인다.
+		GetCharacterMovement()->MaxWalkSpeed = settings->aiming_move_speed;
+	}
+	else
+	{
+		GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? forward_speed_ * 0.5f : forward_speed_;
+	}
 	AddMovementInput(GetActorForwardVector(), movement.Y);
 	AddMovementInput(GetActorRightVector(), movement.X);
+}
+
+void APlayerCharacter::CalcCamera(float delta_time, FMinimalViewInfo& out_result)
+{
+	// 조준 화면은 걸음마다 머리가 오르내린 만큼 따라 움직인다.
+	// 느리게 따라가는 기준 높이와의 차이만 써서, 자세마다 다른 머리 높이는 빼고 출렁임만 남긴다.
+	if (first_person_camera_)
+	{
+		const double head_height = GetActorTransform().InverseTransformPosition(GetMesh()->GetSocketLocation(TEXT("head"))).Z;
+		aim_head_height_ = is_aiming_ ? FMath::FInterpTo(aim_head_height_, head_height, delta_time, AIM_HEAD_HEIGHT_INTERP_SPEED) : head_height;
+		first_person_camera_->SetRelativeLocation(first_person_camera_location_ + FVector(0.0, 0.0, (head_height - aim_head_height_) * aim_camera_bob_scale_));
+	}
+	Super::CalcCamera(delta_time, out_result);
 }
 
 void APlayerCharacter::Look(const FInputActionValue& value)
