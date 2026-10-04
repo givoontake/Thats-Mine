@@ -16,6 +16,7 @@ class UEquipmentWidget;
 class UInputAction;
 class UNiagaraComponent;
 class UNiagaraSystem;
+class UPhysicsAsset;
 class UStunGaugeWidget;
 class UUserWidget;
 struct FInputActionValue;
@@ -122,6 +123,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
 	TSoftObjectPtr<UNiagaraSystem> stun_effect_;
+
+	// 로컬 플레이에서 내 캐릭터에 테두리로 그려 확인할 히트박스
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Debug")
+	TSoftObjectPtr<UPhysicsAsset> hitbox_asset_;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Camera", meta = (UseComponentPicker))
 	FComponentReference first_person_camera_reference_;

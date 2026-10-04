@@ -10,12 +10,14 @@
 #include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
+#include "Flow/ClientStateSubsystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "InputActionValue.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
@@ -26,6 +28,13 @@
 #define WITH_LOCAL_COMBAT_DEBUG 1
 #else
 #define WITH_LOCAL_COMBAT_DEBUG 0
+#endif
+
+#if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Hitbox/HitboxDebugComponent.h")
+#include "LocalDebug/Hitbox/HitboxDebugComponent.h"
+#define WITH_LOCAL_HITBOX_DEBUG 1
+#else
+#define WITH_LOCAL_HITBOX_DEBUG 0
 #endif
 
 // 조준 카메라 출렁임의 기준 머리 높이가 실제 머리 높이를 따라가는 속도. 걸음마다의 출렁임보다 충분히 느려야 출렁임이 남는다.
@@ -398,6 +407,10 @@ TArray<FSoftObjectPath> APlayerCharacter::GetPreloadAssets() const
 	{
 		assets.AddUnique(stun_effect_.ToSoftObjectPath());
 	}
+	if (!hitbox_asset_.IsNull())
+	{
+		assets.AddUnique(hitbox_asset_.ToSoftObjectPath());
+	}
 	return assets;
 }
 
@@ -669,6 +682,16 @@ void APlayerCharacter::PawnClientRestart()
 			UGameViewportSubsystem::Get()->AddWidgetForPlayer(stun_gauge_widget_, controller->GetLocalPlayer(), slot);
 		}
 	}
+
+#if WITH_LOCAL_HITBOX_DEBUG
+	// 로컬 플레이에서는 내 히트박스를 테두리로 그려 확인한다.
+	if (controller && controller->IsLocalController() && GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode() && !FindComponentByClass<UHitboxDebugComponent>())
+	{
+		UHitboxDebugComponent* hitbox_debug = NewObject<UHitboxDebugComponent>(this);
+		hitbox_debug->SetHitbox(GetMesh(), hitbox_asset_.LoadSynchronous());
+		hitbox_debug->RegisterComponent();
+	}
+#endif
 }
 
 FRotator APlayerCharacter::GetViewRotation() const
