@@ -21,6 +21,7 @@
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
+#include "UI/Effects/DamageDirectionWidget.h"
 #include "UI/Effects/StunGaugeWidget.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
@@ -59,6 +60,7 @@ APlayerCharacter::APlayerCharacter()
 
 	equipment_widget_class_ = UEquipmentWidget::StaticClass();
 	stun_gauge_widget_class_ = UStunGaugeWidget::StaticClass();
+	damage_direction_widget_class_ = UDamageDirectionWidget::StaticClass();
 
 	FWeaponSettings pickaxe;
 	pickaxe.display_name = NSLOCTEXT("Equipment", "Pickaxe", "PICKAXE");
@@ -146,6 +148,11 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	{
 		stun_gauge_widget_->RemoveFromParent();
 		stun_gauge_widget_ = nullptr;
+	}
+	if (damage_direction_widget_)
+	{
+		damage_direction_widget_->RemoveFromParent();
+		damage_direction_widget_ = nullptr;
 	}
 	if (scope_widget_)
 	{
@@ -412,6 +419,29 @@ TArray<FSoftObjectPath> APlayerCharacter::GetPreloadAssets() const
 		assets.AddUnique(hitbox_asset_.ToSoftObjectPath());
 	}
 	return assets;
+}
+
+void APlayerCharacter::ShowDamageDirection(const FVector& attacker_location)
+{
+	if (damage_direction_widget_)
+	{
+		damage_direction_widget_->ShowHit(attacker_location - GetActorLocation(), GetControlRotation().Yaw);
+	}
+}
+
+void APlayerCharacter::EnableHitboxCollision()
+{
+	UPhysicsAsset* hitbox_asset = hitbox_asset_.LoadSynchronous();
+	if (!hitbox_asset)
+	{
+		return;
+	}
+	USkeletalMeshComponent* mesh = GetMesh();
+	mesh->SetPhysicsAsset(hitbox_asset, true);
+	mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	mesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
 }
 
 bool APlayerCharacter::IsAiming() const
@@ -682,6 +712,17 @@ void APlayerCharacter::PawnClientRestart()
 			UGameViewportSubsystem::Get()->AddWidgetForPlayer(stun_gauge_widget_, controller->GetLocalPlayer(), slot);
 		}
 	}
+	if (!damage_direction_widget_ && damage_direction_widget_class_ && controller && controller->IsLocalController())
+	{
+		damage_direction_widget_ = CreateWidget<UDamageDirectionWidget>(controller, damage_direction_widget_class_);
+		if (damage_direction_widget_)
+		{
+			// 화면 전체에 깔아 화면 중앙을 기준으로 피격 방향 호를 그린다.
+			FGameViewportWidgetSlot slot;
+			slot.ZOrder = 9;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(damage_direction_widget_, controller->GetLocalPlayer(), slot);
+		}
+	}
 
 #if WITH_LOCAL_HITBOX_DEBUG
 	// 로컬 플레이에서는 내 히트박스를 테두리로 그려 확인한다.
@@ -809,6 +850,11 @@ void APlayerCharacter::UnPossessed()
 	{
 		stun_gauge_widget_->RemoveFromParent();
 		stun_gauge_widget_ = nullptr;
+	}
+	if (damage_direction_widget_)
+	{
+		damage_direction_widget_->RemoveFromParent();
+		damage_direction_widget_ = nullptr;
 	}
 	Super::UnPossessed();
 }

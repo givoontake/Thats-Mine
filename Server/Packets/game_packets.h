@@ -3,6 +3,9 @@
 #include "common_packets.h"
 #include "settings.h"
 
+// 히트박스 부위. 서버 판정 데이터와 클라이언트 명중 보고가 같은 값을 쓴다.
+enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT };
+
 #pragma pack(push, 1)
 
 // 이동 상태. 위치·속도는 cm, 방향은 도 단위이고, 이동 입력은 -127~127로 줄여 담는다.
@@ -83,6 +86,25 @@ struct S2C_GAME_READY_PACKET {
 // 시작 대기가 끝나 게임을 시작한다.
 struct S2C_GAME_START_PACKET {
 	PACKET_HEADER header;
+};
+
+// 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 시작점(cm)·단위 방향·맞은 곳까지의 거리(cm)이고, 부위는 클라이언트가 판정한 값이다.
+struct C2S_HIT_PACKET {
+	PACKET_HEADER header;
+	int target_player_id;
+	std::uint8_t weapon;
+	std::uint8_t part;
+	float origin[3];
+	float direction[3];
+	float distance;
+};
+
+// 서버가 인정한 명중. 쏜 사람과 맞은 사람에게만 보낸다.
+struct S2C_HIT_PACKET {
+	PACKET_HEADER header;
+	int shooter_player_id;
+	int target_player_id;
+	std::uint8_t part;
 };
 
 #pragma pack(pop)

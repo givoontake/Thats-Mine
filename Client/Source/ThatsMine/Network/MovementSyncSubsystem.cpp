@@ -98,6 +98,7 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 		return;
 	}
 	network->RegisterPacketHandler(S2C_ACTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleActionPacket));
+	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
 	game_instance->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &UMovementSyncSubsystem::RemoveLeftPlayers);
 }
 
@@ -111,6 +112,7 @@ void UMovementSyncSubsystem::Deinitialize()
 		{
 			network->UnregisterPacketHandler(S2C_MOVE);
 			network->UnregisterPacketHandler(S2C_ACTION);
+			network->UnregisterPacketHandler(S2C_HIT);
 		}
 		if (UOnlineSessionSubsystem* online = game_instance ? game_instance->GetSubsystem<UOnlineSessionSubsystem>() : nullptr)
 		{
@@ -119,6 +121,7 @@ void UMovementSyncSubsystem::Deinitialize()
 		if (APlayerCharacter* character = local_character_.Get())
 		{
 			character->on_action_started_.RemoveAll(this);
+			character->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 		}
 		is_active_ = false;
 	}
@@ -159,11 +162,13 @@ void UMovementSyncSubsystem::SendMoveState()
 		if (APlayerCharacter* previous = local_character_.Get())
 		{
 			previous->on_action_started_.RemoveAll(this);
+			previous->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 		}
 		local_character_ = character;
 		if (character)
 		{
 			character->on_action_started_.AddUObject(this, &UMovementSyncSubsystem::HandleActionStarted);
+			character->on_shot_fired_.AddDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 		}
 	}
 	if (!character)
@@ -213,6 +218,86 @@ void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponTy
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_ACTION, payload);
+}
+
+// 맞은 뼈를 서버 판정 데이터와 같은 부위 값으로 바꾼다.
+static HitboxPart GetHitboxPart(const FName& bone)
+{
+	const FString name = bone.ToString();
+	if (name == TEXT("head"))
+	{
+		return HitboxPart::HEAD;
+	}
+	if (name.StartsWith(TEXT("upperarm")) || name.StartsWith(TEXT("lowerarm")))
+	{
+		return HitboxPart::ARM;
+	}
+	if (name.StartsWith(TEXT("hand")))
+	{
+		return HitboxPart::HAND;
+	}
+	if (name.StartsWith(TEXT("upperleg")) || name.StartsWith(TEXT("lowerleg")))
+	{
+		return HitboxPart::LEG;
+	}
+	if (name.StartsWith(TEXT("foot")))
+	{
+		return HitboxPart::FOOT;
+	}
+	return HitboxPart::TORSO;
+}
+
+// 총알이 다른 플레이어 메시의 히트박스에 맞았을 때만 명중을 보낸다. 판정 광선의 시작점·방향·맞은 곳까지 거리와 맞은 부위를 담는다.
+void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
+{
+	const APlayerCharacter* target = Cast<APlayerCharacter>(shot.hit.GetActor());
+	if (!shot.has_hit || !target || shot.hit.GetComponent() != target->GetMesh())
+	{
+		return;
+	}
+	const int32* target_player_id = remote_players_.FindKey(TWeakObjectPtr<APlayerCharacter>(const_cast<APlayerCharacter*>(target)));
+	if (!target_player_id)
+	{
+		return;
+	}
+	const FVector ray = shot.hit.ImpactPoint - shot.trace_start;
+	const FVector direction = ray.GetSafeNormal();
+	C2S_HIT_PACKET packet{};
+	packet.target_player_id = *target_player_id;
+	packet.weapon = static_cast<uint8>(shot.weapon);
+	packet.part = static_cast<uint8>(GetHitboxPart(shot.hit.BoneName));
+	for (int32 axis = 0; axis < 3; ++axis)
+	{
+		packet.origin[axis] = static_cast<float>(shot.trace_start[axis]);
+		packet.direction[axis] = static_cast<float>(direction[axis]);
+	}
+	packet.distance = static_cast<float>(ray.Size());
+	TArray<uint8> payload;
+	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_HIT, payload);
+}
+
+// 서버가 인정한 명중. 쏜 사람과 맞은 사람만 받는다. 내가 맞았으면 쏜 사람 쪽으로 피격 방향을 표시한다.
+void UMovementSyncSubsystem::HandleHitPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_HIT_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_HIT_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	UE_LOG(LogMovementSync, Log, TEXT("Hit confirmed: shooter=%d target=%d part=%d"), packet.shooter_player_id, packet.target_player_id, packet.part);
+	if (packet.target_player_id != GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
+	{
+		return;
+	}
+	APlayerCharacter* character = local_character_.Get();
+	const APlayerCharacter* shooter = FindRemotePlayer(packet.shooter_player_id);
+	if (character && shooter)
+	{
+		character->ShowDamageDirection(shooter->GetActorLocation());
+	}
 }
 
 void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)

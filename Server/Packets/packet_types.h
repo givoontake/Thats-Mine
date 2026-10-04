@@ -38,4 +38,6 @@ constexpr std::uint8_t C2S_LOAD_COMPLETE = 66;
 constexpr std::uint8_t S2C_PLAY_START = 67;
 constexpr std::uint8_t S2C_GAME_READY = 68;
 constexpr std::uint8_t S2C_GAME_START = 69;
+constexpr std::uint8_t C2S_HIT = 70;
+constexpr std::uint8_t S2C_HIT = 71;
 constexpr std::uint8_t S2C_INFO = 100;

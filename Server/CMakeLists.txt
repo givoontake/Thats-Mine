@@ -23,6 +23,9 @@ add_executable(GameServer
     Core/main.cpp
     Core/GameServer.cpp
     Game/Player.cpp
+    Game/Hitbox/CharacterPose.cpp
+    Game/Hitbox/HitboxData.cpp
+    Game/Hitbox/hitbox_raycast.cpp
     Lobby/LoginManager.cpp
     Lobby/Matchmaker.cpp
     Managers/ActivePlayerManager.cpp
@@ -63,6 +66,10 @@ add_executable(GameServer
     Database/DBOverlapped.h
     Database/DBResultHandler.h
     Game/Player.h
+    Game/Hitbox/CharacterPose.h
+    Game/Hitbox/HitboxData.h
+    Game/Hitbox/hitbox_raycast.h
+    Game/Hitbox/hitbox_types.h
     Lobby/lobby_tasks.h
     Lobby/LoginManager.h
     Lobby/Matchmaker.h
@@ -103,7 +110,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Lobby Managers Network Packets Rooms Threads
+    . Common Core Database Game Game/Hitbox Lobby Managers Network Packets Rooms Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)

@@ -46,6 +46,7 @@ void GameServer::SendError(Session& session, int error_code)
 
 void GameServer::StartServer()
 {
+	if (!hitbox_data_.Load("Data/hitbox_data.bin")) std::cerr << "Hitbox data load fail.. " << std::endl;
 	bind(listen_socket_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_));
 	listen(listen_socket_, SOMAXCONN);
 	iocp_handle_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);

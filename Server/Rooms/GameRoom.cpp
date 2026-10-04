@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <random>
@@ -12,6 +13,7 @@
 #include "room_packets.h"
 #include "game_packets.h"
 #include "spawn_points.h"
+#include "hitbox_raycast.h"
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
@@ -267,6 +269,14 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		action_p.server_time_ms = tick_time_ms_;
 		action_p.action = request_p->action;
 		action_p.weapon = request_p->weapon;
+		room_player->GetPose().StartAction(request_p->action, request_p->weapon, tick_time_ms_);
+		break;
+	}
+	case C2S_HIT: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		ProcessHit(*room_player, *reinterpret_cast<C2S_HIT_PACKET*>(packet));
 		break;
 	}
 	case C2S_LOAD_COMPLETE: {
@@ -559,6 +569,7 @@ void GameRoom::StartGame(int requester_id)
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
 	game_start_ms_ = 0;
 	is_game_started_ = false;
+	last_pose_tick_ms_ = 0;
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -584,6 +595,13 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 {
 	ProcessLoadedPlayers();
 	ProcessGameStart();
+	// 플레이 중인 플레이어의 판정용 자세를 지난 틱 이후 시간만큼 진행한다.
+	const float pose_delta_seconds = last_pose_tick_ms_ != 0 ? (tick_time_ms - last_pose_tick_ms_) / 1000.0f : 0.0f;
+	last_pose_tick_ms_ = tick_time_ms;
+	for (auto& room_player : room_players_) {
+		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
+		room_player.GetPose().Update(room_player.GetMoveState(), pose_delta_seconds, tick_time_ms);
+	}
 	char send_buffer[BUF_SIZE];
 	int send_data_size = 0;
 	const auto flush = [&]() {
@@ -662,6 +680,7 @@ void GameRoom::ProcessLoadedPlayers()
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
+			room_player.GetPose().Reset(server_->GetHitboxData());
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
@@ -672,6 +691,56 @@ void GameRoom::ProcessLoadedPlayers()
 			session->SendPacket(reinterpret_cast<char*>(&joined_p), joined_p.header.size);
 		}
 	}
+}
+
+// 클라이언트가 보낸 명중을 검증하고, 인정하면 쏜 사람과 맞은 사람에게만 알린다. 거부하면 아무것도 보내지 않는다.
+void GameRoom::ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p)
+{
+	Player* target = nullptr;
+	for (auto& room_player : room_players_) {
+		if (room_player.HasSession() && room_player.GetSessionKey().player_id == request_p.target_player_id) target = &room_player;
+	}
+	if (!target || target == &shooter || target->GetRoomPlayerState() != RoomPlayerState::PLAY || !CheckHit(shooter, *target, request_p)) return;
+
+	S2C_HIT_PACKET hit_p;
+	hit_p.header = { static_cast<std::uint16_t>(sizeof(hit_p)), S2C_HIT };
+	hit_p.shooter_player_id = shooter.GetSessionKey().player_id;
+	hit_p.target_player_id = request_p.target_player_id;
+	hit_p.part = request_p.part;
+	for (const Player* receiver : { &shooter, static_cast<const Player*>(target) }) {
+		if (auto session = FindSession(*receiver)) session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
+	}
+}
+
+// 지연 보정이 없으므로 클라이언트 화면과 서버 위치 차이를 여유로 허용한다.
+// 총인지, 사거리 안인지, 시작점이 쏜 사람 근처인지 본 뒤, 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 지나가는지 검사한다.
+bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const
+{
+	const HitboxData& data = server_->GetHitboxData();
+	const WeaponInfo* weapon = data.GetWeaponInfo(request_p.weapon);
+	if (!data.IsLoaded() || !weapon || !weapon->is_hitscan || request_p.part >= static_cast<std::uint8_t>(HitboxPart::COUNT)) return false;
+	if (!shooter.HasMoveState() || !target.HasMoveState()) return false;
+	if (!std::isfinite(request_p.distance) || request_p.distance < 0.0f || request_p.distance > weapon->hitscan_distance) return false;
+
+	const DirectX::XMVECTOR direction = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.direction));
+	const float direction_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(direction));
+	if (!std::isfinite(direction_length) || direction_length < 0.5f) return false;
+	DirectX::XMFLOAT3 unit_direction;
+	DirectX::XMStoreFloat3(&unit_direction, DirectX::XMVectorScale(direction, 1.0f / direction_length));
+	const DirectX::XMFLOAT3 origin(request_p.origin[0], request_p.origin[1], request_p.origin[2]);
+
+	const MOVE_STATE& shooter_state = shooter.GetMoveState();
+	const float shooter_speed = std::hypot(shooter_state.velocity[0], shooter_state.velocity[1], shooter_state.velocity[2]);
+	const float origin_offset = std::hypot(origin.x - shooter_state.location[0], origin.y - shooter_state.location[1], origin.z - shooter_state.location[2]);
+	if (!std::isfinite(origin_offset) || origin_offset > HIT_ORIGIN_MAX_OFFSET + shooter_speed * HIT_LATENCY_ALLOWANCE_SECONDS) return false;
+
+	const MOVE_STATE& target_state = target.GetMoveState();
+	const float target_speed = std::hypot(target_state.velocity[0], target_state.velocity[1], target_state.velocity[2]);
+	const float margin = HIT_BASE_MARGIN + target_speed * HIT_LATENCY_ALLOWANCE_SECONDS;
+	const float max_distance = request_p.distance + margin;
+	const DirectX::XMFLOAT3 location(target_state.location[0], target_state.location[1], target_state.location[2]);
+	if (!IsRayNearCharacter(origin, unit_direction, max_distance, location, target_state.yaw, data.GetBroadphaseCapsule(), margin)) return false;
+	return RaycastHitboxes(origin, unit_direction, max_distance, target.GetPose().BuildWorldHitboxes(target_state, tick_time_ms_), margin).has_hit;
 }
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.

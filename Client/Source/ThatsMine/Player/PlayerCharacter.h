@@ -12,6 +12,7 @@
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
+class UDamageDirectionWidget;
 class UEquipmentWidget;
 class UInputAction;
 class UNiagaraComponent;
@@ -47,6 +48,12 @@ public:
 
 	// 기절 상태 동안 머리 위에 별 이펙트를 켜고 끈다.
 	void SetStunEffectActive(bool is_active);
+
+	// 공격한 쪽 위치를 받아 화면 중앙 둘레에 피격 방향을 표시한다. 내가 조종하는 캐릭터에만 위젯이 있다.
+	void ShowDamageDirection(const FVector& attacker_location);
+
+	// 다른 플레이어 캐릭터가 총알을 히트박스로 받게 한다. 메시에 히트박스 물리 에셋을 붙여 보이는 채널만 막고, 캡슐은 총알을 통과시킨다.
+	void EnableHitboxCollision();
 
 	// 내 캐릭터가 동작을 시작했을 때 알린다.
 	FOnActionStarted on_action_started_;
@@ -143,6 +150,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
 	TSubclassOf<UStunGaugeWidget> stun_gauge_widget_class_;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
+	TSubclassOf<UDamageDirectionWidget> damage_direction_widget_class_;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Scope", meta = (ClampMin = "5", ClampMax = "170"))
 	float normal_field_of_view_ = 90.0f;
 
@@ -184,6 +194,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UStunGaugeWidget> stun_gauge_widget_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UDamageDirectionWidget> damage_direction_widget_;
 
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
 	TMap<EWeaponType, double> next_fire_times_;

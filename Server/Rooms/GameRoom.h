@@ -81,6 +81,8 @@ private:
 	long long loading_deadline_ms_ = 0;
 	long long game_start_ms_ = 0;
 	bool is_game_started_ = false;
+	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
+	long long last_pose_tick_ms_ = 0;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -98,6 +100,8 @@ private:
 	void ProcessGameTick(long long tick_time_ms);
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
+	void ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p);
+	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
 	void StartGame(int requester_id);
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환

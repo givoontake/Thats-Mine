@@ -25,6 +25,8 @@ void URemoteMovementComponent::BeginPlay()
 	movement->PrimaryComponentTick.AddPrerequisite(this, PrimaryComponentTick);
 	// 다른 플레이어와는 충돌하지 않고 통과한다.
 	character->GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	// 내 총알은 다른 플레이어의 히트박스에 맞는다.
+	character->EnableHitboxCollision();
 }
 
 void URemoteMovementComponent::ApplyState(const FRemoteMoveState& state)
