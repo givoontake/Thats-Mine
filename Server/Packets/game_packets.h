@@ -107,6 +107,19 @@ struct S2C_HIT_PACKET {
 	std::uint8_t part;
 };
 
+// 명중으로 바뀐 기절 게이지 값. 맞은 사람에게만 보낸다. 이후 초당 감소는 클라이언트가 계산한다.
+struct S2C_STUN_GAUGE_PACKET {
+	PACKET_HEADER header;
+	float gauge;
+};
+
+// 플레이어가 기절했다. 방 전체에 보낸다. 끝나면 그 플레이어의 게이지는 0이다.
+struct S2C_STUN_PACKET {
+	PACKET_HEADER header;
+	int player_id;
+	std::uint32_t duration_ms;
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(S2C_MOVE_PACKET) <= BUF_SIZE, "S2C_MOVE_PACKET must fit in one packet.");

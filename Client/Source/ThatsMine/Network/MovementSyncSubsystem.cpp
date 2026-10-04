@@ -99,6 +99,8 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	}
 	network->RegisterPacketHandler(S2C_ACTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleActionPacket));
 	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
+	network->RegisterPacketHandler(S2C_STUN_GAUGE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunGaugePacket));
+	network->RegisterPacketHandler(S2C_STUN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunPacket));
 	game_instance->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &UMovementSyncSubsystem::RemoveLeftPlayers);
 }
 
@@ -113,6 +115,8 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_MOVE);
 			network->UnregisterPacketHandler(S2C_ACTION);
 			network->UnregisterPacketHandler(S2C_HIT);
+			network->UnregisterPacketHandler(S2C_STUN_GAUGE);
+			network->UnregisterPacketHandler(S2C_STUN);
 		}
 		if (UOnlineSessionSubsystem* online = game_instance ? game_instance->GetSubsystem<UOnlineSessionSubsystem>() : nullptr)
 		{
@@ -297,6 +301,39 @@ void UMovementSyncSubsystem::HandleHitPacket(const TArray<uint8>& payload)
 	if (character && shooter)
 	{
 		character->ShowDamageDirection(shooter->GetActorLocation());
+	}
+}
+
+// 내 기절 게이지가 바뀌었다. 이후 감소는 캐릭터가 계산해 표시한다.
+void UMovementSyncSubsystem::HandleStunGaugePacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_STUN_GAUGE_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_STUN_GAUGE_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* character = local_character_.Get())
+	{
+		character->SetStunGauge(packet.gauge);
+	}
+}
+
+// 나 또는 다른 플레이어가 기절했다.
+void UMovementSyncSubsystem::HandleStunPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_STUN_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_STUN_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const bool is_local = packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
+	if (APlayerCharacter* character = is_local ? local_character_.Get() : FindRemotePlayer(packet.player_id))
+	{
+		character->StartStun(packet.duration_ms / 1000.0f);
 	}
 }
 

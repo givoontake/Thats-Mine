@@ -101,6 +101,7 @@ private:
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
 	void ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p);
+	void AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
 	void StartGame(int requester_id);
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include "Player.h"
 
@@ -33,6 +34,7 @@ void Player::ClearPlayer()
 
 	ClearSendBuffer();
 	ClearMoveState();
+	ClearStun();
 }
 
 void Player::ResetGameData()
@@ -41,6 +43,7 @@ void Player::ResetGameData()
 
 	ClearSendBuffer();
 	ClearMoveState();
+	ClearStun();
 }
 
 void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change)
@@ -56,6 +59,43 @@ void Player::MarkMoveStateRelayed(long long tick_time_ms)
 	last_move_relay_ms_ = tick_time_ms;
 	has_new_move_state_ = false;
 	has_input_change_ = false;
+}
+
+void Player::ClearStun()
+{
+	stun_gauge_ = 0.0f;
+	stun_gauge_time_ms_ = 0;
+	stun_end_ms_ = 0;
+}
+
+float Player::GetStunGauge(long long time_ms) const
+{
+	if (IsStunned(time_ms)) return STUN_GAUGE_MAX;
+	return std::max(0.0f, stun_gauge_ - STUN_GAUGE_DECAY_PER_SECOND * (time_ms - stun_gauge_time_ms_) / 1000.0f);
+}
+
+// 기절하면 끝나는 시각에 게이지가 0이 되도록 기록해 두어, 끝난 뒤부터 0에서 다시 계산한다.
+bool Player::AddStunGauge(float amount, long long time_ms)
+{
+	if (IsStunned(time_ms)) return false;
+	stun_gauge_ = GetStunGauge(time_ms) + amount;
+	stun_gauge_time_ms_ = time_ms;
+	if (stun_gauge_ < STUN_GAUGE_MAX) return false;
+	stun_end_ms_ = time_ms + STUN_DURATION_MS;
+	stun_gauge_ = 0.0f;
+	stun_gauge_time_ms_ = stun_end_ms_;
+	return true;
+}
+
+void Player::StopMovement()
+{
+	move_state_.velocity[0] = 0.0f;
+	move_state_.velocity[1] = 0.0f;
+	move_state_.input_right = 0;
+	move_state_.input_forward = 0;
+	move_state_.is_aiming = false;
+	has_new_move_state_ = true;
+	has_input_change_ = true;
 }
 
 void Player::ClearMoveState()

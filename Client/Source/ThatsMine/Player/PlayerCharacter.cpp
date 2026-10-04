@@ -23,6 +23,7 @@
 #include "UI/EquipmentWidget.h"
 #include "UI/Effects/DamageDirectionWidget.h"
 #include "UI/Effects/StunGaugeWidget.h"
+#include "settings.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
 #include "LocalDebug/Combat/CombatDebug.h"
@@ -43,6 +44,8 @@ static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
 
 // 기절 게이지를 화면 아래 끝에서 띄우는 거리
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
+// 줄어드는 기절 게이지 표시를 고치는 간격(초)
+static constexpr float STUN_GAUGE_DISPLAY_INTERVAL = 0.05f;
 
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
@@ -139,6 +142,8 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 		GetWorldTimerManager().ClearTimer(ammo.reload_timer);
 		GetWorldTimerManager().ClearTimer(ammo.shot_wait_timer);
 	}
+	GetWorldTimerManager().ClearTimer(stun_timer_);
+	GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
 	if (equipment_widget_)
 	{
 		equipment_widget_->RemoveFromParent();
@@ -196,6 +201,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* player_input_c
 
 void APlayerCharacter::Interact()
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
 	if (is_action_locked_ || GetCharacterMovement()->IsFalling() || !GetWorld() || !IsValid(camera) || !camera->IsActive())
 	{
@@ -230,6 +239,10 @@ void APlayerCharacter::Interact()
 
 void APlayerCharacter::Move(const FInputActionValue& value)
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	ApplyMovementInput(value.Get<FVector2D>());
 }
 
@@ -264,6 +277,10 @@ void APlayerCharacter::CalcCamera(float delta_time, FMinimalViewInfo& out_result
 
 void APlayerCharacter::Look(const FInputActionValue& value)
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	const FVector2D look = value.Get<FVector2D>();
 	AddControllerYawInput(look.X);
 	AddControllerPitchInput(look.Y);
@@ -289,6 +306,10 @@ void APlayerCharacter::OnMovementModeChanged(EMovementMode previous_movement_mod
 
 void APlayerCharacter::SelectWeaponFromKey(FKey key)
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	for (const auto& [weapon, settings] : weapon_settings_)
 	{
 		if (settings.selection_key == key)
@@ -451,6 +472,10 @@ bool APlayerCharacter::IsAiming() const
 
 void APlayerCharacter::PrimaryAction()
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	if (const FWeaponSettings* settings = GetCurrentWeaponSettings())
 	{
 		if (settings->hitscan.is_enabled)
@@ -466,6 +491,10 @@ void APlayerCharacter::PrimaryAction()
 
 void APlayerCharacter::PickUp()
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	if (PlayAction(pickup_action_))
 	{
 		on_action_started_.Broadcast(EPlayerAction::PICKUP, current_weapon_);
@@ -764,6 +793,68 @@ void APlayerCharacter::PlayMuzzleEffect(const FHitscanSettings& settings)
 	}
 }
 
+void APlayerCharacter::Jump()
+{
+	if (!is_stunned_)
+	{
+		Super::Jump();
+	}
+}
+
+void APlayerCharacter::SetStunGauge(float gauge)
+{
+	stun_gauge_ = gauge;
+	stun_gauge_time_ = GetWorld()->GetTimeSeconds();
+	UpdateStunGaugeDisplay();
+	// 게이지가 남아 있는 동안 줄어드는 값을 표시한다.
+	if (stun_gauge_ > 0.0f)
+	{
+		GetWorldTimerManager().SetTimer(stun_gauge_timer_, this, &APlayerCharacter::UpdateStunGaugeDisplay, STUN_GAUGE_DISPLAY_INTERVAL, true);
+	}
+}
+
+void APlayerCharacter::UpdateStunGaugeDisplay()
+{
+	const float gauge = FMath::Max(0.0f, stun_gauge_ - STUN_GAUGE_DECAY_PER_SECOND * static_cast<float>(GetWorld()->GetTimeSeconds() - stun_gauge_time_));
+	if (stun_gauge_widget_)
+	{
+		stun_gauge_widget_->SetStunProgress(gauge / STUN_GAUGE_MAX);
+	}
+	if (gauge <= 0.0f)
+	{
+		GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
+	}
+}
+
+void APlayerCharacter::StartStun(float duration_seconds)
+{
+	SetStunEffectActive(true);
+	is_stunned_ = true;
+	if (IsLocallyControlled())
+	{
+		SetAiming(false);
+		StopJumping();
+		GetCharacterMovement()->StopMovementImmediately();
+		GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
+		if (stun_gauge_widget_)
+		{
+			stun_gauge_widget_->SetStunProgress(1.0f);
+		}
+	}
+	GetWorldTimerManager().SetTimer(stun_timer_, this, &APlayerCharacter::EndStun, FMath::Max(duration_seconds, 0.01f), false);
+}
+
+void APlayerCharacter::EndStun()
+{
+	is_stunned_ = false;
+	SetStunEffectActive(false);
+	stun_gauge_ = 0.0f;
+	if (stun_gauge_widget_)
+	{
+		stun_gauge_widget_->SetStunProgress(0.0f);
+	}
+}
+
 void APlayerCharacter::SetStunEffectActive(bool is_active)
 {
 	if (!is_active)
@@ -902,6 +993,10 @@ void APlayerCharacter::MarkHintsRead()
 
 void APlayerCharacter::Reload()
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	if (is_equipping_ || is_action_locked_ || !GetWorld() || IsActorBeingDestroyed())
 	{
 		return;
@@ -990,6 +1085,10 @@ void APlayerCharacter::UpdateEquipmentDisplay()
 
 void APlayerCharacter::ToggleAim()
 {
+	if (is_stunned_)
+	{
+		return;
+	}
 	if (const FWeaponSettings* settings = GetCurrentWeaponSettings(); settings && settings->can_aim)
 	{
 		SetAiming(!is_aiming_);

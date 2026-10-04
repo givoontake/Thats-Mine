@@ -49,6 +49,12 @@ public:
 	// 기절 상태 동안 머리 위에 별 이펙트를 켜고 끈다.
 	void SetStunEffectActive(bool is_active);
 
+	// 서버가 보낸 내 기절 게이지 값을 표시하고, 이후 초당 감소량만큼 줄여 표시한다.
+	void SetStunGauge(float gauge);
+	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
+	void StartStun(float duration_seconds);
+	virtual void Jump() override;
+
 	// 공격한 쪽 위치를 받아 화면 중앙 둘레에 피격 방향을 표시한다. 내가 조종하는 캐릭터에만 위젯이 있다.
 	void ShowDamageDirection(const FVector& attacker_location);
 
@@ -213,6 +219,13 @@ private:
 	bool has_pending_melee_hit_ = false;
 	FMeleeHitSettings active_melee_settings_;
 
+	// 내 기절 게이지는 stun_gauge_time_ 시각의 값이고, 표시할 때 초당 감소량만큼 줄인다.
+	float stun_gauge_ = 0.0f;
+	double stun_gauge_time_ = 0.0;
+	bool is_stunned_ = false;
+	FTimerHandle stun_timer_;
+	FTimerHandle stun_gauge_timer_;
+
 	void Move(const FInputActionValue& value);
 	void Look(const FInputActionValue& value);
 	void SelectWeaponFromKey(FKey key);
@@ -226,4 +239,6 @@ private:
 	void FinishReload(EWeaponType weapon);
 	void PlayReloadAnimation(EWeaponType weapon);
 	void UpdateEquipmentDisplay();
+	void UpdateStunGaugeDisplay();
+	void EndStun();
 };

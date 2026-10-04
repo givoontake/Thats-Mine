@@ -23,6 +23,12 @@ class Player
 	bool has_input_change_ = false;
 	// 명중 검증에 쓰는 서버 판정용 자세. 이동 상태와 동작으로 애니메이션 진행을 따라간다.
 	CharacterPose pose_;
+	// 기절 게이지는 stun_gauge_time_ms_ 시각의 값이고, 그 뒤로는 초당 감소량만큼 줄어든 것으로 계산한다. 기절 중에는 최대치로 본다.
+	float stun_gauge_ = 0.0f;
+	long long stun_gauge_time_ms_ = 0;
+	long long stun_end_ms_ = 0;
+
+	void ClearStun();
 
 	void ClearMoveState();
 
@@ -41,6 +47,8 @@ public:
 	const MOVE_STATE& GetMoveState() const { return move_state_; }
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
+	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
+	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
 	bool CanRelayMoveState(long long tick_time_ms) const { return has_new_move_state_ && (has_input_change_ || tick_time_ms - last_move_relay_ms_ >= MOVE_RELAY_INTERVAL_MS); }
@@ -54,4 +62,8 @@ public:
 	void ClearSendBuffer();
 	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change);
 	void MarkMoveStateRelayed(long long tick_time_ms);
+	// 기절 게이지를 올린다. 기절 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
+	bool AddStunGauge(float amount, long long time_ms);
+	// 기절을 시작할 때 이동을 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
+	void StopMovement();
 };

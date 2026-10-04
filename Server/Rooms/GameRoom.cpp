@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <cstddef>
 #include <cstring>
 #include <random>
@@ -253,7 +254,8 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	case C2S_MOVE_INPUT: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		// 기절 중에는 이동·동작·명중을 받지 않는다.
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
 		const bool is_input_change = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_MOVE_INPUT;
 		room_player->SetMoveState(reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state, tick_time_ms_, is_input_change);
 		break;
@@ -261,7 +263,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	case C2S_ACTION: {
 		if (room_state_.load() != RoomState::PLAY || pending_action_count_ >= pending_actions_.size()) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
 		const auto* request_p = reinterpret_cast<C2S_ACTION_PACKET*>(packet);
 		auto& action_p = pending_actions_[pending_action_count_++];
 		action_p.header = { sizeof(action_p), S2C_ACTION };
@@ -275,7 +277,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	case C2S_HIT: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
 		ProcessHit(*room_player, *reinterpret_cast<C2S_HIT_PACKET*>(packet));
 		break;
 	}
@@ -693,7 +695,7 @@ void GameRoom::ProcessLoadedPlayers()
 	}
 }
 
-// 클라이언트가 보낸 명중을 검증하고, 인정하면 쏜 사람과 맞은 사람에게만 알린다. 거부하면 아무것도 보내지 않는다.
+// 클라이언트가 보낸 명중을 검증하고, 인정하면 쏜 사람과 맞은 사람에게만 알린 뒤 맞은 사람의 기절 게이지를 올린다. 거부하면 아무것도 보내지 않는다.
 void GameRoom::ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p)
 {
 	Player* target = nullptr;
@@ -710,6 +712,30 @@ void GameRoom::ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p
 	for (const Player* receiver : { &shooter, static_cast<const Player*>(target) }) {
 		if (auto session = FindSession(*receiver)) session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
 	}
+	AddStunGauge(*target, request_p);
+}
+
+// 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이면 게이지는 그대로다.
+// 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
+void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
+{
+	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunned(tick_time_ms_)) return;
+	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
+		target.StopMovement();
+		S2C_STUN_PACKET stun_p;
+		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN };
+		stun_p.player_id = request_p.target_player_id;
+		stun_p.duration_ms = STUN_DURATION_MS;
+		for (auto& room_player : room_players_) {
+			auto session = FindSession(room_player);
+			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&stun_p), stun_p.header.size);
+		}
+		return;
+	}
+	S2C_STUN_GAUGE_PACKET gauge_p;
+	gauge_p.header = { static_cast<std::uint16_t>(sizeof(gauge_p)), S2C_STUN_GAUGE };
+	gauge_p.gauge = target.GetStunGauge(tick_time_ms_);
+	if (auto session = FindSession(target)) session->SendPacket(reinterpret_cast<char*>(&gauge_p), gauge_p.header.size);
 }
 
 // 지연 보정이 없으므로 클라이언트 화면과 서버 위치 차이를 여유로 허용한다.
