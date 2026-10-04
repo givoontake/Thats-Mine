@@ -24,7 +24,7 @@ public:
 	FLocalRoomResult JoinRoom(int64 room_key, const FString& password);
 	void LeaveRoom();
 	void StartGame();
-	void ReturnToLobby();
+	void QuitGame();
 
 private:
 	void HandleMapLoaded(UWorld* world);

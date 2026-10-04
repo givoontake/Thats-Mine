@@ -5,6 +5,7 @@
 #include "Components/InputComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "UI/Local/LocalPlayWidget.h"
 #include "UObject/UObjectGlobals.h"
 #include "Flow/ClientStateSubsystem.h"
@@ -138,33 +139,24 @@ void ULocalSessionSubsystem::Deinitialize()
 void ULocalSessionSubsystem::StartGame()
 {
 	UClientStateSubsystem* state = GetGameInstance()->GetSubsystem<UClientStateSubsystem>();
-	if (!state->IsLocalMode() || state->GetState() != EClientState::ROOM || !GetCurrentRoom().IsSet())
+	if (!state->IsLocalMode())
 	{
 		return;
-	}
-	for (FLocalRoom& room : rooms_)
-	{
-		if (room.info.room_key == current_room_key_)
-		{
-			room.info.is_playing = true;
-			break;
-		}
 	}
 	state->ChangeState(EClientState::PLAYING);
 	UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Demo_Landmass"));
 }
 
-void ULocalSessionSubsystem::ReturnToLobby()
+void ULocalSessionSubsystem::QuitGame()
 {
 	UClientStateSubsystem* state = GetGameInstance()->GetSubsystem<UClientStateSubsystem>();
 	if (!state->IsLocalMode() || state->GetState() != EClientState::PLAYING)
 	{
 		return;
 	}
-	LeaveRoom();
+	APlayerController* controller = gameplay_controller_.Get();
 	ClearGameplayControls();
-	state->ChangeState(EClientState::LOBBY);
-	UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Lvl_Lobby"));
+	UKismetSystemLibrary::QuitGame(this, controller, EQuitPreference::Quit, false);
 }
 
 void ULocalSessionSubsystem::HandleMapLoaded(UWorld* world)
@@ -189,7 +181,7 @@ void ULocalSessionSubsystem::HandleMapLoaded(UWorld* world)
 	return_input_ = NewObject<UInputComponent>(controller);
 	return_input_->Priority = 100;
 	return_input_->RegisterComponent();
-	return_input_->BindKey(EKeys::F10, IE_Pressed, this, &ULocalSessionSubsystem::ReturnToLobby).bExecuteWhenPaused = true;
+	return_input_->BindKey(EKeys::F10, IE_Pressed, this, &ULocalSessionSubsystem::QuitGame).bExecuteWhenPaused = true;
 	controller->PushInputComponent(return_input_);
 	local_play_widget_ = CreateWidget<ULocalPlayWidget>(controller);
 	if (local_play_widget_)

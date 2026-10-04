@@ -13,7 +13,7 @@ TSharedRef<SWidget> ULocalPlayWidget::RebuildWidget()
 		UCanvasPanel* canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
 		WidgetTree->RootWidget = canvas;
 		UTextBlock* notice = WidgetTree->ConstructWidget<UTextBlock>();
-		notice->SetText(NSLOCTEXT("LocalSession", "PlayNotice", "로컬 테스트  |  F10: 로비로"));
+		notice->SetText(NSLOCTEXT("LocalSession", "PlayNotice", "로컬 테스트  |  F10: 종료"));
 		notice->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18));
 		notice->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.8f, 0.4f)));
 		notice->SetShadowColorAndOpacity(FLinearColor::Black);
