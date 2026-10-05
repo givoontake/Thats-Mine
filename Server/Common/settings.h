@@ -28,10 +28,19 @@ constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr double PLATFORM_SPAWN_PROBABILITY = 0.6; // 반드시 놓는 자리가 아닌 발판을 놓을 확률
 
+// 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
+constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
+constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아래 끝까지 거리(cm). 양 끝 반구를 포함한다.
+
+// 이동 검증. 어기면 마지막으로 인정한 위치로 되돌린다.
+// 허용치(cm): 캡슐 아래 끝(발)이 랜드스케이프보다 이만큼 넘게 아래면 땅속, 캡슐이 이동을 막는 배치물에 이만큼 넘게 파고들면 겹침으로 본다.
+constexpr float MOVE_TOLERANCE = 20.0f;
+
 // 명중 검증. 지연 보정이 없어 클라이언트 화면과 서버의 위치 차이를 여유로 허용한다.
 constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)
 constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여유에 더하는 지연 허용 시간(초)
 constexpr float HIT_ORIGIN_MAX_OFFSET = 200.0f; // 발사 시작점이 쏜 사람 위치에서 벗어날 수 있는 기본 거리(cm)
+constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.
 
 // 기절 게이지. 명중당하면 무기별 증가량에 맞은 부위 배율을 곱해 올리고, 초당 감소량만큼 줄어든다. 최대치에 닿으면 기절한다.
 constexpr float STUN_GAUGE_MAX = 100.0f;

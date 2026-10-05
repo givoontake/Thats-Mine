@@ -5,6 +5,7 @@
 #include <memory>
 #include "ExOverlapped.h"
 #include "HitboxData.h"
+#include "TerrainData.h"
 #include "session_tasks.h"
 #pragma comment(lib, "MSWSock.lib")
 #pragma comment(lib, "Ws2_32.lib")
@@ -28,6 +29,7 @@ class GameServer
 	std::atomic<bool> is_running_ = true;
 	std::unique_ptr<ServerThreadManager> thread_manager_;
 	HitboxData hitbox_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 히트박스 판정 데이터
+	TerrainData terrain_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 지형 판정 데이터
 
 public:
 
@@ -40,6 +42,7 @@ public:
 	ServerThreadManager& GetThreadManager() { return *thread_manager_; }
 	SessionManager& GetSessionManager() { return *session_manager_; }
 	const HitboxData& GetHitboxData() const { return hitbox_data_; }
+	const TerrainData& GetTerrainData() const { return terrain_data_; }
 
 	void SyncLobbyList(int session_index);
 

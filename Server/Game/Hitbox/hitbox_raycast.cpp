@@ -71,7 +71,7 @@ static float RaycastBox(FXMVECTOR origin, FXMVECTOR direction, const XMFLOAT3& h
 }
 
 // 두 선분 사이 최단 거리의 제곱. 각 선분 위에서 서로 가장 가까운 점을 0~1 비율로 찾는다.
-static float GetSegmentDistanceSquared(FXMVECTOR first_start, FXMVECTOR first_end, FXMVECTOR second_start, GXMVECTOR second_end)
+float GetSegmentDistanceSquared(FXMVECTOR first_start, FXMVECTOR first_end, FXMVECTOR second_start, GXMVECTOR second_end)
 {
 	const XMVECTOR first = XMVectorSubtract(first_end, first_start);
 	const XMVECTOR second = XMVectorSubtract(second_end, second_start);

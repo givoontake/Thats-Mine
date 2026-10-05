@@ -13,6 +13,7 @@ class APlayerCharacter;
 // 온라인 게임 중 내 캐릭터의 이동 상태와 동작을 서버에 보내고, 받은 다른 플레이어의 상태와 동작을 해당 캐릭터에 반영한다.
 // 이동 상태는 주기마다 보내고, 받는 쪽 추측이 크게 어긋나는 변화가 생기면 주기보다 먼저 보낸다. 동작은 시작할 때 바로 보낸다.
 // 총알이 다른 플레이어의 히트박스를 맞히면 명중을 서버에 보내고, 서버가 인정한 명중과 기절 게이지·기절을 받는다.
+// 서버가 이동을 인정하지 않으면 받은 위치로 내 캐릭터를 바로 옮기고 확인을 보낸다.
 UCLASS()
 class THATSMINE_API UMovementSyncSubsystem : public UTickableWorldSubsystem
 {
@@ -38,6 +39,7 @@ private:
 	void HandleHitPacket(const TArray<uint8>& payload);
 	void HandleStunGaugePacket(const TArray<uint8>& payload);
 	void HandleStunPacket(const TArray<uint8>& payload);
+	void HandleMoveCorrectionPacket(const TArray<uint8>& payload);
 	void HandleMovePacket(const TArray<uint8>& payload);
 	void HandleActionPacket(const TArray<uint8>& payload);
 	void RemoveLeftPlayers();

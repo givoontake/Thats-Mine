@@ -42,5 +42,7 @@ constexpr std::uint8_t C2S_HIT = 70;
 constexpr std::uint8_t S2C_HIT = 71;
 constexpr std::uint8_t S2C_STUN_GAUGE = 72;
 constexpr std::uint8_t S2C_STUN = 73;
+constexpr std::uint8_t S2C_MOVE_CORRECTION = 74;
+constexpr std::uint8_t C2S_MOVE_CORRECTION_ACK = 75;
 constexpr std::uint8_t S2C_PLATFORM_LAYOUT = 76;
 constexpr std::uint8_t S2C_INFO = 100;

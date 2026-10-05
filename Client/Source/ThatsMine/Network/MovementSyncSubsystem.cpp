@@ -101,6 +101,7 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
 	network->RegisterPacketHandler(S2C_STUN_GAUGE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunGaugePacket));
 	network->RegisterPacketHandler(S2C_STUN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunPacket));
+	network->RegisterPacketHandler(S2C_MOVE_CORRECTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveCorrectionPacket));
 	game_instance->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &UMovementSyncSubsystem::RemoveLeftPlayers);
 }
 
@@ -117,6 +118,7 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_HIT);
 			network->UnregisterPacketHandler(S2C_STUN_GAUGE);
 			network->UnregisterPacketHandler(S2C_STUN);
+			network->UnregisterPacketHandler(S2C_MOVE_CORRECTION);
 		}
 		if (UOnlineSessionSubsystem* online = game_instance ? game_instance->GetSubsystem<UOnlineSessionSubsystem>() : nullptr)
 		{
@@ -335,6 +337,29 @@ void UMovementSyncSubsystem::HandleStunPacket(const TArray<uint8>& payload)
 	{
 		character->StartStun(packet.duration_ms / 1000.0f);
 	}
+}
+
+// 서버가 내 이동을 인정하지 않았다. 받은 위치로 바로 옮겨 멈추고, 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다.
+void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_MOVE_CORRECTION_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_MOVE_CORRECTION_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* character = local_character_.Get())
+	{
+		character->SetActorLocation(FVector(packet.location[0], packet.location[1], packet.location[2]), false, nullptr, ETeleportType::TeleportPhysics);
+		character->GetCharacterMovement()->StopMovementImmediately();
+	}
+	C2S_MOVE_CORRECTION_ACK_PACKET ack{};
+	ack.correction_id = packet.correction_id;
+	TArray<uint8> ack_payload;
+	ack_payload.Append(reinterpret_cast<const uint8*>(&ack) + sizeof(PACKET_HEADER), sizeof(ack) - sizeof(PACKET_HEADER));
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_MOVE_CORRECTION_ACK, ack_payload);
+	has_sent_state_ = false;
 }
 
 void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)

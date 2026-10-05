@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <optional>
 #include <cstddef>
 #include <cstring>
 #include <random>
@@ -255,10 +256,21 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	case C2S_MOVE_INPUT: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		// 기절 중에는 이동·동작·명중을 받지 않는다.
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
+		// 기절 중에는 이동·동작·명중을 받지 않는다. 되돌리기 확인을 기다리는 동안 받은 이동 상태도 버린다.
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_) || room_player->IsAwaitingMoveCorrection()) break;
+		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
+		if (!CheckMove(*room_player, move_state)) {
+			RollbackMove(*room_player, request_session);
+			break;
+		}
 		const bool is_input_change = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_MOVE_INPUT;
-		room_player->SetMoveState(reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state, tick_time_ms_, is_input_change);
+		room_player->SetMoveState(move_state, tick_time_ms_, is_input_change);
+		break;
+	}
+	case C2S_MOVE_CORRECTION_ACK: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (room_player) room_player->CompleteMoveCorrection(reinterpret_cast<C2S_MOVE_CORRECTION_ACK_PACKET*>(packet)->correction_id);
 		break;
 	}
 	case C2S_ACTION: {
@@ -574,12 +586,12 @@ void GameRoom::StartGame(int requester_id)
 	is_game_started_ = false;
 	last_pose_tick_ms_ = 0;
 	// 이번 게임의 발판 배치를 정해 둔다.
-	const PlatformLayout layout = GeneratePlatformLayout(std::random_device{}());
+	platform_layout_ = GeneratePlatformLayout(std::random_device{}());
 	platform_layout_p_ = {};
 	platform_layout_p_.header = { static_cast<std::uint16_t>(sizeof(platform_layout_p_)), S2C_PLATFORM_LAYOUT };
 	platform_layout_p_.platform_count = static_cast<std::uint16_t>(PLATFORM_COORDINATE_COUNT);
 	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
-		if (layout[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
+		if (platform_layout_[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
 	}
 }
 
@@ -750,6 +762,7 @@ void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
 
 // 지연 보정이 없으므로 클라이언트 화면과 서버 위치 차이를 여유로 허용한다.
 // 총인지, 사거리 안인지, 시작점이 쏜 사람 근처인지 본 뒤, 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 지나가는지 검사한다.
+// 마지막으로 발사 지점부터 히트박스에 닿은 곳까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않는지 본다.
 bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const
 {
 	const HitboxData& data = server_->GetHitboxData();
@@ -776,7 +789,44 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	const float max_distance = request_p.distance + margin;
 	const DirectX::XMFLOAT3 location(target_state.location[0], target_state.location[1], target_state.location[2]);
 	if (!IsRayNearCharacter(origin, unit_direction, max_distance, location, target_state.yaw, data.GetBroadphaseCapsule(), margin)) return false;
-	return RaycastHitboxes(origin, unit_direction, max_distance, target.GetPose().BuildWorldHitboxes(target_state, tick_time_ms_), margin).has_hit;
+	const HitboxRayHit hit = RaycastHitboxes(origin, unit_direction, max_distance, target.GetPose().BuildWorldHitboxes(target_state, tick_time_ms_), margin);
+	if (!hit.has_hit) return false;
+	if (hit.distance <= HIT_OCCLUSION_MARGIN * 2.0f) return true;
+	const DirectX::XMVECTOR origin_v = DirectX::XMLoadFloat3(&origin);
+	const DirectX::XMVECTOR direction_v = DirectX::XMLoadFloat3(&unit_direction);
+	DirectX::XMFLOAT3 segment_start;
+	DirectX::XMFLOAT3 segment_end;
+	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
+	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, hit.distance - HIT_OCCLUSION_MARGIN)));
+	const TerrainData& terrain = server_->GetTerrainData();
+	return !terrain.IsSegmentBlockedByLandscape(segment_start, segment_end) && !terrain.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, platform_layout_);
+}
+
+// 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
+// 두 위치의 캡슐 중심을 이은 선분이 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨·발판)을 지나면 관통이다.
+// 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 첫 위치는 비교할 이전 위치가 없어 인정한다.
+bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) const
+{
+	const float* next = move_state.location;
+	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2])) return false;
+	const TerrainData& terrain = server_->GetTerrainData();
+	if (!player.HasMoveState()) return true;
+	const std::optional<float> ground = terrain.GetGroundHeight(next[0], next[1]);
+	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return false;
+	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
+	if (terrain.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, platform_layout_)) return false;
+	const float* previous = player.GetMoveState().location;
+	return !terrain.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, platform_layout_);
+}
+
+// 마지막으로 인정한 위치에 멈춘 상태로 되돌려 다른 플레이어에게 다음 틱에 중계하고, 본인에게는 그 위치로 옮기라고 보낸다.
+void GameRoom::RollbackMove(Player& player, Session& session)
+{
+	S2C_MOVE_CORRECTION_PACKET correction_p;
+	correction_p.header = { static_cast<std::uint16_t>(sizeof(correction_p)), S2C_MOVE_CORRECTION };
+	correction_p.correction_id = player.StartMoveCorrection();
+	std::memcpy(correction_p.location, player.GetMoveState().location, sizeof(correction_p.location));
+	session.SendPacket(reinterpret_cast<char*>(&correction_p), correction_p.header.size);
 }
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.

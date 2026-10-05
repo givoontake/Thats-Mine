@@ -98,6 +98,18 @@ void Player::StopMovement()
 	has_input_change_ = true;
 }
 
+std::uint32_t Player::StartMoveCorrection()
+{
+	StopMovement();
+	is_awaiting_move_correction_ = true;
+	return ++move_correction_id_;
+}
+
+void Player::CompleteMoveCorrection(std::uint32_t correction_id)
+{
+	if (correction_id == move_correction_id_) is_awaiting_move_correction_ = false;
+}
+
 void Player::ClearMoveState()
 {
 	move_state_ = {};
@@ -105,6 +117,7 @@ void Player::ClearMoveState()
 	last_move_relay_ms_ = 0;
 	has_new_move_state_ = false;
 	has_input_change_ = false;
+	is_awaiting_move_correction_ = false;
 }
 
 bool Player::AddToSendBuffer(const char* data, int data_size)

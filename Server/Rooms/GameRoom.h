@@ -9,6 +9,7 @@
 #include <mutex>
 #include "ConcurrentTaskQueue.h"
 #include "Player.h"
+#include "platform_layout.h"
 class Session;
 
 class GameServer;
@@ -83,7 +84,8 @@ private:
 	bool is_game_started_ = false;
 	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
 	long long last_pose_tick_ms_ = 0;
-	// 게임 시작 때 정한 발판 배치. 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
+	// 게임 시작 때 정한 발판 배치와 그 배치를 담은 패킷. 패킷은 로딩을 마친 플레이어에게 스폰보다 먼저 보내고, 배치는 이동·명중 검사에 쓴다.
+	PlatformLayout platform_layout_{};
 	S2C_PLATFORM_LAYOUT_PACKET platform_layout_p_{};
 
 	Session* FindSession(const Player& player) const;
@@ -105,6 +107,8 @@ private:
 	void ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p);
 	void AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
+	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;
+	void RollbackMove(Player& player, Session& session);
 	void StartGame(int requester_id);
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환

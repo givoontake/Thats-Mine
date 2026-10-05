@@ -27,6 +27,9 @@ class Player
 	float stun_gauge_ = 0.0f;
 	long long stun_gauge_time_ms_ = 0;
 	long long stun_end_ms_ = 0;
+	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
+	std::uint32_t move_correction_id_ = 0;
+	bool is_awaiting_move_correction_ = false;
 
 	void ClearStun();
 
@@ -48,6 +51,7 @@ public:
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
+	bool IsAwaitingMoveCorrection() const { return is_awaiting_move_correction_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
@@ -66,4 +70,8 @@ public:
 	bool AddStunGauge(float amount, long long time_ms);
 	// 기절을 시작할 때 이동을 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
 	void StopMovement();
+	// 마지막으로 인정한 위치에 멈춘 상태로 되돌리고 새 되돌리기 번호를 돌려준다. 확인을 받을 때까지 이동 상태를 받지 않는다.
+	std::uint32_t StartMoveCorrection();
+	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.
+	void CompleteMoveCorrection(std::uint32_t correction_id);
 };

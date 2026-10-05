@@ -121,6 +121,19 @@ struct S2C_STUN_PACKET {
 	std::uint32_t duration_ms;
 };
 
+// 서버가 이동을 인정하지 않아 마지막으로 인정한 위치(캡슐 중심, cm)로 되돌린다. 받은 클라이언트는 그 위치로 바로 옮기고 같은 번호로 확인을 보낸다.
+struct S2C_MOVE_CORRECTION_PACKET {
+	PACKET_HEADER header;
+	std::uint32_t correction_id;
+	float location[3];
+};
+
+// 되돌리기를 적용했다는 확인. 서버는 이 확인을 받을 때까지 그 플레이어의 이동 상태를 받지 않는다.
+struct C2S_MOVE_CORRECTION_ACK_PACKET {
+	PACKET_HEADER header;
+	std::uint32_t correction_id;
+};
+
 // 이번 게임의 발판 배치. 발판 자리(PLATFORM_COORDINATES)마다 놓으면 1인 비트를 자리 순서대로 담는다(바이트 안에서는 낮은 비트부터).
 // platform_count는 서버의 자리 수로, 클라이언트 표와 다르면 받지 않는다.
 struct S2C_PLATFORM_LAYOUT_PACKET {
