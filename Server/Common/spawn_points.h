@@ -11,6 +11,10 @@ struct SpawnPoint {
 	float yaw;
 };
 
+// 시작 돔. 게임 시작 전에는 캐릭터가 이 구 안에만 있을 수 있다. 레벨의 돔(엔진 구 메시 반지름 50cm × 배율 41.4107)과 같다.
+inline constexpr float START_DOME_CENTER[3] = { -86651.99f, -68744.12f, 706.49f };
+inline constexpr float START_DOME_RADIUS = 2070.53f;
+
 inline constexpr SpawnPoint START_DOME_SPAWN_POINTS[MAX_ROOM_PLAYER_COUNT] = {
 	{ -85852.0f, -68744.1f, 794.5f, 0.0f },
 	{ -85891.1f, -68496.9f, 794.5f, 18.0f },

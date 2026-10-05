@@ -804,7 +804,7 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 
 // 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
 // 두 위치의 캡슐 중심을 이은 선분이 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨·발판)을 지나면 관통이다.
-// 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 첫 위치는 비교할 이전 위치가 없어 인정한다.
+// 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 게임 시작 전에는 시작 돔 밖으로 나간 위치도 인정하지 않는다. 첫 위치는 비교할 이전 위치가 없어 인정한다.
 bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) const
 {
 	const float* next = move_state.location;
@@ -815,6 +815,13 @@ bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) con
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return false;
 	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
 	if (terrain.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, platform_layout_)) return false;
+	if (!is_game_started_) {
+		const float dx = next[0] - START_DOME_CENTER[0];
+		const float dy = next[1] - START_DOME_CENTER[1];
+		const float dz = next[2] - START_DOME_CENTER[2];
+		const float limit = START_DOME_RADIUS - CHARACTER_CAPSULE_RADIUS + MOVE_TOLERANCE;
+		if (dx * dx + dy * dy + dz * dz > limit * limit) return false;
+	}
 	const float* previous = player.GetMoveState().location;
 	return !terrain.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, platform_layout_);
 }

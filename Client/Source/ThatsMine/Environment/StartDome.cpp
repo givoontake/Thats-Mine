@@ -1,7 +1,9 @@
 #include "StartDome.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
+#include "Flow/ClientStateSubsystem.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
@@ -13,11 +15,15 @@ AStartDome::AStartDome()
 	bAllowTickBeforeBeginPlay = true;
 	dome_mesh_ = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DomeMesh"));
 	SetRootComponent(dome_mesh_);
+	// 게임 시작 전까지 캐릭터 이동만 돔 안에 가둔다. 충돌은 돔이 보이는 동안에만 켠다.
+	// 돔 메시는 표면 삼각형을 양면 충돌로 쓰도록 만든 구라서 안에서 밖으로 나가는 캐릭터를 막는다.
 	dome_mesh_->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	dome_mesh_->SetCollisionResponseToAllChannels(ECR_Ignore);
+	dome_mesh_->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 	dome_mesh_->SetGenerateOverlapEvents(false);
 	dome_mesh_->SetCastShadow(false);
 	dome_mesh_->SetCanEverAffectNavigation(false);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> sphere(TEXT("/Game/Thats_Mine/Meshes/SM_StartDome.SM_StartDome"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> material(TEXT("/Game/Thats_Mine/Materials/M_StartDome.M_StartDome"));
 	dome_mesh_->SetStaticMesh(sphere.Object);
 	dome_material_ = material.Object;
@@ -43,13 +49,23 @@ void AStartDome::OnConstruction(const FTransform& transform)
 void AStartDome::BeginPlay()
 {
 	Super::BeginPlay();
-	ShowDome();
+	// 로컬 플레이는 서버의 게임 시작이 없으므로 처음부터 게임이 시작된 상태로 둔다.
+	const UGameInstance* game_instance = GetGameInstance();
+	if (game_instance && game_instance->GetSubsystem<UClientStateSubsystem>()->IsLocalMode())
+	{
+		HideDome();
+	}
+	else
+	{
+		ShowDome();
+	}
 }
 
 void AStartDome::ShowDome()
 {
 	is_dissolving_ = false;
 	SetActorTickEnabled(false);
+	dome_mesh_->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	dissolve_progress_ = 0.0f;
 	UpdateMaterial();
 }
@@ -59,12 +75,14 @@ void AStartDome::StartDissolve()
 	ShowDome();
 	is_dissolving_ = true;
 	SetActorTickEnabled(true);
+	dome_mesh_->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void AStartDome::HideDome()
 {
 	is_dissolving_ = false;
 	SetActorTickEnabled(false);
+	dome_mesh_->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	dissolve_progress_ = 1.0f;
 	UpdateMaterial();
 }
