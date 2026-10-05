@@ -58,6 +58,8 @@ add_executable(GameServer
     Common/IndexRegistry.h
     Common/info_code.h
     Common/settings.h
+    Common/platform_coordinates.h
+    Common/platform_layout.h
     Common/spawn_points.h
     Common/types.h
     Core/GameServer.h

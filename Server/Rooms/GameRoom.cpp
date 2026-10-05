@@ -14,6 +14,7 @@
 #include "room_packets.h"
 #include "game_packets.h"
 #include "spawn_points.h"
+#include "platform_layout.h"
 #include "hitbox_raycast.h"
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
@@ -572,6 +573,14 @@ void GameRoom::StartGame(int requester_id)
 	game_start_ms_ = 0;
 	is_game_started_ = false;
 	last_pose_tick_ms_ = 0;
+	// 이번 게임의 발판 배치를 정해 둔다.
+	const PlatformLayout layout = GeneratePlatformLayout(std::random_device{}());
+	platform_layout_p_ = {};
+	platform_layout_p_.header = { static_cast<std::uint16_t>(sizeof(platform_layout_p_)), S2C_PLATFORM_LAYOUT };
+	platform_layout_p_.platform_count = static_cast<std::uint16_t>(PLATFORM_COORDINATE_COUNT);
+	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
+		if (layout[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
+	}
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -677,12 +686,13 @@ void GameRoom::ProcessLoadedPlayers()
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 
-	// 합류하는 플레이어는 전원의 스폰과 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
+	// 합류하는 플레이어는 발판 배치와 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			room_player.GetPose().Reset(server_->GetHitboxData());
+			session->SendPacket(reinterpret_cast<char*>(&platform_layout_p_), platform_layout_p_.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);

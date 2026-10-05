@@ -83,6 +83,8 @@ private:
 	bool is_game_started_ = false;
 	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
 	long long last_pose_tick_ms_ = 0;
+	// 게임 시작 때 정한 발판 배치. 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
+	S2C_PLATFORM_LAYOUT_PACKET platform_layout_p_{};
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "common_packets.h"
 #include "settings.h"
+#include "platform_coordinates.h"
 
 // 히트박스 부위. 서버 판정 데이터와 클라이언트 명중 보고가 같은 값을 쓴다.
 enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT };
@@ -120,7 +121,16 @@ struct S2C_STUN_PACKET {
 	std::uint32_t duration_ms;
 };
 
+// 이번 게임의 발판 배치. 발판 자리(PLATFORM_COORDINATES)마다 놓으면 1인 비트를 자리 순서대로 담는다(바이트 안에서는 낮은 비트부터).
+// platform_count는 서버의 자리 수로, 클라이언트 표와 다르면 받지 않는다.
+struct S2C_PLATFORM_LAYOUT_PACKET {
+	PACKET_HEADER header;
+	std::uint16_t platform_count;
+	std::uint8_t spawned_bits[(PLATFORM_COORDINATE_COUNT + 7) / 8];
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(S2C_MOVE_PACKET) <= BUF_SIZE, "S2C_MOVE_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_SPAWN_PACKET) <= BUF_SIZE, "S2C_SPAWN_PACKET must fit in one packet.");
+static_assert(sizeof(S2C_PLATFORM_LAYOUT_PACKET) <= BUF_SIZE, "S2C_PLATFORM_LAYOUT_PACKET must fit in one packet.");
