@@ -4,6 +4,7 @@
 #include <optional>
 #include <cstddef>
 #include <cstring>
+#include <iostream>
 #include <random>
 #include <utility>
 #include "GameRoom.h"
@@ -603,6 +604,38 @@ void GameRoom::StartGame(int requester_id)
 		box_layout_p_.entries[index] = { static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z } };
 	}
 	box_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_BOX_LAYOUT_PACKET, entries) + box_layout_p_.box_count * sizeof(BOX_ENTRY)), S2C_BOX_LAYOUT };
+	PlaceTreasure();
+}
+
+// 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·시작 돔) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
+// 보물을 감싼 구가 배치물(건물·나무·바위·발판)과 겹치지 않는 곳이 나올 때까지 다시 뽑는다.
+// 바닥은 그 사각형 안 가장 낮은 땅에 맞춰 뜨지 않게 한다.
+void GameRoom::PlaceTreasure()
+{
+	const TerrainData& terrain = server_->GetTerrainData();
+	const MapRegionData& regions = server_->GetMapRegionData();
+	std::mt19937 random(std::random_device{}());
+	std::uniform_real_distribution<float> random_x(MAP_MIN[0] + TREASURE_EDGE_MARGIN, MAP_MAX[0] - TREASURE_EDGE_MARGIN);
+	std::uniform_real_distribution<float> random_y(MAP_MIN[1] + TREASURE_EDGE_MARGIN, MAP_MAX[1] - TREASURE_EDGE_MARGIN);
+	std::uniform_real_distribution<float> random_yaw(0.0f, 360.0f);
+	treasure_location_ = {};
+	treasure_yaw_ = 0.0f;
+	for (int attempt = 0; attempt < TREASURE_PLACE_ATTEMPTS; ++attempt) {
+		const float x = random_x(random);
+		const float y = random_y(random);
+		if (regions.IsTreasureExcluded(x, y)) continue;
+		std::optional<float> ground = terrain.GetGroundHeight(x, y);
+		for (int corner = 0; corner < 4 && ground; ++corner) {
+			const std::optional<float> corner_ground = terrain.GetGroundHeight(x + ((corner & 1) ? TREASURE_RADIUS : -TREASURE_RADIUS), y + ((corner & 2) ? TREASURE_RADIUS : -TREASURE_RADIUS));
+			ground = corner_ground ? std::optional<float>(std::min(*ground, *corner_ground)) : std::nullopt;
+		}
+		if (!ground) continue;
+		if (terrain.IsCapsuleOverlappingObjects({ x, y, *ground + TREASURE_HALF_HEIGHT }, TREASURE_RADIUS, TREASURE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, platform_layout_)) continue;
+		treasure_location_ = { x, y, *ground };
+		treasure_yaw_ = random_yaw(random);
+		return;
+	}
+	std::cerr << "Treasure place fail.. " << std::endl;
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)

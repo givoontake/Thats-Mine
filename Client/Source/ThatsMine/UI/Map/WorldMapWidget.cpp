@@ -17,17 +17,21 @@ UWorldMapWidget::UWorldMapWidget(const FObjectInitializer& object_initializer)
 	SetIsFocusable(true);
 	SetVisibility(ESlateVisibility::Visible);
 	places_ = {
-		{FText::AsCultureInvariant(TEXT("Dragon Ridge")), FVector2D(0.312, 0.145)},
-		{FText::AsCultureInvariant(TEXT("Start Dome")), FVector2D(0.843, 0.073)},
-		{FText::AsCultureInvariant(TEXT("Ring Ruins")), FVector2D(0.222, 0.267)},
-		{FText::AsCultureInvariant(TEXT("Oak Ridge")), FVector2D(0.207, 0.373)},
-		{FText::AsCultureInvariant(TEXT("Bamboo Grove")), FVector2D(0.586, 0.302)},
-		{FText::AsCultureInvariant(TEXT("Pyramid")), FVector2D(0.634, 0.406)},
-		{FText::AsCultureInvariant(TEXT("Egyptian Village")), FVector2D(0.241, 0.590)},
-		{FText::AsCultureInvariant(TEXT("Asian Village")), FVector2D(0.530, 0.631)},
-		{FText::AsCultureInvariant(TEXT("Maple Peak")), FVector2D(0.810, 0.550)},
-		{FText::AsCultureInvariant(TEXT("Star Peak")), FVector2D(0.244, 0.758)},
-		{FText::AsCultureInvariant(TEXT("Ship Peak")), FVector2D(0.795, 0.839)}
+		{FText::AsCultureInvariant(TEXT("Dragon Ridge")), FVector2D(0.350, 0.151), 28},
+		{FText::AsCultureInvariant(TEXT("Start Dome")), FVector2D(0.841, 0.070), 14},
+		{FText::AsCultureInvariant(TEXT("Ring Ruins")), FVector2D(0.225, 0.269), 20},
+		{FText::AsCultureInvariant(TEXT("Oak Ridge")), FVector2D(0.188, 0.416), 25},
+		{FText::AsCultureInvariant(TEXT("Bamboo\nGrove")), FVector2D(0.560, 0.309), 20},
+		{FText::AsCultureInvariant(TEXT("Pyramid")), FVector2D(0.632, 0.404), 18},
+		{FText::AsCultureInvariant(TEXT("Egyptian\nVillage")), FVector2D(0.236, 0.540), 18},
+		{FText::AsCultureInvariant(TEXT("Asian\nVillage")), FVector2D(0.547, 0.552), 21},
+		{FText::AsCultureInvariant(TEXT("Maple Peak")), FVector2D(0.779, 0.566), 21},
+		{FText::AsCultureInvariant(TEXT("Star Peak")), FVector2D(0.251, 0.756), 23},
+		{FText::AsCultureInvariant(TEXT("Ship Peak")), FVector2D(0.773, 0.818), 23},
+		{FText::AsCultureInvariant(TEXT("Oak Lake")), FVector2D(0.409, 0.332), 23},
+		{FText::AsCultureInvariant(TEXT("Mini Lake")), FVector2D(0.668, 0.318), 18},
+		{FText::AsCultureInvariant(TEXT("Blue Lake")), FVector2D(0.608, 0.730), 17},
+		{FText::AsCultureInvariant(TEXT("Pond")), FVector2D(0.817, 0.031), 14}
 	};
 }
 
@@ -53,7 +57,9 @@ TSharedRef<SWidget> UWorldMapWidget::RebuildWidget()
 		{
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 			label->SetText(place.name);
-			label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), PLACE_FONT_SIZE * MAX_ZOOM));
+			// 두 줄 지명도 가운데 정렬한다.
+			label->SetJustification(ETextJustify::Center);
+			label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), place.font_size * MAX_ZOOM));
 			label->SetColorAndOpacity(FLinearColor(0.035f, 0.02f, 0.012f, 0.65f));
 			label->SetShadowColorAndOpacity(FLinearColor(1.0f, 0.96f, 0.83f, 0.38f));
 			label->SetShadowOffset(FVector2D(0.0, MAX_ZOOM));

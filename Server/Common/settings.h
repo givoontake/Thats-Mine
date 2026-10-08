@@ -35,6 +35,14 @@ constexpr float BOX_MIN_DISTANCE = 5000.0f; // 상자끼리 최소 수평 거리
 constexpr int MAX_BOX_COUNT = 64; // 한 판의 상자 수 상한(상자 배치 패킷 크기). 유적 상자 최대 13개와 자연 상자 수를 합친 값보다 커야 한다.
 static_assert(NATURAL_BOX_COUNT + 13 <= MAX_BOX_COUNT, "MAX_BOX_COUNT must hold all boxes.");
 
+// 최종 보물. 임시로 크기 1의 보물 상자 모델(가로 약 170cm, 높이 130cm) 크기로 보고, 서버가 맵 안 무작위 위치에 놓는다. 위치는 서버만 안다.
+constexpr float MAP_MIN[2] = { -100750.0f, -100700.0f }; // 맵 범위(cm). 클라이언트 지도와 같다.
+constexpr float MAP_MAX[2] = { 100650.0f, 100700.0f };
+constexpr float TREASURE_RADIUS = 85.0f; // 보물을 감싸는 수평 반경(cm). 이 사각형 안의 땅이 모두 있어야 하고, 이 반경의 구가 배치물과 겹치면 다시 뽑는다.
+constexpr float TREASURE_HALF_HEIGHT = 65.0f; // 보물 높이의 절반(cm)
+constexpr int TREASURE_PLACE_ATTEMPTS = 10000; // 조건에 맞는 위치를 찾을 때까지 다시 뽑는 최대 횟수
+constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
+
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
 constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아래 끝까지 거리(cm). 양 끝 반구를 포함한다.

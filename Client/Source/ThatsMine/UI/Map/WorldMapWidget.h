@@ -53,7 +53,6 @@ private:
 	static constexpr double MAX_ZOOM = 4.0;
 	static constexpr double WHEEL_ZOOM_FACTOR = 1.2;
 	static constexpr double ZOOM_SPEED = 18.0;
-	static constexpr int32 PLACE_FONT_SIZE = 22;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanel> map_canvas_;

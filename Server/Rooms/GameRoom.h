@@ -91,6 +91,9 @@ private:
 	// 게임 시작 때 고른 상자 자리(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
 	std::vector<BoxPlacement> box_placements_;
 	S2C_BOX_LAYOUT_PACKET box_layout_p_{};
+	// 게임 시작 때 정한 최종 보물 위치(보물 바닥 가운데, cm)와 방향(도). 서버만 알고 클라이언트에 보내지 않는다.
+	DirectX::XMFLOAT3 treasure_location_{};
+	float treasure_yaw_ = 0.0f;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -114,6 +117,7 @@ private:
 	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;
 	void RollbackMove(Player& player, Session& session);
 	void StartGame(int requester_id);
+	void PlaceTreasure();
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환
 	void TogglePlayerReady(int player_id);
