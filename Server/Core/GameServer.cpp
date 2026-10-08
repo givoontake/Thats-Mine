@@ -47,7 +47,9 @@ void GameServer::SendError(Session& session, int error_code)
 void GameServer::StartServer()
 {
 	if (!hitbox_data_.Load("Data/hitbox_data.bin")) std::cerr << "Hitbox data load fail.. " << std::endl;
-	if (!terrain_data_.Load("Data/terrain_data.bin")) std::cerr << "Terrain data load fail.. " << std::endl;
+	// 지형 데이터는 탑 후보마다 탑·기초 배치를 넣으므로 탑 후보를 먼저 읽는다.
+	if (!tower_candidate_data_.Load("Data/tower_candidates.txt")) std::cerr << "Tower candidate data load fail.. " << std::endl;
+	if (!terrain_data_.Load("Data/terrain_data.bin", tower_candidate_data_.GetCandidates())) std::cerr << "Terrain data load fail.. " << std::endl;
 	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt")) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!map_region_data_.Load("Data/map_regions.txt")) std::cerr << "Map region data load fail.. " << std::endl;
 	bind(listen_socket_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_));

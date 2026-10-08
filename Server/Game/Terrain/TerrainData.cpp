@@ -16,6 +16,9 @@ using namespace DirectX;
 // 파일 형식 버전. 지형 내보내기 도구와 같아야 한다.
 constexpr std::uint32_t TERRAIN_DATA_VERSION = 2;
 constexpr int TERRAIN_NAME_SIZE = 64;
+// 탑과 기초의 충돌 모양 원본 이름. 동양 유적이 같은 메시를 써서 지형 파일에 들어 있다.
+constexpr const char* TOWER_SOURCE_NAME = "SM_tower_04";
+constexpr const char* TOWER_FOUNDATION_SOURCE_NAME = "SM_tower_foundation_03";
 // 랜드스케이프 칸 플래그 중 구멍(충돌 없음)
 constexpr std::uint8_t QUAD_NO_COLLISION = 128;
 // 배치물 공간 격자 한 칸의 크기(cm). 가로나 세로가 LARGE_OBJECT_SIZE보다 큰 배치물은 격자에 넣지 않는다.
@@ -395,7 +398,7 @@ static TerrainConvex BuildConvex(const std::vector<XMFLOAT3>& vertices, const st
 	return convex;
 }
 
-bool TerrainData::Load(const std::string& file_path)
+bool TerrainData::Load(const std::string& file_path, const std::vector<XMFLOAT3>& tower_candidates)
 {
 	constexpr float INF = std::numeric_limits<float>::infinity();
 	std::ifstream file(file_path, std::ios::binary);
@@ -441,10 +444,14 @@ bool TerrainData::Load(const std::string& file_path)
 	if (!is_valid || std::memcmp(magic, "TMTR", 4) != 0 || version != TERRAIN_DATA_VERSION) return false;
 	offset += static_cast<size_t>(read_count()) * TERRAIN_NAME_SIZE;
 
-	// 충돌 모양 원본
+	// 충돌 모양 원본. 이름은 탑 원본을 찾을 때 쓴다.
 	sources_.assign(read_count(), {});
+	std::vector<std::string> source_names;
 	for (TerrainSource& source : sources_) {
-		offset += TERRAIN_NAME_SIZE;
+		char name[TERRAIN_NAME_SIZE] = {};
+		read(name, sizeof(name));
+		name[TERRAIN_NAME_SIZE - 1] = '\0';
+		source_names.emplace_back(name);
 		std::uint8_t trace_mode = 0;
 		std::uint8_t is_double_sided = 0;
 		read_value(trace_mode);
@@ -494,16 +501,9 @@ bool TerrainData::Load(const std::string& file_path)
 		BuildBvh(source);
 	}
 
-	// 배치. 구·캡슐은 언리얼의 크기 배율 규칙대로 월드 캡슐로 바꿔 둔다.
-	objects_.assign(read_count(), {});
-	object_capsules_.clear();
-	for (TerrainObject& object : objects_) {
-		std::uint32_t kind = 0;
-		read_value(object.source);
-		read_value(kind);
-		read_value(object.flags);
-		const auto [world, rotation_scale] = read_matrix();
-		if (!is_valid || object.source >= sources_.size()) return false;
+	// 배치 하나의 변환·경계 상자·월드 캡슐을 채운다. 구·캡슐은 언리얼의 크기 배율 규칙대로 월드 캡슐로 바꿔 둔다.
+	const auto build_object = [&](TerrainObject& object, FXMMATRIX world, const XMFLOAT4& rotation, const XMFLOAT3& scale)
+	{
 		XMStoreFloat4x4(&object.local_to_world, world);
 		XMStoreFloat4x4(&object.world_to_local, XMMatrixInverse(nullptr, world));
 		const TerrainSource& source = sources_[object.source];
@@ -514,8 +514,7 @@ bool TerrainData::Load(const std::string& file_path)
 			object.world_min = world_min;
 			object.world_max = world_max;
 		}
-		const XMVECTOR object_rotation = XMLoadFloat4(&rotation_scale.first);
-		const XMFLOAT3 scale = rotation_scale.second;
+		const XMVECTOR object_rotation = XMLoadFloat4(&rotation);
 		const float scale_x = std::fabs(scale.x);
 		const float scale_y = std::fabs(scale.y);
 		const float scale_z = std::fabs(scale.z);
@@ -548,6 +547,19 @@ bool TerrainData::Load(const std::string& file_path)
 				ExpandBounds(object.world_min, object.world_max, { end.x + capsule.radius, end.y + capsule.radius, end.z + capsule.radius });
 			}
 		}
+	};
+
+	// 배치
+	objects_.assign(read_count(), {});
+	object_capsules_.clear();
+	for (TerrainObject& object : objects_) {
+		std::uint32_t kind = 0;
+		read_value(object.source);
+		read_value(kind);
+		read_value(object.flags);
+		const auto [world, rotation_scale] = read_matrix();
+		if (!is_valid || object.source >= sources_.size()) return false;
+		build_object(object, world, rotation_scale.first, rotation_scale.second);
 	}
 
 	// 랜드스케이프 충돌 조각
@@ -594,6 +606,29 @@ bool TerrainData::Load(const std::string& file_path)
 		object.capsule_count = 0;
 		object.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
 		object.platform_index = index;
+	}
+
+	// 탑. 모든 후보 자리에 탑과 기초를 넣어 두고 검사할 때 방의 배치로 거른다. 기초는 탑 바닥 바로 아래에 가로·세로를 넓혀 붙인다.
+	if (!tower_candidates.empty()) {
+		const auto tower_source = std::find(source_names.begin(), source_names.end(), TOWER_SOURCE_NAME);
+		const auto foundation_source = std::find(source_names.begin(), source_names.end(), TOWER_FOUNDATION_SOURCE_NAME);
+		if (tower_source == source_names.end() || foundation_source == source_names.end()) return false;
+		const XMFLOAT4 no_rotation{ 0.0f, 0.0f, 0.0f, 1.0f };
+		const XMFLOAT3 tower_scale{ 1.0f, 1.0f, 1.0f };
+		const XMFLOAT3 foundation_scale{ TOWER_FOUNDATION_WIDTH_SCALE, TOWER_FOUNDATION_WIDTH_SCALE, 1.0f };
+		for (std::size_t index = 0; index < tower_candidates.size(); ++index) {
+			const XMFLOAT3& location = tower_candidates[index];
+			TerrainObject& tower = objects_.emplace_back();
+			tower.source = static_cast<std::uint32_t>(tower_source - source_names.begin());
+			tower.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
+			tower.tower_index = static_cast<std::int32_t>(index);
+			build_object(tower, XMMatrixTranslation(location.x, location.y, location.z), no_rotation, tower_scale);
+			TerrainObject& foundation = objects_.emplace_back();
+			foundation.source = static_cast<std::uint32_t>(foundation_source - source_names.begin());
+			foundation.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
+			foundation.tower_index = static_cast<std::int32_t>(index);
+			build_object(foundation, XMMatrixScaling(foundation_scale.x, foundation_scale.y, foundation_scale.z) * XMMatrixTranslation(location.x, location.y, location.z - TOWER_FOUNDATION_HEIGHT), no_rotation, foundation_scale);
+		}
 	}
 
 	BuildGrid();
@@ -720,8 +755,16 @@ bool TerrainData::IsSegmentBlockedByObject(const TerrainObject& object, const XM
 	return false;
 }
 
+// 판마다 놓이는 배치물(발판·탑)은 방의 배치에 놓인 것만 있다고 본다. 고정 지형은 늘 있다.
+static bool IsPlacedInRoom(const TerrainObject& object, const RoomLayout& room_layout)
+{
+	if (object.platform_index >= 0 && !room_layout.platforms[object.platform_index]) return false;
+	if (object.tower_index >= 0 && (static_cast<std::size_t>(object.tower_index) >= room_layout.towers.size() || !room_layout.towers[object.tower_index])) return false;
+	return true;
+}
+
 // 격자보다 큰 배치물을 먼저 보고, 선분이 지나는 격자 칸을 시작점 쪽부터 따라가며 그 칸의 배치물을 본다. 막히는 것을 찾으면 바로 끝낸다.
-bool TerrainData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT3& end, std::uint8_t flag, const PlatformLayout& platform_layout) const
+bool TerrainData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT3& end, std::uint8_t flag, const RoomLayout& room_layout) const
 {
 	if (!is_loaded_) return false;
 	const std::uint32_t query = BeginObjectVisit(objects_.size());
@@ -730,7 +773,7 @@ bool TerrainData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT
 		if (visited_objects[index] == query) return false;
 		visited_objects[index] = query;
 		const TerrainObject& object = objects_[index];
-		if (object.platform_index >= 0 && !platform_layout[object.platform_index]) return false;
+		if (!IsPlacedInRoom(object, room_layout)) return false;
 		return (object.flags & flag) != 0 && SegmentHitsBox(start, end, object.world_min, object.world_max) && IsSegmentBlockedByObject(object, start, end);
 	};
 	for (const std::uint32_t index : large_objects_) {
@@ -815,7 +858,7 @@ bool TerrainData::IsCapsuleOverlappingObject(const TerrainObject& object, FXMVEC
 }
 
 // 격자보다 큰 배치물을 먼저 보고, 캡슐 경계 상자가 걸치는 격자 칸의 배치물을 본다. 겹치는 것을 찾으면 바로 끝낸다.
-bool TerrainData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radius, float half_height, std::uint8_t flag, const PlatformLayout& platform_layout) const
+bool TerrainData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radius, float half_height, std::uint8_t flag, const RoomLayout& room_layout) const
 {
 	if (!is_loaded_) return false;
 	const std::uint32_t query = BeginObjectVisit(objects_.size());
@@ -829,7 +872,7 @@ bool TerrainData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radi
 		if (visited_objects[index] == query) return false;
 		visited_objects[index] = query;
 		const TerrainObject& object = objects_[index];
-		if (object.platform_index >= 0 && !platform_layout[object.platform_index]) return false;
+		if (!IsPlacedInRoom(object, room_layout)) return false;
 		return (object.flags & flag) != 0 && BoxesOverlap(min, max, object.world_min, object.world_max) && IsCapsuleOverlappingObject(object, bottom, top, radius, min, max);
 	};
 	for (const std::uint32_t index : large_objects_) {

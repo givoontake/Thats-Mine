@@ -16,7 +16,8 @@
 #include "room_packets.h"
 #include "game_packets.h"
 #include "spawn_points.h"
-#include "platform_layout.h"
+#include "room_layout.h"
+#include "spread_selection.h"
 #include "hitbox_raycast.h"
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
@@ -587,13 +588,26 @@ void GameRoom::StartGame(int requester_id)
 	is_game_started_ = false;
 	last_pose_tick_ms_ = 0;
 	// 이번 게임의 발판 배치를 정해 둔다.
-	platform_layout_ = GeneratePlatformLayout(std::random_device{}());
+	room_layout_.platforms = GeneratePlatformLayout(std::random_device{}());
 	platform_layout_p_ = {};
 	platform_layout_p_.header = { static_cast<std::uint16_t>(sizeof(platform_layout_p_)), S2C_PLATFORM_LAYOUT };
 	platform_layout_p_.platform_count = static_cast<std::uint16_t>(PLATFORM_COORDINATE_COUNT);
 	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
-		if (platform_layout_[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
+		if (room_layout_.platforms[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
 	}
+	// 이번 게임의 탑 자리를 후보 중에서 고르게 퍼뜨려 고른다. 보물은 놓인 탑을 피한다.
+	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
+	room_layout_.towers.assign(tower_candidates.size(), false);
+	tower_layout_p_ = {};
+	for (const std::size_t index : SelectSpreadIndices(tower_candidates, TOWER_COUNT, TOWER_MIN_DISTANCE)) {
+		room_layout_.towers[index] = true;
+		const DirectX::XMFLOAT3& location = tower_candidates[index];
+		float* entry = tower_layout_p_.locations[tower_layout_p_.tower_count++];
+		entry[0] = location.x;
+		entry[1] = location.y;
+		entry[2] = location.z;
+	}
+	tower_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_TOWER_LAYOUT_PACKET, locations) + tower_layout_p_.tower_count * sizeof(tower_layout_p_.locations[0])), S2C_TOWER_LAYOUT };
 	// 이번 게임의 상자 자리를 정해 둔다. 상자 번호는 배치 패킷의 항목 순서다.
 	box_placements_ = server_->GetBoxCandidateData().SelectPlacements(std::random_device{}());
 	box_placements_.resize(std::min<std::size_t>(box_placements_.size(), MAX_BOX_COUNT));
@@ -608,7 +622,7 @@ void GameRoom::StartGame(int requester_id)
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·시작 돔) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
-// 보물을 감싼 구가 배치물(건물·나무·바위·발판)과 겹치지 않는 곳이 나올 때까지 다시 뽑는다.
+// 보물을 감싼 구가 배치물(건물·나무·바위·발판·탑)과 겹치지 않는 곳이 나올 때까지 다시 뽑는다.
 // 바닥은 그 사각형 안 가장 낮은 땅에 맞춰 뜨지 않게 한다.
 void GameRoom::PlaceTreasure()
 {
@@ -630,7 +644,7 @@ void GameRoom::PlaceTreasure()
 			ground = corner_ground ? std::optional<float>(std::min(*ground, *corner_ground)) : std::nullopt;
 		}
 		if (!ground) continue;
-		if (terrain.IsCapsuleOverlappingObjects({ x, y, *ground + TREASURE_HALF_HEIGHT }, TREASURE_RADIUS, TREASURE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, platform_layout_)) continue;
+		if (terrain.IsCapsuleOverlappingObjects({ x, y, *ground + TREASURE_HALF_HEIGHT }, TREASURE_RADIUS, TREASURE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, room_layout_)) continue;
 		treasure_location_ = { x, y, *ground };
 		treasure_yaw_ = random_yaw(random);
 		return;
@@ -741,13 +755,14 @@ void GameRoom::ProcessLoadedPlayers()
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 
-	// 합류하는 플레이어는 발판·상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
+	// 합류하는 플레이어는 발판·탑·상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			room_player.GetPose().Reset(server_->GetHitboxData());
 			session->SendPacket(reinterpret_cast<char*>(&platform_layout_p_), platform_layout_p_.header.size);
+			session->SendPacket(reinterpret_cast<char*>(&tower_layout_p_), tower_layout_p_.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&box_layout_p_), box_layout_p_.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
@@ -843,7 +858,7 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
 	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, hit.distance - HIT_OCCLUSION_MARGIN)));
 	const TerrainData& terrain = server_->GetTerrainData();
-	return !terrain.IsSegmentBlockedByLandscape(segment_start, segment_end) && !terrain.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, platform_layout_);
+	return !terrain.IsSegmentBlockedByLandscape(segment_start, segment_end) && !terrain.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, room_layout_);
 }
 
 // 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
@@ -858,7 +873,7 @@ bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) con
 	const std::optional<float> ground = terrain.GetGroundHeight(next[0], next[1]);
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return false;
 	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
-	if (terrain.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, platform_layout_)) return false;
+	if (terrain.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, room_layout_)) return false;
 	if (!is_game_started_) {
 		const float dx = next[0] - START_DOME_CENTER[0];
 		const float dy = next[1] - START_DOME_CENTER[1];
@@ -867,7 +882,7 @@ bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) con
 		if (dx * dx + dy * dy + dz * dz > limit * limit) return false;
 	}
 	const float* previous = player.GetMoveState().location;
-	return !terrain.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, platform_layout_);
+	return !terrain.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, room_layout_);
 }
 
 // 마지막으로 인정한 위치에 멈춘 상태로 되돌려 다른 플레이어에게 다음 틱에 중계하고, 본인에게는 그 위치로 옮기라고 보낸다.

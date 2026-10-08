@@ -10,7 +10,7 @@
 #include "ConcurrentTaskQueue.h"
 #include "Player.h"
 #include "box_types.h"
-#include "platform_layout.h"
+#include "room_layout.h"
 class Session;
 
 class GameServer;
@@ -85,9 +85,12 @@ private:
 	bool is_game_started_ = false;
 	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
 	long long last_pose_tick_ms_ = 0;
-	// 게임 시작 때 정한 발판 배치와 그 배치를 담은 패킷. 패킷은 로딩을 마친 플레이어에게 스폰보다 먼저 보내고, 배치는 이동·명중 검사에 쓴다.
-	PlatformLayout platform_layout_{};
+	// 게임 시작 때 정한 발판·탑 배치. 이동·명중 검사가 이번 게임에 놓인 발판·탑만 보게 넘긴다.
+	RoomLayout room_layout_{};
+	// 발판 배치를 담은 패킷. 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
 	S2C_PLATFORM_LAYOUT_PACKET platform_layout_p_{};
+	// 탑 위치를 담은 패킷. 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	S2C_TOWER_LAYOUT_PACKET tower_layout_p_{};
 	// 게임 시작 때 고른 상자 자리(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
 	std::vector<BoxPlacement> box_placements_;
 	S2C_BOX_LAYOUT_PACKET box_layout_p_{};

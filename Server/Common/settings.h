@@ -28,12 +28,18 @@ constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr double PLATFORM_SPAWN_PROBABILITY = 0.6; // 반드시 놓는 자리가 아닌 발판을 놓을 확률
 
-// 상자 배치(임시값). 게임 시작 때 유적 상자를 먼저 고르고, 자연 상자는 미첼 최적 후보 방식으로 고른다.
+// 상자 배치(임시값). 게임 시작 때 유적 상자를 먼저 고르고, 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
 constexpr int NATURAL_BOX_COUNT = 40; // 나무·바위에 놓는 자연 상자 수(유적 상자 제외)
-constexpr int BOX_CANDIDATE_SAMPLE_COUNT = 10; // 자연 상자 하나를 고를 때 뽑아 보는 후보 수. 클수록 고르게 퍼지고, 1이면 완전 무작위다.
-constexpr float BOX_MIN_DISTANCE = 5000.0f; // 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
+constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
 constexpr int MAX_BOX_COUNT = 64; // 한 판의 상자 수 상한(상자 배치 패킷 크기). 유적 상자 최대 13개와 자연 상자 수를 합친 값보다 커야 한다.
 static_assert(NATURAL_BOX_COUNT + 13 <= MAX_BOX_COUNT, "MAX_BOX_COUNT must hold all boxes.");
+
+// 탑 배치. 게임 시작 때 탑 후보 자리(tower_candidates.txt) 중 TOWER_COUNT곳을 미첼 최적 후보 방식으로 고른다.
+// 탑(SM_tower_04)은 후보 자리의 높이(바닥에서 가장 높은 땅)에 놓고, 그 아래에 기초(SM_tower_foundation_03)를 붙여 땅까지 채운다.
+constexpr int TOWER_COUNT = 20;
+constexpr float TOWER_MIN_DISTANCE = 10000.0f; // 탑끼리 최소 수평 거리(cm)
+constexpr float TOWER_FOUNDATION_HEIGHT = 1565.0f; // 기초 높이(cm). 기초 바닥은 탑 바닥보다 이만큼 아래다.
+constexpr float TOWER_FOUNDATION_WIDTH_SCALE = 1.41f; // 기초 가로·세로 배율. 탑 아래 돌 받침 폭에 맞춘다.
 
 // 최종 보물. 임시로 크기 1의 보물 상자 모델(가로 약 170cm, 높이 130cm) 크기로 보고, 서버가 맵 안 무작위 위치에 놓는다. 위치는 서버만 안다.
 constexpr float MAP_MIN[2] = { -100750.0f, -100700.0f }; // 맵 범위(cm). 클라이언트 지도와 같다.

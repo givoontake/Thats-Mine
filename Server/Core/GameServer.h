@@ -8,6 +8,7 @@
 #include "HitboxData.h"
 #include "MapRegionData.h"
 #include "TerrainData.h"
+#include "TowerCandidateData.h"
 #include "session_tasks.h"
 #pragma comment(lib, "MSWSock.lib")
 #pragma comment(lib, "Ws2_32.lib")
@@ -33,6 +34,7 @@ class GameServer
 	HitboxData hitbox_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 히트박스 판정 데이터
 	TerrainData terrain_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 지형 판정 데이터
 	BoxCandidateData box_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 배치 후보
+	TowerCandidateData tower_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 탑 배치 후보
 	MapRegionData map_region_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 영역
 
 public:
@@ -48,6 +50,7 @@ public:
 	const HitboxData& GetHitboxData() const { return hitbox_data_; }
 	const TerrainData& GetTerrainData() const { return terrain_data_; }
 	const BoxCandidateData& GetBoxCandidateData() const { return box_candidate_data_; }
+	const TowerCandidateData& GetTowerCandidateData() const { return tower_candidate_data_; }
 	const MapRegionData& GetMapRegionData() const { return map_region_data_; }
 
 	void SyncLobbyList(int session_index);

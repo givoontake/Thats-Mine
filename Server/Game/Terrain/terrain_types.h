@@ -82,6 +82,7 @@ struct TerrainObject {
 	std::uint32_t capsule_count;
 	std::uint8_t flags;
 	std::int32_t platform_index = -1; // 발판이면 발판 자리 번호(PLATFORM_COORDINATES 순서), 아니면 -1
+	std::int32_t tower_index = -1; // 탑·기초면 탑 후보 번호(탑 후보 파일 순서), 아니면 -1
 };
 
 // 랜드스케이프 충돌 조각 하나. 꼭짓점 (i, j)의 조각 기준 위치는 (i·칸 배율, j·칸 배율, (높이 − 32768) / 128)이다.

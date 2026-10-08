@@ -159,9 +159,17 @@ struct S2C_BOX_LAYOUT_PACKET {
 	BOX_ENTRY entries[MAX_BOX_COUNT];
 };
 
+// 이번 게임의 탑 위치. 실제 크기는 tower_count개의 위치까지이고, 위치는 탑 바닥 가운데(cm)다. 기초는 클라이언트가 탑 아래에 붙인다.
+struct S2C_TOWER_LAYOUT_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t tower_count;
+	float locations[TOWER_COUNT][3];
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(S2C_MOVE_PACKET) <= BUF_SIZE, "S2C_MOVE_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_SPAWN_PACKET) <= BUF_SIZE, "S2C_SPAWN_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_PLATFORM_LAYOUT_PACKET) <= BUF_SIZE, "S2C_PLATFORM_LAYOUT_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_BOX_LAYOUT_PACKET) <= BUF_SIZE, "S2C_BOX_LAYOUT_PACKET must fit in one packet.");
+static_assert(sizeof(S2C_TOWER_LAYOUT_PACKET) <= BUF_SIZE, "S2C_TOWER_LAYOUT_PACKET must fit in one packet.");
