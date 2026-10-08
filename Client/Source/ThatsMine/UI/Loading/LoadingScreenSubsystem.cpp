@@ -72,11 +72,8 @@ void ULoadingScreenSubsystem::HandleMapLoaded(UWorld* world)
 		return;
 	}
 	SetProgress(MAP_LOAD_PROGRESS);
-	// 레벨이 바뀌면 화면 위 위젯이 모두 지워지므로, 에디터 플레이에서는 새 레벨의 첫 화면 전에 다시 띄운다.
-	if (!CanUseMoviePlayer())
-	{
-		AddToViewport();
-	}
+	// 레벨이 바뀌면 화면 위 위젯이 모두 지워지므로, 새 레벨의 첫 화면 전에 다시 띄운다.
+	AddToViewport();
 }
 
 // 맵을 여는 동안 게임 스레드가 비동기 로딩을 기다리며 주기적으로 부른다. 맵 패키지의 불러오기 진행률을 게이지에 반영한다.
@@ -109,12 +106,9 @@ void ULoadingScreenSubsystem::Show()
 		AddToViewport();
 		return;
 	}
-	// 맵 로드가 시작되면 엔진이 이 화면을 재생한다. 맵이 열린 뒤에도 엔진 틱을 돌리면서 직접 멈출 때까지 유지한다.
+	// 맵 로드가 시작되면 엔진이 이 화면을 별도 스레드에서 재생하고, 맵이 열리면 끝낸다. 이후 대기는 뷰포트 위젯이 이어 받는다.
 	FLoadingScreenAttributes attributes;
 	attributes.WidgetLoadingScreen = widget_;
-	attributes.bAutoCompleteWhenLoadingCompletes = false;
-	attributes.bWaitForManualStop = true;
-	attributes.bAllowEngineTick = true;
 	attributes.bMoviesAreSkippable = false;
 	GetMoviePlayer()->SetupLoadingScreen(attributes);
 }
