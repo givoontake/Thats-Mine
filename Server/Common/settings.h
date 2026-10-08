@@ -28,6 +28,13 @@ constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr double PLATFORM_SPAWN_PROBABILITY = 0.6; // 반드시 놓는 자리가 아닌 발판을 놓을 확률
 
+// 상자 배치(임시값). 게임 시작 때 유적 상자를 먼저 고르고, 자연 상자는 미첼 최적 후보 방식으로 고른다.
+constexpr int NATURAL_BOX_COUNT = 40; // 나무·바위에 놓는 자연 상자 수(유적 상자 제외)
+constexpr int BOX_CANDIDATE_SAMPLE_COUNT = 10; // 자연 상자 하나를 고를 때 뽑아 보는 후보 수. 클수록 고르게 퍼지고, 1이면 완전 무작위다.
+constexpr float BOX_MIN_DISTANCE = 5000.0f; // 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
+constexpr int MAX_BOX_COUNT = 64; // 한 판의 상자 수 상한(상자 배치 패킷 크기). 유적 상자 최대 13개와 자연 상자 수를 합친 값보다 커야 한다.
+static_assert(NATURAL_BOX_COUNT + 13 <= MAX_BOX_COUNT, "MAX_BOX_COUNT must hold all boxes.");
+
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
 constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아래 끝까지 거리(cm). 양 끝 반구를 포함한다.

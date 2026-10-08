@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 #include "box_types.h"
@@ -20,4 +21,6 @@ public:
 	bool IsLoaded() const { return is_loaded_; }
 	const std::vector<BoxAnchor>& GetAnchors() const { return anchors_; }
 	const std::vector<BoxGroup>& GetGroups() const { return groups_; }
+	// 한 판에 놓을 상자 자리를 고른다. 유적 상자를 규칙대로 먼저 고르고, 자연 상자 NATURAL_BOX_COUNT개를 퍼뜨려 고른다.
+	std::vector<BoxPlacement> SelectPlacements(std::uint32_t seed) const;
 };

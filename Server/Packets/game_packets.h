@@ -7,6 +7,9 @@
 // 히트박스 부위. 서버 판정 데이터와 클라이언트 명중 보고가 같은 값을 쓴다.
 enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT };
 
+// 상자 종류. 서버 후보 데이터와 상자 배치 패킷이 같은 값을 쓴다.
+enum class BoxKind : std::uint8_t { TREASURE, GIFT };
+
 #pragma pack(push, 1)
 
 // 이동 상태. 위치·속도는 cm, 방향은 도 단위이고, 이동 입력은 -127~127로 줄여 담는다.
@@ -142,8 +145,23 @@ struct S2C_PLATFORM_LAYOUT_PACKET {
 	std::uint8_t spawned_bits[(PLATFORM_COORDINATE_COUNT + 7) / 8];
 };
 
+// 상자 하나. 종류는 BoxKind 값이고, 위치는 cm, 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.
+struct BOX_ENTRY {
+	std::uint8_t kind;
+	float location[3];
+	float rotation[3];
+};
+
+// 이번 게임의 상자 배치. 실제 크기는 box_count개의 항목까지이고, 상자 번호는 항목 순서다.
+struct S2C_BOX_LAYOUT_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t box_count;
+	BOX_ENTRY entries[MAX_BOX_COUNT];
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(S2C_MOVE_PACKET) <= BUF_SIZE, "S2C_MOVE_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_SPAWN_PACKET) <= BUF_SIZE, "S2C_SPAWN_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_PLATFORM_LAYOUT_PACKET) <= BUF_SIZE, "S2C_PLATFORM_LAYOUT_PACKET must fit in one packet.");
+static_assert(sizeof(S2C_BOX_LAYOUT_PACKET) <= BUF_SIZE, "S2C_BOX_LAYOUT_PACKET must fit in one packet.");

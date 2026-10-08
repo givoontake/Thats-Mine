@@ -593,6 +593,16 @@ void GameRoom::StartGame(int requester_id)
 	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
 		if (platform_layout_[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
 	}
+	// 이번 게임의 상자 자리를 정해 둔다. 상자 번호는 배치 패킷의 항목 순서다.
+	box_placements_ = server_->GetBoxCandidateData().SelectPlacements(std::random_device{}());
+	box_placements_.resize(std::min<std::size_t>(box_placements_.size(), MAX_BOX_COUNT));
+	box_layout_p_ = {};
+	box_layout_p_.box_count = static_cast<std::uint8_t>(box_placements_.size());
+	for (std::size_t index = 0; index < box_placements_.size(); ++index) {
+		const BoxPlacement& placement = box_placements_[index];
+		box_layout_p_.entries[index] = { static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z } };
+	}
+	box_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_BOX_LAYOUT_PACKET, entries) + box_layout_p_.box_count * sizeof(BOX_ENTRY)), S2C_BOX_LAYOUT };
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -698,13 +708,14 @@ void GameRoom::ProcessLoadedPlayers()
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 
-	// 합류하는 플레이어는 발판 배치와 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
+	// 합류하는 플레이어는 발판·상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			room_player.GetPose().Reset(server_->GetHitboxData());
 			session->SendPacket(reinterpret_cast<char*>(&platform_layout_p_), platform_layout_p_.header.size);
+			session->SendPacket(reinterpret_cast<char*>(&box_layout_p_), box_layout_p_.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);

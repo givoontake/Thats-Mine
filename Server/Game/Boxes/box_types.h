@@ -3,8 +3,7 @@
 #include <string>
 #include <vector>
 #include <DirectXMath.h>
-
-enum class BoxKind : std::uint8_t { TREASURE, GIFT };
+#include "game_packets.h"
 
 // 상자 하나를 놓을 자리. 좌표는 언리얼 월드 좌표(cm), 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.
 struct BoxPlacement {
