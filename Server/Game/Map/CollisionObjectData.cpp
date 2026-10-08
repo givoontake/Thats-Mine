@@ -269,11 +269,10 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 	constexpr float INF = std::numeric_limits<float>::infinity();
 	is_loaded_ = false;
 
-	// 충돌 모양 원본. 이름은 탑 원본을 찾을 때 쓴다.
+	// 충돌 모양 원본
 	sources_.assign(reader.ReadCount(), {});
-	std::vector<std::string> source_names;
 	for (TerrainSource& source : sources_) {
-		source_names.push_back(reader.ReadName());
+		source.name = reader.ReadName();
 		std::uint8_t trace_mode = 0;
 		std::uint8_t is_double_sided = 0;
 		reader.ReadValue(trace_mode);
@@ -417,20 +416,20 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 	// 탑 후보. 후보 자리마다 탑과 기초를 만들어 두고 검사할 때 방이 넘긴 놓인 번호만 본다. 기초는 탑 바닥 바로 아래에 가로·세로를 넓혀 붙인다.
 	first_tower_object_ = static_cast<std::uint32_t>(candidate_objects_.size());
 	if (!tower_candidates.empty()) {
-		const auto tower_source = std::find(source_names.begin(), source_names.end(), TOWER_SOURCE_NAME);
-		const auto foundation_source = std::find(source_names.begin(), source_names.end(), TOWER_FOUNDATION_SOURCE_NAME);
-		if (tower_source == source_names.end() || foundation_source == source_names.end()) return false;
+		const TerrainSource* tower_source = FindSource(TOWER_SOURCE_NAME);
+		const TerrainSource* foundation_source = FindSource(TOWER_FOUNDATION_SOURCE_NAME);
+		if (!tower_source || !foundation_source) return false;
 		const XMFLOAT4 no_rotation{ 0.0f, 0.0f, 0.0f, 1.0f };
 		const XMFLOAT3 tower_scale{ 1.0f, 1.0f, 1.0f };
 		const XMFLOAT3 foundation_scale{ TOWER_FOUNDATION_WIDTH_SCALE, TOWER_FOUNDATION_WIDTH_SCALE, 1.0f };
 		for (std::size_t index = 0; index < tower_candidates.size(); ++index) {
 			const XMFLOAT3& location = tower_candidates[index];
 			TerrainObject& tower = candidate_objects_.emplace_back();
-			tower.source = static_cast<std::uint32_t>(tower_source - source_names.begin());
+			tower.source = static_cast<std::uint32_t>(tower_source - sources_.data());
 			tower.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
 			build_object(tower, XMMatrixTranslation(location.x, location.y, location.z), no_rotation, tower_scale);
 			TerrainObject& foundation = candidate_objects_.emplace_back();
-			foundation.source = static_cast<std::uint32_t>(foundation_source - source_names.begin());
+			foundation.source = static_cast<std::uint32_t>(foundation_source - sources_.data());
 			foundation.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
 			build_object(foundation, XMMatrixScaling(foundation_scale.x, foundation_scale.y, foundation_scale.z) * XMMatrixTranslation(location.x, location.y, location.z - TOWER_FOUNDATION_HEIGHT), no_rotation, foundation_scale);
 		}
@@ -439,6 +438,18 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 	BuildGrid();
 	is_loaded_ = true;
 	return true;
+}
+
+const TerrainSource* CollisionObjectData::FindSource(const std::string& name) const
+{
+	const auto found = std::find_if(sources_.begin(), sources_.end(), [&](const TerrainSource& source) { return source.name == name; });
+	return found != sources_.end() ? &*found : nullptr;
+}
+
+XMFLOAT3 CollisionObjectData::GetObjectLocation(std::uint32_t index) const
+{
+	const XMFLOAT4X4& local_to_world = objects_[index].local_to_world;
+	return { local_to_world._41, local_to_world._42, local_to_world._43 };
 }
 
 // 배치물을 월드 경계 상자가 겹치는 격자 칸마다 넣는다. 칸별 개수를 먼저 세고 한 배열에 이어 담는다.

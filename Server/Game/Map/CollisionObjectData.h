@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 #include <vector>
 #include "terrain_types.h"
 #include "platform_layout.h"
@@ -38,6 +39,10 @@ public:
 	// tower_candidates: 탑 후보마다 탑 바닥 가운데 위치. 후보마다 탑과 기초 배치를 넣는다.
 	bool Load(MapFileReader& reader, const std::vector<DirectX::XMFLOAT3>& tower_candidates);
 	bool IsLoaded() const { return is_loaded_; }
+	// 이름이 name인 충돌 모양 원본. 원본의 first_object, object_count가 그 메시 배치 구간이다. 없으면 nullptr이다.
+	const TerrainSource* FindSource(const std::string& name) const;
+	// 맵 배치의 월드 위치(메시 기준 원점 위치, cm)
+	DirectX::XMFLOAT3 GetObjectLocation(std::uint32_t index) const;
 	// 이번 게임에 놓인 발판·탑의 후보 배치물 번호 목록을 만든다. 방이 게임 시작 때 한 번 만들어 검사 함수에 넘긴다.
 	std::vector<std::uint32_t> CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<std::size_t>& tower_indices) const;
 	// 선분이 flag 채널을 막는 배치물(건물·나무·바위·경계 볼륨·발판·탑)에 닿는지 본다. 좌표는 언리얼 월드 좌표(cm)다.

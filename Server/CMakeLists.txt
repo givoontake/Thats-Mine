@@ -28,6 +28,7 @@ add_executable(GameServer
     Game/Hitbox/HitboxData.cpp
     Game/Hitbox/hitbox_raycast.cpp
     Game/Map/CollisionObjectData.cpp
+    Game/Map/DecorObjectData.cpp
     Game/Map/LandscapeData.cpp
     Game/Map/MapData.cpp
     Game/Map/MapFileReader.cpp
@@ -84,6 +85,7 @@ add_executable(GameServer
     Game/Hitbox/hitbox_raycast.h
     Game/Hitbox/hitbox_types.h
     Game/Map/CollisionObjectData.h
+    Game/Map/DecorObjectData.h
     Game/Map/LandscapeData.h
     Game/Map/MapData.h
     Game/Map/MapFileReader.h

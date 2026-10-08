@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <DirectXMath.h>
 
@@ -50,6 +51,7 @@ struct TerrainBvhNode {
 // 충돌 모양 원본. 정적 메시는 메시마다 하나이고, 같은 메시를 쓰는 배치가 공유한다. 좌표는 메시 기준(cm)이다.
 // 삼각형으로 판정하는 메시는 triangles만, 단순 도형으로 판정하는 메시는 나머지를 쓴다.
 struct TerrainSource {
+	std::string name; // 메시 이름(브러시는 액터 이름)
 	std::vector<TerrainSphere> spheres;
 	std::vector<TerrainBox> boxes;
 	std::vector<TerrainCapsule> capsules;
