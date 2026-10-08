@@ -11,6 +11,7 @@
 #include "Player.h"
 #include "box_types.h"
 #include "platform_layout.h"
+#include "treasure_types.h"
 class Session;
 
 class GameServer;
@@ -91,14 +92,14 @@ private:
 	std::vector<std::uint32_t> placed_objects_;
 	// 발판 배치를 담은 패킷. 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
 	S2C_PLATFORM_LAYOUT_PACKET platform_layout_p_{};
-	// 탑 위치를 담은 패킷. 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	// 게임 시작 때 고른 탑 후보 번호와, 그 탑 위치를 담은 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	std::vector<std::size_t> tower_indices_;
 	S2C_TOWER_LAYOUT_PACKET tower_layout_p_{};
-	// 게임 시작 때 고른 상자 자리(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
-	std::vector<BoxPlacement> box_placements_;
+	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	std::vector<std::uint32_t> box_placement_indices_;
 	S2C_BOX_LAYOUT_PACKET box_layout_p_{};
-	// 게임 시작 때 정한 최종 보물 위치(보물 바닥 가운데, cm)와 방향(도). 서버만 알고 클라이언트에 보내지 않는다.
-	DirectX::XMFLOAT3 treasure_location_{};
-	float treasure_yaw_ = 0.0f;
+	// 게임 시작 때 정한 최종 보물 배치
+	TreasurePlacement treasure_placement_{};
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);

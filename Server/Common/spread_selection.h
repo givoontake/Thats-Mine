@@ -4,6 +4,7 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include "random_seed.h"
 #include <vector>
 
 // 미첼 최적 후보 방식으로 고를 때 한 번에 뽑아 보는 후보 수. 클수록 고르게 퍼지고, 1이면 완전 무작위다.
@@ -17,7 +18,7 @@ constexpr float SPREAD_MIN_DISTANCE_SHRINK = 0.9f;
 template <typename Location>
 std::vector<std::size_t> SelectSpreadIndices(const std::vector<Location>& candidates, int count, float min_distance)
 {
-	std::mt19937 random(std::random_device{}());
+	std::mt19937 random(CreateRandomSeed());
 	std::vector<std::size_t> selected;
 	std::vector<std::size_t> unused(candidates.size());
 	std::iota(unused.begin(), unused.end(), std::size_t{ 0 });

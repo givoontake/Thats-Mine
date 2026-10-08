@@ -5,6 +5,7 @@
 #include <optional>
 #include <random>
 #include <sstream>
+#include "random_seed.h"
 #include "settings.h"
 #include "spread_selection.h"
 
@@ -53,7 +54,8 @@ bool BoxCandidateData::LoadAnchors(const std::string& file_path)
 			anchors_.push_back({ anchor_location, {} });
 			last_anchor = anchor;
 		}
-		anchors_.back().placements.push_back(placement);
+		anchors_.back().placement_indices.push_back(static_cast<std::uint32_t>(placements_.size()));
+		placements_.push_back(placement);
 	}
 	return !anchors_.empty();
 }
@@ -80,31 +82,33 @@ bool BoxCandidateData::LoadGroups(const std::string& file_path)
 		placement.kind = *kind;
 
 		if (groups_.empty() || groups_.back().name != group_name) groups_.push_back({ group_name, {} });
-		groups_.back().placements.push_back(placement);
+		groups_.back().placement_indices.push_back(static_cast<std::uint32_t>(placements_.size()));
+		placements_.push_back(placement);
 	}
 	return !groups_.empty();
 }
 
 bool BoxCandidateData::Load(const std::string& anchor_path, const std::string& group_path)
 {
+	placements_.clear();
 	anchors_.clear();
 	groups_.clear();
 	is_loaded_ = LoadAnchors(anchor_path) && LoadGroups(group_path);
 	return is_loaded_;
 }
 
-std::vector<BoxPlacement> BoxCandidateData::SelectPlacements(std::uint32_t seed) const
+std::vector<std::uint32_t> BoxCandidateData::SelectPlacements() const
 {
-	std::mt19937 random(seed);
-	std::vector<BoxPlacement> placements;
+	std::mt19937 random(CreateRandomSeed());
+	std::vector<std::uint32_t> placements;
 
 	// 유적: 규칙 범위에서 개수를 정하고, 유적의 자리 중 그만큼을 겹치지 않게 고른다.
 	for (const BoxGroup& group : groups_)
 	{
 		const auto rule = std::find_if(std::begin(BOX_GROUP_RULES), std::end(BOX_GROUP_RULES), [&](const BoxGroupRule& candidate) { return group.name == candidate.name; });
 		if (rule == std::end(BOX_GROUP_RULES)) continue;
-		const int count = std::min(std::uniform_int_distribution<int>(rule->min_count, rule->max_count)(random), static_cast<int>(group.placements.size()));
-		std::vector<BoxPlacement> shuffled = group.placements;
+		const int count = std::min(std::uniform_int_distribution<int>(rule->min_count, rule->max_count)(random), static_cast<int>(group.placement_indices.size()));
+		std::vector<std::uint32_t> shuffled = group.placement_indices;
 		std::shuffle(shuffled.begin(), shuffled.end(), random);
 		placements.insert(placements.end(), shuffled.begin(), shuffled.begin() + count);
 	}
@@ -117,7 +121,7 @@ std::vector<BoxPlacement> BoxCandidateData::SelectPlacements(std::uint32_t seed)
 	for (const std::size_t index : SelectSpreadIndices(anchor_locations, NATURAL_BOX_COUNT, BOX_MIN_DISTANCE))
 	{
 		const BoxAnchor& anchor = anchors_[index];
-		placements.push_back(anchor.placements[std::uniform_int_distribution<std::size_t>(0, anchor.placements.size() - 1)(random)]);
+		placements.push_back(anchor.placement_indices[std::uniform_int_distribution<std::size_t>(0, anchor.placement_indices.size() - 1)(random)]);
 	}
 	return placements;
 }

@@ -15,11 +15,11 @@ struct BoxPlacement {
 // 자연 배치 기준(나무·바위) 하나. 선물 자리와 보물 방향을 함께 가지며, 한 판에 이 중 한 자리만 쓴다.
 struct BoxAnchor {
 	DirectX::XMFLOAT2 location;
-	std::vector<BoxPlacement> placements;
+	std::vector<std::uint32_t> placement_indices; // 상자 자리 목록에서 이 기준의 자리 번호
 };
 
 // 유적 하나에 직접 지정한 상자 자리들.
 struct BoxGroup {
 	std::string name;
-	std::vector<BoxPlacement> placements;
+	std::vector<std::uint32_t> placement_indices; // 상자 자리 목록에서 이 유적의 자리 번호
 };

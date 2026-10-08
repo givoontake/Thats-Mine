@@ -69,6 +69,7 @@ add_executable(GameServer
     Common/settings.h
     Common/platform_coordinates.h
     Common/platform_layout.h
+    Common/random_seed.h
     Common/spawn_points.h
     Common/spread_selection.h
     Common/types.h
@@ -94,6 +95,7 @@ add_executable(GameServer
     Game/Regions/MapRegionData.h
     Game/Regions/region_types.h
     Game/Towers/TowerCandidateData.h
+    Game/Treasure/treasure_types.h
     Lobby/lobby_tasks.h
     Lobby/LoginManager.h
     Lobby/Matchmaker.h
@@ -134,7 +136,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Game/Boxes Game/Hitbox Game/Map Game/Regions Game/Towers Lobby Managers Network Packets Rooms Threads
+    . Common Core Database Game Game/Boxes Game/Hitbox Game/Map Game/Regions Game/Towers Game/Treasure Lobby Managers Network Packets Rooms Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)

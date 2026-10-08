@@ -1,6 +1,6 @@
 #include "PlatformLayoutSubsystem.h"
 
-#include <random>
+#include "random_seed.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Flow/ClientStateSubsystem.h"
@@ -23,7 +23,7 @@ void UPlatformLayoutSubsystem::OnWorldBeginPlay(UWorld& world)
 	{
 		if (flow->GetState() == EClientState::PLAYING)
 		{
-			SpawnPlatforms(GeneratePlatformLayout(std::random_device{}()));
+			SpawnPlatforms(GeneratePlatformLayout(CreateRandomSeed()));
 		}
 		return;
 	}
