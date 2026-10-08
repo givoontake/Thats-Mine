@@ -64,7 +64,6 @@ add_executable(GameServer
     Common/settings.h
     Common/platform_coordinates.h
     Common/platform_layout.h
-    Common/room_layout.h
     Common/spawn_points.h
     Common/spread_selection.h
     Common/types.h
