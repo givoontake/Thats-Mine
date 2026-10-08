@@ -62,6 +62,9 @@ struct TerrainSource {
 	bool has_local_shapes = false;
 	// 양면이 아니면 삼각형은 꼭짓점 순서(a→b→c)의 법선 방향으로 들어오는 선분만 막는다. 언리얼 삼각형 충돌과 같다.
 	bool is_double_sided = false;
+	// 이 원본을 쓰는 맵 배치는 배치 목록의 first_object번부터 object_count개다. 맵 배치는 원본 순서로 줄 세워 둔다.
+	std::uint32_t first_object = 0;
+	std::uint32_t object_count = 0;
 };
 
 // 월드 좌표 캡슐. 구는 양 끝이 같은 캡슐로 둔다.

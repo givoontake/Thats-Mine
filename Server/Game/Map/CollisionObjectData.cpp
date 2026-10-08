@@ -1,33 +1,27 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstring>
-#include <fstream>
-#include <iterator>
 #include <limits>
 #include <numeric>
 #include <span>
+#include <string>
 #include <utility>
-#include "TerrainData.h"
+#include "CollisionObjectData.h"
+#include "MapFileReader.h"
 #include "hitbox_raycast.h"
+#include "map_geometry.h"
 
 using namespace DirectX;
 
-// 파일 형식 버전. 지형 내보내기 도구와 같아야 한다.
-constexpr std::uint32_t TERRAIN_DATA_VERSION = 2;
-constexpr int TERRAIN_NAME_SIZE = 64;
-// 탑과 기초의 충돌 모양 원본 이름. 동양 유적이 같은 메시를 써서 지형 파일에 들어 있다.
+// 탑과 기초의 충돌 모양 원본 이름. 동양 유적이 같은 메시를 써서 맵 데이터 파일에 들어 있다.
 constexpr const char* TOWER_SOURCE_NAME = "SM_tower_04";
 constexpr const char* TOWER_FOUNDATION_SOURCE_NAME = "SM_tower_foundation_03";
-// 랜드스케이프 칸 플래그 중 구멍(충돌 없음)
-constexpr std::uint8_t QUAD_NO_COLLISION = 128;
 // 배치물 공간 격자 한 칸의 크기(cm). 가로나 세로가 LARGE_OBJECT_SIZE보다 큰 배치물은 격자에 넣지 않는다.
 constexpr float GRID_CELL_SIZE = 1600.0f;
 constexpr float LARGE_OBJECT_SIZE = 20000.0f;
 // 상자 나무 끝 노드의 최대 삼각형 수
 constexpr std::uint32_t BVH_LEAF_SIZE = 4;
 constexpr int BVH_STACK_SIZE = 64;
-constexpr float PARALLEL_EPSILON = 1e-8f;
 // 캡슐 겹침 검사의 GJK 반복 한도와, 더 가까워지지 않는다고 볼 비율
 constexpr int GJK_MAX_ITERATIONS = 32;
 constexpr float GJK_EPSILON = 1e-6f;
@@ -35,76 +29,6 @@ constexpr float GJK_EPSILON = 1e-6f;
 // 여러 칸에 걸친 배치물을 한 번만 보도록, 스레드마다 배치물별 마지막 검사 번호를 둔다.
 static thread_local std::vector<std::uint32_t> visited_objects;
 static thread_local std::uint32_t visit_query = 0;
-
-static float GetAxis(const XMFLOAT3& value, int axis)
-{
-	return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
-}
-
-static void ExpandBounds(XMFLOAT3& min, XMFLOAT3& max, const XMFLOAT3& point)
-{
-	min = { std::min(min.x, point.x), std::min(min.y, point.y), std::min(min.z, point.z) };
-	max = { std::max(max.x, point.x), std::max(max.y, point.y), std::max(max.z, point.z) };
-}
-
-// 메시 기준 상자의 꼭짓점 8개를 행렬로 옮겨 감싸는 축 정렬 상자를 만든다.
-static std::pair<XMFLOAT3, XMFLOAT3> TransformBounds(const XMFLOAT3& min, const XMFLOAT3& max, FXMMATRIX matrix)
-{
-	constexpr float INF = std::numeric_limits<float>::infinity();
-	XMFLOAT3 out_min{ INF, INF, INF };
-	XMFLOAT3 out_max{ -INF, -INF, -INF };
-	for (int corner = 0; corner < 8; ++corner) {
-		const XMVECTOR point = XMVectorSet((corner & 1) ? max.x : min.x, (corner & 2) ? max.y : min.y, (corner & 4) ? max.z : min.z, 1.0f);
-		XMFLOAT3 moved;
-		XMStoreFloat3(&moved, XMVector3TransformCoord(point, matrix));
-		ExpandBounds(out_min, out_max, moved);
-	}
-	return { out_min, out_max };
-}
-
-// 선분 start→end(비율 0~1)가 축 정렬 상자를 지나는지 본다. 축마다 상자 두 면 사이에 드는 비율 구간을 구해 겹치는지 확인한다.
-static bool SegmentHitsBox(const XMFLOAT3& start, const XMFLOAT3& end, const XMFLOAT3& min, const XMFLOAT3& max)
-{
-	float enter = 0.0f;
-	float exit = 1.0f;
-	for (int axis = 0; axis < 3; ++axis) {
-		const float from = GetAxis(start, axis);
-		const float delta = GetAxis(end, axis) - from;
-		const float low = GetAxis(min, axis);
-		const float high = GetAxis(max, axis);
-		if (std::fabs(delta) < PARALLEL_EPSILON) {
-			if (from < low || from > high) return false;
-			continue;
-		}
-		float near_t = (low - from) / delta;
-		float far_t = (high - from) / delta;
-		if (near_t > far_t) std::swap(near_t, far_t);
-		enter = std::max(enter, near_t);
-		exit = std::min(exit, far_t);
-		if (enter > exit) return false;
-	}
-	return true;
-}
-
-// 선분 start + segment·t(t는 0~1)가 삼각형 a, b, c를 지나는지 본다. 앞뒷면을 가리지 않는다.
-// 평면을 뚫는 t와 삼각형 안 비율(u, v)을 한 번에 구하는 묄러-트럼보어 방식이다.
-static bool SegmentHitsTriangle(FXMVECTOR start, FXMVECTOR segment, FXMVECTOR a, GXMVECTOR b, HXMVECTOR c)
-{
-	const XMVECTOR edge1 = XMVectorSubtract(b, a);
-	const XMVECTOR edge2 = XMVectorSubtract(c, a);
-	const XMVECTOR p = XMVector3Cross(segment, edge2);
-	const float determinant = XMVectorGetX(XMVector3Dot(edge1, p));
-	if (std::fabs(determinant) < PARALLEL_EPSILON) return false;
-	const float inverse = 1.0f / determinant;
-	const XMVECTOR to_start = XMVectorSubtract(start, a);
-	const float u = XMVectorGetX(XMVector3Dot(to_start, p)) * inverse;
-	if (u < 0.0f || u > 1.0f) return false;
-	const XMVECTOR q = XMVector3Cross(to_start, edge1);
-	const float v = XMVectorGetX(XMVector3Dot(segment, q)) * inverse;
-	if (v < 0.0f || u + v > 1.0f) return false;
-	const float t = XMVectorGetX(XMVector3Dot(edge2, q)) * inverse;
-	return t >= 0.0f && t <= 1.0f;
-}
 
 // 선분이 볼록 도형을 지나는지 본다. 면마다 선분을 안쪽 부분만 남기도록 잘라, 남는 구간이 있으면 지난다.
 static bool SegmentHitsConvex(const XMFLOAT3& start, const XMFLOAT3& end, const TerrainConvex& convex)
@@ -263,64 +187,6 @@ static std::uint32_t BeginObjectVisit(size_t object_count)
 	return visit_query;
 }
 
-// 선분 (x0, y0)→(x1, y1)의 xy가 [min_x, max_x]×[min_y, max_y] 안에 드는 비율 구간. 없으면 앞 값이 뒤 값보다 크다.
-static std::pair<float, float> ClipSegment2D(float x0, float y0, float x1, float y1, float min_x, float min_y, float max_x, float max_y)
-{
-	float enter = 0.0f;
-	float exit = 1.0f;
-	const float starts[2] = { x0, y0 };
-	const float deltas[2] = { x1 - x0, y1 - y0 };
-	const float lows[2] = { min_x, min_y };
-	const float highs[2] = { max_x, max_y };
-	for (int axis = 0; axis < 2; ++axis) {
-		if (std::fabs(deltas[axis]) < PARALLEL_EPSILON) {
-			if (starts[axis] < lows[axis] || starts[axis] > highs[axis]) return { 1.0f, 0.0f };
-			continue;
-		}
-		float near_t = (lows[axis] - starts[axis]) / deltas[axis];
-		float far_t = (highs[axis] - starts[axis]) / deltas[axis];
-		if (near_t > far_t) std::swap(near_t, far_t);
-		enter = std::max(enter, near_t);
-		exit = std::min(exit, far_t);
-	}
-	return { enter, exit };
-}
-
-// 칸 크기 1인 격자 위 선분 (x0, y0)→(x1, y1)이 지나는 칸을 시작점 쪽부터 차례로 visit에 넘긴다(격자 순회).
-// visit이 true를 돌려주면 그 자리에서 멈추고 true를 돌려준다. 두 점은 [0, columns]×[0, rows] 안에 있어야 한다.
-template <typename Visit>
-static bool WalkCells(float x0, float y0, float x1, float y1, int columns, int rows, Visit visit)
-{
-	constexpr float INF = std::numeric_limits<float>::infinity();
-	int x = std::clamp(static_cast<int>(std::floor(x0)), 0, columns - 1);
-	int y = std::clamp(static_cast<int>(std::floor(y0)), 0, rows - 1);
-	const int end_x = std::clamp(static_cast<int>(std::floor(x1)), 0, columns - 1);
-	const int end_y = std::clamp(static_cast<int>(std::floor(y1)), 0, rows - 1);
-	const float dx = x1 - x0;
-	const float dy = y1 - y0;
-	const int step_x = dx > 0.0f ? 1 : (dx < 0.0f ? -1 : 0);
-	const int step_y = dy > 0.0f ? 1 : (dy < 0.0f ? -1 : 0);
-	const float delta_x = step_x != 0 ? 1.0f / std::fabs(dx) : INF;
-	const float delta_y = step_y != 0 ? 1.0f / std::fabs(dy) : INF;
-	float next_x = step_x > 0 ? (x + 1 - x0) * delta_x : (step_x < 0 ? (x0 - x) * delta_x : INF);
-	float next_y = step_y > 0 ? (y + 1 - y0) * delta_y : (step_y < 0 ? (y0 - y) * delta_y : INF);
-	// 지나는 칸은 가로·세로 칸 수의 합을 넘지 않는다.
-	for (int guard = std::abs(end_x - x) + std::abs(end_y - y) + 2; guard > 0; --guard) {
-		if (visit(x, y)) return true;
-		if (x == end_x && y == end_y) return false;
-		if (next_x < next_y) {
-			x += step_x;
-			next_x += delta_x;
-		}
-		else {
-			y += step_y;
-			next_y += delta_y;
-		}
-		if (x < 0 || y < 0 || x >= columns || y >= rows) return false;
-	}
-	return false;
-}
-
 // 삼각형 order[begin, end)로 상자 나무 노드를 만들고 번호를 돌려준다.
 // 삼각형 중심점이 가장 넓게 퍼진 축을 골라 중심점 순서로 반씩 나누고, BVH_LEAF_SIZE개 이하가 되면 끝 노드로 둔다.
 static std::uint32_t BuildBvhNode(TerrainSource& source, std::vector<std::uint32_t>& order, const std::vector<XMFLOAT3>& centers, std::uint32_t begin, std::uint32_t end)
@@ -398,72 +264,28 @@ static TerrainConvex BuildConvex(const std::vector<XMFLOAT3>& vertices, const st
 	return convex;
 }
 
-bool TerrainData::Load(const std::string& file_path, const std::vector<XMFLOAT3>& tower_candidates)
+bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3>& tower_candidates)
 {
 	constexpr float INF = std::numeric_limits<float>::infinity();
-	std::ifstream file(file_path, std::ios::binary);
-	if (!file.is_open()) return false;
-	const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-
-	// 파일 끝을 넘어 읽으면 실패로 끝낸다.
-	size_t offset = 0;
-	bool is_valid = true;
-	const auto read = [&](void* destination, size_t size)
-	{
-		if (!is_valid || offset + size > bytes.size()) {
-			is_valid = false;
-			return;
-		}
-		std::memcpy(destination, bytes.data() + offset, size);
-		offset += size;
-	};
-	const auto read_value = [&]<typename T>(T& value) { read(&value, sizeof(T)); };
-	const auto read_count = [&]()
-	{
-		std::uint32_t count = 0;
-		read_value(count);
-		// 남은 파일보다 많은 개수는 잘못된 파일이다.
-		if (count > bytes.size()) is_valid = false;
-		return is_valid ? count : 0u;
-	};
-	const auto read_matrix = [&]()
-	{
-		XMFLOAT3 position{};
-		XMFLOAT4 rotation{};
-		XMFLOAT3 scale{};
-		read_value(position);
-		read_value(rotation);
-		read_value(scale);
-		return std::make_pair(XMMatrixAffineTransformation(XMLoadFloat3(&scale), XMVectorZero(), XMLoadFloat4(&rotation), XMLoadFloat3(&position)), std::make_pair(rotation, scale));
-	};
-
-	char magic[4] = {};
-	read(magic, sizeof(magic));
-	std::uint32_t version = 0;
-	read_value(version);
-	if (!is_valid || std::memcmp(magic, "TMTR", 4) != 0 || version != TERRAIN_DATA_VERSION) return false;
-	offset += static_cast<size_t>(read_count()) * TERRAIN_NAME_SIZE;
+	is_loaded_ = false;
 
 	// 충돌 모양 원본. 이름은 탑 원본을 찾을 때 쓴다.
-	sources_.assign(read_count(), {});
+	sources_.assign(reader.ReadCount(), {});
 	std::vector<std::string> source_names;
 	for (TerrainSource& source : sources_) {
-		char name[TERRAIN_NAME_SIZE] = {};
-		read(name, sizeof(name));
-		name[TERRAIN_NAME_SIZE - 1] = '\0';
-		source_names.emplace_back(name);
+		source_names.push_back(reader.ReadName());
 		std::uint8_t trace_mode = 0;
 		std::uint8_t is_double_sided = 0;
-		read_value(trace_mode);
-		read_value(is_double_sided);
+		reader.ReadValue(trace_mode);
+		reader.ReadValue(is_double_sided);
 		source.is_double_sided = is_double_sided != 0;
 		source.local_min = { INF, INF, INF };
 		source.local_max = { -INF, -INF, -INF };
-		source.spheres.resize(read_count());
-		for (TerrainSphere& sphere : source.spheres) read_value(sphere);
-		source.boxes.resize(read_count());
+		source.spheres.resize(reader.ReadCount());
+		for (TerrainSphere& sphere : source.spheres) reader.ReadValue(sphere);
+		source.boxes.resize(reader.ReadCount());
 		for (TerrainBox& box : source.boxes) {
-			read_value(box);
+			reader.ReadValue(box);
 			for (int corner = 0; corner < 8; ++corner) {
 				const XMVECTOR local = XMVectorSet((corner & 1) ? box.half_size.x : -box.half_size.x, (corner & 2) ? box.half_size.y : -box.half_size.y, (corner & 4) ? box.half_size.z : -box.half_size.z, 0.0f);
 				XMFLOAT3 point;
@@ -471,31 +293,31 @@ bool TerrainData::Load(const std::string& file_path, const std::vector<XMFLOAT3>
 				ExpandBounds(source.local_min, source.local_max, point);
 			}
 		}
-		source.capsules.resize(read_count());
-		for (TerrainCapsule& capsule : source.capsules) read_value(capsule);
-		const std::uint32_t convex_count = read_count();
-		for (std::uint32_t convex = 0; convex < convex_count && is_valid; ++convex) {
-			std::vector<XMFLOAT3> vertices(read_count());
+		source.capsules.resize(reader.ReadCount());
+		for (TerrainCapsule& capsule : source.capsules) reader.ReadValue(capsule);
+		const std::uint32_t convex_count = reader.ReadCount();
+		for (std::uint32_t convex = 0; convex < convex_count && reader.IsValid(); ++convex) {
+			std::vector<XMFLOAT3> vertices(reader.ReadCount());
 			for (XMFLOAT3& vertex : vertices) {
-				read_value(vertex);
+				reader.ReadValue(vertex);
 				ExpandBounds(source.local_min, source.local_max, vertex);
 			}
-			std::vector<std::uint32_t> indices(read_count());
-			for (std::uint32_t& index : indices) read_value(index);
+			std::vector<std::uint32_t> indices(reader.ReadCount());
+			for (std::uint32_t& index : indices) reader.ReadValue(index);
 			source.convexes.push_back(BuildConvex(vertices, indices));
 			source.convexes.back().vertices = std::move(vertices);
 		}
-		source.vertices.resize(read_count());
+		source.vertices.resize(reader.ReadCount());
 		for (XMFLOAT3& vertex : source.vertices) {
-			read_value(vertex);
+			reader.ReadValue(vertex);
 			ExpandBounds(source.local_min, source.local_max, vertex);
 		}
-		source.triangles.resize(read_count());
+		source.triangles.resize(reader.ReadCount());
 		for (std::uint32_t& index : source.triangles) {
-			read_value(index);
-			if (index >= source.vertices.size()) is_valid = false;
+			reader.ReadValue(index);
+			if (index >= source.vertices.size()) reader.Invalidate();
 		}
-		if (!is_valid) return false;
+		if (!reader.IsValid()) return false;
 		source.triangles.resize(source.triangles.size() / 3 * 3);
 		source.has_local_shapes = !source.boxes.empty() || !source.convexes.empty() || !source.triangles.empty();
 		BuildBvh(source);
@@ -550,39 +372,24 @@ bool TerrainData::Load(const std::string& file_path, const std::vector<XMFLOAT3>
 	};
 
 	// 배치
-	objects_.assign(read_count(), {});
+	objects_.assign(reader.ReadCount(), {});
 	object_capsules_.clear();
 	for (TerrainObject& object : objects_) {
 		std::uint32_t kind = 0;
-		read_value(object.source);
-		read_value(kind);
-		read_value(object.flags);
-		const auto [world, rotation_scale] = read_matrix();
-		if (!is_valid || object.source >= sources_.size()) return false;
-		build_object(object, world, rotation_scale.first, rotation_scale.second);
+		reader.ReadValue(object.source);
+		reader.ReadValue(kind);
+		reader.ReadValue(object.flags);
+		const MapTransform transform = reader.ReadTransform();
+		if (!reader.IsValid() || object.source >= sources_.size()) return false;
+		build_object(object, transform.ToMatrix(), transform.rotation, transform.scale);
 	}
-
-	// 랜드스케이프 충돌 조각
-	heightfields_.assign(read_count(), {});
-	for (TerrainHeightfield& heightfield : heightfields_) {
-		const XMMATRIX local_to_world = read_matrix().first;
-		read_value(heightfield.size);
-		read_value(heightfield.collision_scale);
-		if (!is_valid || heightfield.size == 0 || heightfield.size > 4096) return false;
-		heightfield.heights.resize(static_cast<size_t>(heightfield.size + 1) * (heightfield.size + 1));
-		read(heightfield.heights.data(), heightfield.heights.size() * sizeof(std::uint16_t));
-		heightfield.quad_flags.resize(static_cast<size_t>(heightfield.size) * heightfield.size);
-		read(heightfield.quad_flags.data(), heightfield.quad_flags.size());
-		if (!is_valid) return false;
-		XMStoreFloat4x4(&heightfield.local_to_world, local_to_world);
-		XMStoreFloat4x4(&heightfield.world_to_local, XMMatrixInverse(nullptr, local_to_world));
-		const auto [low, high] = std::minmax_element(heightfield.heights.begin(), heightfield.heights.end());
-		const float extent = heightfield.size * heightfield.collision_scale;
-		const auto [world_min, world_max] = TransformBounds({ 0.0f, 0.0f, (*low - 32768.0f) / 128.0f }, { extent, extent, (*high - 32768.0f) / 128.0f }, local_to_world);
-		heightfield.world_min = world_min;
-		heightfield.world_max = world_max;
+	// 배치를 원본 순서로 줄 세우고(같은 원본 안은 파일 순서), 원본마다 자기 배치의 시작 번호와 개수를 둔다.
+	std::stable_sort(objects_.begin(), objects_.end(), [](const TerrainObject& first, const TerrainObject& second) { return first.source < second.source; });
+	for (std::uint32_t index = 0; index < objects_.size(); ++index) {
+		TerrainSource& source = sources_[objects_[index].source];
+		if (source.object_count == 0) source.first_object = index;
+		++source.object_count;
 	}
-	if (!is_valid || offset != bytes.size()) return false;
 
 	// 발판 후보. 모든 자리를 만들어 두고 검사할 때 방이 넘긴 놓인 번호만 본다. 충돌은 발판 크기의 상자 하나이고 방향은 요 각도만 돌린다.
 	const std::uint32_t platform_source = static_cast<std::uint32_t>(sources_.size());
@@ -635,7 +442,7 @@ bool TerrainData::Load(const std::string& file_path, const std::vector<XMFLOAT3>
 }
 
 // 배치물을 월드 경계 상자가 겹치는 격자 칸마다 넣는다. 칸별 개수를 먼저 세고 한 배열에 이어 담는다.
-void TerrainData::BuildGrid()
+void CollisionObjectData::BuildGrid()
 {
 	constexpr float INF = std::numeric_limits<float>::infinity();
 	large_objects_.clear();
@@ -693,7 +500,7 @@ void TerrainData::BuildGrid()
 }
 
 // 배치 하나의 실제 모양과 선분을 검사한다. 구·캡슐은 월드 좌표로, 나머지는 선분을 메시 기준 좌표로 옮겨 검사한다.
-bool TerrainData::IsSegmentBlockedByObject(const TerrainObject& object, const XMFLOAT3& start, const XMFLOAT3& end) const
+bool CollisionObjectData::IsSegmentBlockedByObject(const TerrainObject& object, const XMFLOAT3& start, const XMFLOAT3& end) const
 {
 	const XMVECTOR world_start = XMLoadFloat3(&start);
 	const XMVECTOR world_end = XMLoadFloat3(&end);
@@ -754,7 +561,7 @@ bool TerrainData::IsSegmentBlockedByObject(const TerrainObject& object, const XM
 }
 
 // 발판 후보는 자리 번호와 같은 번호이고, 탑 후보 i는 탑과 기초 두 개다.
-std::vector<std::uint32_t> TerrainData::CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<std::size_t>& tower_indices) const
+std::vector<std::uint32_t> CollisionObjectData::CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<std::size_t>& tower_indices) const
 {
 	std::vector<std::uint32_t> placed_objects;
 	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
@@ -770,7 +577,7 @@ std::vector<std::uint32_t> TerrainData::CollectPlacedObjects(const PlatformLayou
 }
 
 // 놓인 발판·탑을 먼저 보고, 격자보다 큰 배치물, 선분이 지나는 격자 칸을 시작점 쪽부터 따라가며 그 칸의 배치물을 본다. 막히는 것을 찾으면 바로 끝낸다.
-bool TerrainData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT3& end, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const
+bool CollisionObjectData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT3& end, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const
 {
 	if (!is_loaded_) return false;
 	for (const std::uint32_t index : placed_objects) {
@@ -811,7 +618,7 @@ bool TerrainData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT
 
 // 배치 하나와 세로 캡슐(축 bottom→top, 반지름 radius)이 겹치는지 본다. 구·캡슐은 두 축 사이 거리로,
 // 상자·볼록 도형·삼각형은 꼭짓점을 월드 좌표로 옮겨 GJK로 본다. min, max는 캡슐의 월드 경계 상자로, 삼각형 상자 나무를 내려갈 때 쓴다.
-bool TerrainData::IsCapsuleOverlappingObject(const TerrainObject& object, FXMVECTOR bottom, FXMVECTOR top, float radius, const XMFLOAT3& min, const XMFLOAT3& max) const
+bool CollisionObjectData::IsCapsuleOverlappingObject(const TerrainObject& object, FXMVECTOR bottom, FXMVECTOR top, float radius, const XMFLOAT3& min, const XMFLOAT3& max) const
 {
 	for (std::uint32_t i = object.first_capsule; i < object.first_capsule + object.capsule_count; ++i) {
 		const TerrainWorldCapsule& capsule = object_capsules_[i];
@@ -867,7 +674,7 @@ bool TerrainData::IsCapsuleOverlappingObject(const TerrainObject& object, FXMVEC
 }
 
 // 놓인 발판·탑을 먼저 보고, 격자보다 큰 배치물, 캡슐 경계 상자가 걸치는 격자 칸의 배치물을 본다. 겹치는 것을 찾으면 바로 끝낸다.
-bool TerrainData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radius, float half_height, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const
+bool CollisionObjectData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radius, float half_height, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const
 {
 	if (!is_loaded_) return false;
 	const float axis_half = std::max(half_height - radius, 0.0f);
@@ -905,74 +712,4 @@ bool TerrainData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radi
 		}
 	}
 	return false;
-}
-
-// 조각마다 선분을 조각 기준 좌표로 옮기고, 위에서 본 선분이 지나는 칸을 따라가며 칸의 삼각형 2개를 검사한다.
-bool TerrainData::IsSegmentBlockedByLandscape(const XMFLOAT3& start, const XMFLOAT3& end) const
-{
-	if (!is_loaded_) return false;
-	for (const TerrainHeightfield& heightfield : heightfields_) {
-		if (!SegmentHitsBox(start, end, heightfield.world_min, heightfield.world_max)) continue;
-		const XMMATRIX world_to_local = XMLoadFloat4x4(&heightfield.world_to_local);
-		const XMVECTOR local_start = XMVector3TransformCoord(XMLoadFloat3(&start), world_to_local);
-		const XMVECTOR local_end = XMVector3TransformCoord(XMLoadFloat3(&end), world_to_local);
-		const XMVECTOR segment = XMVectorSubtract(local_end, local_start);
-		XMFLOAT3 from;
-		XMFLOAT3 to;
-		XMStoreFloat3(&from, local_start);
-		XMStoreFloat3(&to, local_end);
-		const float scale = heightfield.collision_scale;
-		const float extent = heightfield.size * scale;
-		const auto [enter, exit] = ClipSegment2D(from.x, from.y, to.x, to.y, 0.0f, 0.0f, extent, extent);
-		if (enter > exit) continue;
-		const int size = static_cast<int>(heightfield.size);
-		const auto vertex = [&](int x, int y)
-		{
-			return XMVectorSet(x * scale, y * scale, (heightfield.heights[static_cast<size_t>(y) * (size + 1) + x] - 32768.0f) / 128.0f, 0.0f);
-		};
-		const bool is_hit = WalkCells((from.x + (to.x - from.x) * enter) / scale, (from.y + (to.y - from.y) * enter) / scale, (from.x + (to.x - from.x) * exit) / scale, (from.y + (to.y - from.y) * exit) / scale, size, size, [&](int x, int y)
-		{
-			if (heightfield.quad_flags[static_cast<size_t>(y) * size + x] & QUAD_NO_COLLISION) return false;
-			const XMVECTOR p0 = vertex(x, y);
-			const XMVECTOR p1 = vertex(x + 1, y);
-			const XMVECTOR p2 = vertex(x, y + 1);
-			const XMVECTOR p3 = vertex(x + 1, y + 1);
-			return SegmentHitsTriangle(local_start, segment, p0, p1, p3) || SegmentHitsTriangle(local_start, segment, p0, p3, p2);
-		});
-		if (is_hit) return true;
-	}
-	return false;
-}
-
-// (x, y)가 속한 칸의 삼각형에서 세 꼭짓점 높이를 비율로 섞어 땅 높이를 구한다.
-std::optional<float> TerrainData::GetGroundHeight(float x, float y) const
-{
-	if (!is_loaded_) return std::nullopt;
-	for (const TerrainHeightfield& heightfield : heightfields_) {
-		if (x < heightfield.world_min.x || x > heightfield.world_max.x || y < heightfield.world_min.y || y > heightfield.world_max.y) continue;
-		XMFLOAT3 local;
-		XMStoreFloat3(&local, XMVector3TransformCoord(XMVectorSet(x, y, 0.0f, 1.0f), XMLoadFloat4x4(&heightfield.world_to_local)));
-		const float scale = heightfield.collision_scale;
-		const int size = static_cast<int>(heightfield.size);
-		const float cell_x = local.x / scale;
-		const float cell_y = local.y / scale;
-		if (cell_x < 0.0f || cell_y < 0.0f || cell_x > size || cell_y > size) continue;
-		const int column = std::min(static_cast<int>(cell_x), size - 1);
-		const int row = std::min(static_cast<int>(cell_y), size - 1);
-		if (heightfield.quad_flags[static_cast<size_t>(row) * size + column] & QUAD_NO_COLLISION) return std::nullopt;
-		const auto height = [&](int dx, int dy)
-		{
-			return (heightfield.heights[static_cast<size_t>(row + dy) * (size + 1) + column + dx] - 32768.0f) / 128.0f;
-		};
-		const float fx = cell_x - column;
-		const float fy = cell_y - row;
-		// (0,0)–(1,1) 대각선 아래쪽 삼각형은 (0,0)·(1,0)·(1,1), 위쪽은 (0,0)·(1,1)·(0,1)이다.
-		const float local_height = fx >= fy
-			? height(0, 0) + fx * (height(1, 0) - height(0, 0)) + fy * (height(1, 1) - height(1, 0))
-			: height(0, 0) + fx * (height(1, 1) - height(0, 1)) + fy * (height(0, 1) - height(0, 0));
-		XMFLOAT3 world;
-		XMStoreFloat3(&world, XMVector3TransformCoord(XMVectorSet(cell_x * scale, cell_y * scale, local_height, 1.0f), XMLoadFloat4x4(&heightfield.local_to_world)));
-		return world.z;
-	}
-	return std::nullopt;
 }

@@ -607,7 +607,7 @@ void GameRoom::StartGame(int requester_id)
 		entry[2] = location.z;
 	}
 	tower_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_TOWER_LAYOUT_PACKET, locations) + tower_layout_p_.tower_count * sizeof(tower_layout_p_.locations[0])), S2C_TOWER_LAYOUT };
-	placed_objects_ = server_->GetTerrainData().CollectPlacedObjects(platform_layout_, tower_indices);
+	placed_objects_ = server_->GetMapData().GetCollisionObjects().CollectPlacedObjects(platform_layout_, tower_indices);
 	// 이번 게임의 상자 자리를 정해 둔다. 상자 번호는 배치 패킷의 항목 순서다.
 	box_placements_ = server_->GetBoxCandidateData().SelectPlacements(std::random_device{}());
 	box_placements_.resize(std::min<std::size_t>(box_placements_.size(), MAX_BOX_COUNT));
@@ -626,7 +626,8 @@ void GameRoom::StartGame(int requester_id)
 // 바닥은 그 사각형 안 가장 낮은 땅에 맞춰 뜨지 않게 한다.
 void GameRoom::PlaceTreasure()
 {
-	const TerrainData& terrain = server_->GetTerrainData();
+	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
+	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
 	const MapRegionData& regions = server_->GetMapRegionData();
 	std::mt19937 random(std::random_device{}());
 	std::uniform_real_distribution<float> random_x(MAP_MIN[0] + TREASURE_EDGE_MARGIN, MAP_MAX[0] - TREASURE_EDGE_MARGIN);
@@ -638,13 +639,13 @@ void GameRoom::PlaceTreasure()
 		const float x = random_x(random);
 		const float y = random_y(random);
 		if (regions.IsTreasureExcluded(x, y)) continue;
-		std::optional<float> ground = terrain.GetGroundHeight(x, y);
+		std::optional<float> ground = landscape.GetGroundHeight(x, y);
 		for (int corner = 0; corner < 4 && ground; ++corner) {
-			const std::optional<float> corner_ground = terrain.GetGroundHeight(x + ((corner & 1) ? TREASURE_RADIUS : -TREASURE_RADIUS), y + ((corner & 2) ? TREASURE_RADIUS : -TREASURE_RADIUS));
+			const std::optional<float> corner_ground = landscape.GetGroundHeight(x + ((corner & 1) ? TREASURE_RADIUS : -TREASURE_RADIUS), y + ((corner & 2) ? TREASURE_RADIUS : -TREASURE_RADIUS));
 			ground = corner_ground ? std::optional<float>(std::min(*ground, *corner_ground)) : std::nullopt;
 		}
 		if (!ground) continue;
-		if (terrain.IsCapsuleOverlappingObjects({ x, y, *ground + TREASURE_HALF_HEIGHT }, TREASURE_RADIUS, TREASURE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, placed_objects_)) continue;
+		if (collision_objects.IsCapsuleOverlappingObjects({ x, y, *ground + TREASURE_HALF_HEIGHT }, TREASURE_RADIUS, TREASURE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, placed_objects_)) continue;
 		treasure_location_ = { x, y, *ground };
 		treasure_yaw_ = random_yaw(random);
 		return;
@@ -857,8 +858,9 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	DirectX::XMFLOAT3 segment_end;
 	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
 	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, hit.distance - HIT_OCCLUSION_MARGIN)));
-	const TerrainData& terrain = server_->GetTerrainData();
-	return !terrain.IsSegmentBlockedByLandscape(segment_start, segment_end) && !terrain.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
+	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
+	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
 }
 
 // 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
@@ -868,12 +870,13 @@ bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) con
 {
 	const float* next = move_state.location;
 	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2])) return false;
-	const TerrainData& terrain = server_->GetTerrainData();
+	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
+	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
 	if (!player.HasMoveState()) return true;
-	const std::optional<float> ground = terrain.GetGroundHeight(next[0], next[1]);
+	const std::optional<float> ground = landscape.GetGroundHeight(next[0], next[1]);
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return false;
 	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
-	if (terrain.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, placed_objects_)) return false;
+	if (collision_objects.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, placed_objects_)) return false;
 	if (!is_game_started_) {
 		const float dx = next[0] - START_DOME_CENTER[0];
 		const float dy = next[1] - START_DOME_CENTER[1];
@@ -882,7 +885,7 @@ bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) con
 		if (dx * dx + dy * dy + dz * dz > limit * limit) return false;
 	}
 	const float* previous = player.GetMoveState().location;
-	return !terrain.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, placed_objects_);
+	return !collision_objects.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, placed_objects_);
 }
 
 // 마지막으로 인정한 위치에 멈춘 상태로 되돌려 다른 플레이어에게 다음 틱에 중계하고, 본인에게는 그 위치로 옮기라고 보낸다.

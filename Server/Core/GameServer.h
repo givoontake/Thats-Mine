@@ -6,8 +6,8 @@
 #include "BoxCandidateData.h"
 #include "ExOverlapped.h"
 #include "HitboxData.h"
+#include "MapData.h"
 #include "MapRegionData.h"
-#include "TerrainData.h"
 #include "TowerCandidateData.h"
 #include "session_tasks.h"
 #pragma comment(lib, "MSWSock.lib")
@@ -32,7 +32,7 @@ class GameServer
 	std::atomic<bool> is_running_ = true;
 	std::unique_ptr<ServerThreadManager> thread_manager_;
 	HitboxData hitbox_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 히트박스 판정 데이터
-	TerrainData terrain_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 지형 판정 데이터
+	MapData map_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 데이터(랜드스케이프, 충돌 배치물)
 	BoxCandidateData box_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 배치 후보
 	TowerCandidateData tower_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 탑 배치 후보
 	MapRegionData map_region_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 영역
@@ -48,7 +48,7 @@ public:
 	ServerThreadManager& GetThreadManager() { return *thread_manager_; }
 	SessionManager& GetSessionManager() { return *session_manager_; }
 	const HitboxData& GetHitboxData() const { return hitbox_data_; }
-	const TerrainData& GetTerrainData() const { return terrain_data_; }
+	const MapData& GetMapData() const { return map_data_; }
 	const BoxCandidateData& GetBoxCandidateData() const { return box_candidate_data_; }
 	const TowerCandidateData& GetTowerCandidateData() const { return tower_candidate_data_; }
 	const MapRegionData& GetMapRegionData() const { return map_region_data_; }

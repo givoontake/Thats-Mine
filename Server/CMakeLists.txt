@@ -27,8 +27,12 @@ add_executable(GameServer
     Game/Hitbox/CharacterPose.cpp
     Game/Hitbox/HitboxData.cpp
     Game/Hitbox/hitbox_raycast.cpp
+    Game/Map/CollisionObjectData.cpp
+    Game/Map/LandscapeData.cpp
+    Game/Map/MapData.cpp
+    Game/Map/MapFileReader.cpp
+    Game/Map/map_geometry.cpp
     Game/Regions/MapRegionData.cpp
-    Game/Terrain/TerrainData.cpp
     Game/Towers/TowerCandidateData.cpp
     Lobby/LoginManager.cpp
     Lobby/Matchmaker.cpp
@@ -79,10 +83,14 @@ add_executable(GameServer
     Game/Hitbox/HitboxData.h
     Game/Hitbox/hitbox_raycast.h
     Game/Hitbox/hitbox_types.h
+    Game/Map/CollisionObjectData.h
+    Game/Map/LandscapeData.h
+    Game/Map/MapData.h
+    Game/Map/MapFileReader.h
+    Game/Map/map_geometry.h
+    Game/Map/terrain_types.h
     Game/Regions/MapRegionData.h
     Game/Regions/region_types.h
-    Game/Terrain/TerrainData.h
-    Game/Terrain/terrain_types.h
     Game/Towers/TowerCandidateData.h
     Lobby/lobby_tasks.h
     Lobby/LoginManager.h
@@ -124,7 +132,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Game/Boxes Game/Hitbox Game/Regions Game/Terrain Game/Towers Lobby Managers Network Packets Rooms Threads
+    . Common Core Database Game Game/Boxes Game/Hitbox Game/Map Game/Regions Game/Towers Lobby Managers Network Packets Rooms Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)
