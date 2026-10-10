@@ -96,11 +96,16 @@ private:
 	// 게임 시작 때 고른 탑 후보 번호·종류와, 그 탑 배치를 담은 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
 	std::vector<TowerPlacement> tower_placements_;
 	S2C_TOWER_LAYOUT_PACKET tower_layout_p_{};
-	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 상자 번호는 이 목록의 순서다.
+	// 패킷은 상자 수에 맞춘 크기로 만들어 두고 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
 	std::vector<std::uint32_t> box_placement_indices_;
-	S2C_BOX_LAYOUT_PACKET box_layout_p_{};
+	std::vector<char> box_layout_packet_;
 	// 게임 시작 때 정한 최종 보물 배치
 	TreasurePlacement treasure_placement_{};
+	// 게임 시작 때 최종 보물 위치로 만든 이번 게임의 힌트 목록
+	std::vector<HINT_ENTRY> hints_;
+	// 상자마다 넣은 힌트의 힌트 목록 번호. 상자 번호 순서다.
+	std::vector<std::uint32_t> box_hint_indices_;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -125,6 +130,8 @@ private:
 	void RollbackMove(Player& player, Session& session);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
+	void GenerateHints();
+	void PlaceBoxes(int player_count);
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환
 	void TogglePlayerReady(int player_id);

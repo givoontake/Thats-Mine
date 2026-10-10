@@ -24,6 +24,6 @@ public:
 	const std::vector<BoxPlacement>& GetPlacements() const { return placements_; }
 	const std::vector<BoxAnchor>& GetAnchors() const { return anchors_; }
 	const std::vector<BoxGroup>& GetGroups() const { return groups_; }
-	// 한 판에 놓을 상자 자리 번호를 고른다. 유적 상자를 규칙대로 먼저 고르고, 자연 상자 NATURAL_BOX_COUNT개를 퍼뜨려 고른다.
-	std::vector<std::uint32_t> SelectPlacements() const;
+	// 한 판에 놓을 상자 자리 번호를 box_count개 고른다. 유적 상자를 규칙대로 먼저 고르고, 나머지는 자연 상자로 퍼뜨려 고른다. 후보가 모자라면 있는 만큼 고른다.
+	std::vector<std::uint32_t> SelectPlacements(std::size_t box_count) const;
 };

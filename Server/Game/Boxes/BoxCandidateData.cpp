@@ -97,7 +97,7 @@ bool BoxCandidateData::Load(const std::string& anchor_path, const std::string& g
 	return is_loaded_;
 }
 
-std::vector<std::uint32_t> BoxCandidateData::SelectPlacements() const
+std::vector<std::uint32_t> BoxCandidateData::SelectPlacements(std::size_t box_count) const
 {
 	std::mt19937 random(CreateRandomSeed());
 	std::vector<std::uint32_t> placements;
@@ -113,12 +113,13 @@ std::vector<std::uint32_t> BoxCandidateData::SelectPlacements() const
 		placements.insert(placements.end(), shuffled.begin(), shuffled.begin() + count);
 	}
 
-	// 자연: 기준(나무·바위)을 미첼 최적 후보 방식으로 NATURAL_BOX_COUNT개 고르게 퍼뜨려 고르고, 기준마다 자리(선물 자리·보물 방향) 중 한 곳을 무작위로 놓는다.
+	// 자연: 남은 개수만큼 기준(나무·바위)을 미첼 최적 후보 방식으로 고르게 퍼뜨려 고르고, 기준마다 자리(선물 자리·보물 방향) 중 한 곳을 무작위로 놓는다.
 	// 유적 상자와의 거리는 보지 않는다.
 	std::vector<DirectX::XMFLOAT2> anchor_locations;
 	anchor_locations.reserve(anchors_.size());
 	for (const BoxAnchor& anchor : anchors_) anchor_locations.push_back(anchor.location);
-	for (const std::size_t index : SelectSpreadIndices(anchor_locations, NATURAL_BOX_COUNT, BOX_MIN_DISTANCE))
+	const int natural_count = box_count > placements.size() ? static_cast<int>(box_count - placements.size()) : 0;
+	for (const std::size_t index : SelectSpreadIndices(anchor_locations, natural_count, BOX_MIN_DISTANCE))
 	{
 		const BoxAnchor& anchor = anchors_[index];
 		placements.push_back(anchor.placement_indices[std::uniform_int_distribution<std::size_t>(0, anchor.placement_indices.size() - 1)(random)]);

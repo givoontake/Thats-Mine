@@ -28,11 +28,8 @@ constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr double PLATFORM_SPAWN_PROBABILITY = 0.6; // 반드시 놓는 자리가 아닌 발판을 놓을 확률
 
-// 상자 배치(임시값). 게임 시작 때 유적 상자를 먼저 고르고, 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
-constexpr int NATURAL_BOX_COUNT = 40; // 나무·바위에 놓는 자연 상자 수(유적 상자 제외)
+// 상자 배치. 게임 시작 때 힌트 상자 수만큼 유적 상자를 먼저 고르고, 나머지 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
 constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
-constexpr int MAX_BOX_COUNT = 64; // 한 판의 상자 수 상한(상자 배치 패킷 크기). 유적 상자 최대 13개와 자연 상자 수를 합친 값보다 커야 한다.
-static_assert(NATURAL_BOX_COUNT + 13 <= MAX_BOX_COUNT, "MAX_BOX_COUNT must hold all boxes.");
 
 // 탑 배치. 게임 시작 때 탑 후보 자리(tower_candidates.txt) 중 TOWER_COUNT곳을 미첼 최적 후보 방식으로 고르고, 고른 순서대로 종류를 번갈아 정한다.
 // 탑(SM_tower_02, SM_tower_04)은 후보 자리의 높이(바닥에서 가장 높은 땅)에 놓고, 그 아래에 기초(SM_tower_foundation_03)를 붙여 땅까지 채운다.
@@ -50,6 +47,24 @@ constexpr float TREASURE_RADIUS = 85.0f; // 보물을 감싸는 수평 반경(cm
 constexpr float TREASURE_HALF_HEIGHT = 65.0f; // 보물 높이의 절반(cm)
 constexpr int TREASURE_PLACE_ATTEMPTS = 10000; // 조건에 맞는 위치를 찾을 때까지 다시 뽑는 최대 횟수
 constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
+
+// 힌트 "보물에서 가까운 물체 종류" 순위에 담는 종류 수
+constexpr int HINT_NEAREST_KIND_COUNT = 3;
+// 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
+constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
+// 힌트의 "보물이 묻힌 자리가 보인다" 판정. 영역의 판정 위치(발밑 땅 + 3인칭 카메라 높이 140cm)에서 보물 자리 지면까지 그은 선이 하나라도 막히지 않으면 보인다.
+constexpr float PLACE_VIEW_END_MARGIN = 30.0f; // 선을 보물 자리 지면 이만큼(cm) 앞에서 멈춘다. 목표 지면 자체에 걸리지 않게 하고, 등진 경사면에 묻힌 자리는 땅 속을 지나 막히게 한다.
+// 힌트 등급. 판마다 힌트를 점수(배제 영역 × 가중치) 순으로 정렬해 위에서 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
+// 배제 영역은 보물 가능 땅 중 그 힌트가 틀린 땅의 비율이고, 보물 가능 땅을 HINT_EXCLUSION_GRID_STEP 간격 격자 지점으로 세어 구한다.
+constexpr float HINT_DIRECTION_WEIGHT = 1.0f; // 방향 힌트 가중치
+constexpr float HINT_OTHER_WEIGHT = 0.8f; // 방향 외 힌트 가중치
+constexpr int HINT_GRADE_S_PERCENT = 10;
+constexpr int HINT_GRADE_A_PERCENT = 20;
+constexpr int HINT_GRADE_B_PERCENT = 30;
+constexpr float HINT_EXCLUSION_GRID_STEP = 5000.0f; // 배제 영역을 셀 격자 간격(cm)
+// 힌트 상자. 힌트마다 등급 배수 × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다.
+constexpr int HINT_BOX_COPIES[] = { 1, 1, 2, 2 }; // 등급별 배수(S, A, B, C 순서)
+constexpr int HINT_BOX_PLAYERS_PER_MULTIPLIER = 5;
 
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)

@@ -13,6 +13,30 @@ enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 // 탑 종류. 값은 0부터 TOWER_KIND_COUNT - 1까지이고, 서버 충돌 배치물과 탑 배치 패킷이 같은 값을 쓴다.
 enum class TowerKind : std::uint8_t { TOWER_02, TOWER_04 };
 
+// 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
+enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER };
+
+// "보물에서 가까운 물체" 힌트가 말하는 물체 종류. 메시 여러 개를 한 종류로 묶는다.
+enum class HintObjectKind : std::uint8_t {
+	LARGE_ROCK,
+	SMALL_ROCK,
+	OAK,
+	SPRUCE,
+	BIRCH,
+	POPLAR,
+	MAPLE,
+	BAMBOO,
+	DAISY,
+	MUSHROOM,
+	COUNT,
+};
+
+// 방향 힌트의 방위. 지도 기준으로 북쪽이 x가 작은 쪽, 동쪽이 y가 작은 쪽이다.
+enum class HintDirection : std::uint8_t { NORTH, EAST, SOUTH, WEST, COUNT };
+
+// 힌트 등급. A가 가장 높다.
+enum class HintGrade : std::uint8_t { S, A, B, C };
+
 #pragma pack(push, 1)
 
 // 이동 상태. 위치·속도는 cm, 방향은 도 단위이고, 이동 입력은 -127~127로 줄여 담는다.
@@ -155,11 +179,25 @@ struct BOX_ENTRY {
 	float rotation[3];
 };
 
-// 이번 게임의 상자 배치. 실제 크기는 box_count개의 항목까지이고, 상자 번호는 항목 순서다.
+// 이번 게임의 상자 배치. 이 구조체 뒤에 box_count개의 BOX_ENTRY가 이어 붙고, 상자 번호는 항목 순서다.
+// 상자 수에 따라 BUF_SIZE보다 커질 수 있어 상자 배치만 크기에 맞춘 버퍼로 만들어 보낸다.
 struct S2C_BOX_LAYOUT_PACKET {
 	PACKET_HEADER header;
-	std::uint8_t box_count;
-	BOX_ENTRY entries[MAX_BOX_COUNT];
+	std::uint16_t box_count;
+};
+
+// 힌트 하나. 문장은 클라이언트가 kind의 문장 틀에 값을 채워 만들고, 영역 번호는 서버 맵 영역 파일의 순서다.
+// DIRECTION: target은 영역 번호, detail은 HintDirection, is_true면 보물이 그 영역보다 그 방위에 있다.
+// VIEW: target은 영역 번호, is_true면 그 영역에서 보물이 묻힌 자리가 보인다.
+// NEAREST_OBJECT: target은 HintObjectKind, detail은 순위(0이 가장 가깝다), is_true는 항상 참이다.
+// NEAREST_TOWER: target은 TowerKind, is_true는 항상 참이다.
+// grade는 HintGrade다.
+struct HINT_ENTRY {
+	std::uint8_t kind;
+	std::uint8_t target;
+	std::uint8_t detail;
+	bool is_true;
+	std::uint8_t grade;
 };
 
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.
@@ -180,5 +218,4 @@ struct S2C_TOWER_LAYOUT_PACKET {
 static_assert(sizeof(S2C_MOVE_PACKET) <= BUF_SIZE, "S2C_MOVE_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_SPAWN_PACKET) <= BUF_SIZE, "S2C_SPAWN_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_PLATFORM_LAYOUT_PACKET) <= BUF_SIZE, "S2C_PLATFORM_LAYOUT_PACKET must fit in one packet.");
-static_assert(sizeof(S2C_BOX_LAYOUT_PACKET) <= BUF_SIZE, "S2C_BOX_LAYOUT_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_TOWER_LAYOUT_PACKET) <= BUF_SIZE, "S2C_TOWER_LAYOUT_PACKET must fit in one packet.");

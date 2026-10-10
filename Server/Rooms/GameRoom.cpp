@@ -20,6 +20,8 @@
 #include "random_seed.h"
 #include "spread_selection.h"
 #include "hitbox_raycast.h"
+#include "hint_types.h"
+#include "treasure_placement.h"
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
@@ -581,8 +583,11 @@ void GameRoom::StartGame(int requester_id)
 	start_p.header.type = S2C_MULTI_START;
 	Broadcast(reinterpret_cast<char*>(&start_p));
 	// 시작 조건을 충족한 플레이어를 로딩 상태로 전환하고, 로딩 완료를 기다린다.
+	int player_count = 0;
 	for (auto& room_player : room_players) {
-		if (FindSession(room_player)) room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
+		if (!FindSession(room_player)) continue;
+		room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
+		++player_count;
 	}
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
 	game_start_ms_ = 0;
@@ -612,18 +617,10 @@ void GameRoom::StartGame(int requester_id)
 	}
 	tower_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_TOWER_LAYOUT_PACKET, entries) + tower_layout_p_.tower_count * sizeof(TOWER_ENTRY)), S2C_TOWER_LAYOUT };
 	placed_objects_ = server_->GetMapData().GetCollisionObjects().CollectPlacedObjects(platform_layout_, tower_placements_);
-	// 이번 게임의 상자 자리를 정해 둔다. 상자 번호는 배치 패킷의 항목 순서다.
-	const BoxCandidateData& box_candidates = server_->GetBoxCandidateData();
-	box_placement_indices_ = box_candidates.SelectPlacements();
-	box_placement_indices_.resize(std::min<std::size_t>(box_placement_indices_.size(), MAX_BOX_COUNT));
-	box_layout_p_ = {};
-	box_layout_p_.box_count = static_cast<std::uint8_t>(box_placement_indices_.size());
-	for (std::size_t index = 0; index < box_placement_indices_.size(); ++index) {
-		const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
-		box_layout_p_.entries[index] = { static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z } };
-	}
-	box_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_BOX_LAYOUT_PACKET, entries) + box_layout_p_.box_count * sizeof(BOX_ENTRY)), S2C_BOX_LAYOUT };
+	// 보물을 놓고 그 위치로 힌트를 만든 뒤, 힌트 수에 맞춰 상자를 놓는다. 보물은 발판·탑만 피하므로 상자보다 먼저 놓는다.
 	PlaceTreasure();
+	GenerateHints();
+	PlaceBoxes(player_count);
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·시작 돔) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
@@ -631,9 +628,6 @@ void GameRoom::StartGame(int requester_id)
 // 바닥은 그 사각형 안 가장 낮은 땅에 맞춰 뜨지 않게 한다.
 void GameRoom::PlaceTreasure()
 {
-	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
-	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
-	const MapRegionData& regions = server_->GetMapRegionData();
 	std::mt19937 random(CreateRandomSeed());
 	std::uniform_real_distribution<float> random_x(MAP_MIN[0] + TREASURE_EDGE_MARGIN, MAP_MAX[0] - TREASURE_EDGE_MARGIN);
 	std::uniform_real_distribution<float> random_y(MAP_MIN[1] + TREASURE_EDGE_MARGIN, MAP_MAX[1] - TREASURE_EDGE_MARGIN);
@@ -642,18 +636,79 @@ void GameRoom::PlaceTreasure()
 	for (int attempt = 0; attempt < TREASURE_PLACE_ATTEMPTS; ++attempt) {
 		const float x = random_x(random);
 		const float y = random_y(random);
-		if (regions.IsTreasureExcluded(x, y)) continue;
-		std::optional<float> ground = landscape.GetGroundHeight(x, y);
-		for (int corner = 0; corner < 4 && ground; ++corner) {
-			const std::optional<float> corner_ground = landscape.GetGroundHeight(x + ((corner & 1) ? TREASURE_RADIUS : -TREASURE_RADIUS), y + ((corner & 2) ? TREASURE_RADIUS : -TREASURE_RADIUS));
-			ground = corner_ground ? std::optional<float>(std::min(*ground, *corner_ground)) : std::nullopt;
-		}
+		const std::optional<float> ground = FindTreasureGround(server_->GetMapData(), server_->GetMapRegionData(), x, y, placed_objects_);
 		if (!ground) continue;
-		if (collision_objects.IsCapsuleOverlappingObjects({ x, y, *ground + TREASURE_HALF_HEIGHT }, TREASURE_RADIUS, TREASURE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, placed_objects_)) continue;
 		treasure_placement_ = { { x, y, *ground }, random_yaw(random) };
 		return;
 	}
 	std::cerr << "Treasure place fail.. " << std::endl;
+}
+
+// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑 순서다.
+// 등급은 힌트마다 점수(배제 영역 × 가중치)를 매겨 높은 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
+void GameRoom::GenerateHints()
+{
+	const float x = treasure_placement_.location.x;
+	const float y = treasure_placement_.location.y;
+	hints_ = server_->GetDirectionHintData().JudgeDirections(x, y);
+	const std::vector<HINT_ENTRY> view_hints = server_->GetViewHintData().JudgeViews(server_->GetMapData(), x, y);
+	hints_.insert(hints_.end(), view_hints.begin(), view_hints.end());
+	const NearestHintKinds nearest_kinds = server_->GetHintObjectTree().FindNearestKinds(x, y);
+	for (std::size_t rank = 0; rank < nearest_kinds.count; ++rank) {
+		hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_OBJECT), static_cast<std::uint8_t>(nearest_kinds.kinds[rank].kind), static_cast<std::uint8_t>(rank), true, 0 });
+	}
+	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
+	const TowerPlacement* nearest_tower = FindNearestTower(tower_placements_, tower_candidates, x, y);
+	if (nearest_tower) hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_TOWER), static_cast<std::uint8_t>(nearest_tower->kind), 0, true, 0 });
+
+	const HintExclusionData& exclusion_data = server_->GetHintExclusionData();
+	std::vector<std::pair<float, std::size_t>> scores; // 점수, 힌트 번호
+	scores.reserve(hints_.size());
+	for (std::size_t index = 0; index < hints_.size(); ++index) {
+		const HINT_ENTRY& hint = hints_[index];
+		const float exclusion = hint.kind == static_cast<std::uint8_t>(HintKind::NEAREST_TOWER)
+			? exclusion_data.GetNearestTowerExclusion(static_cast<TowerKind>(hint.target), tower_placements_, tower_candidates)
+			: exclusion_data.GetExclusion(hint);
+		const float weight = hint.kind == static_cast<std::uint8_t>(HintKind::DIRECTION) ? HINT_DIRECTION_WEIGHT : HINT_OTHER_WEIGHT;
+		scores.push_back({ exclusion * weight, index });
+	}
+	std::sort(scores.begin(), scores.end(), [](const std::pair<float, std::size_t>& a, const std::pair<float, std::size_t>& b) { return a.first > b.first; });
+	const std::size_t s_end = scores.size() * HINT_GRADE_S_PERCENT / 100;
+	const std::size_t a_end = scores.size() * (HINT_GRADE_S_PERCENT + HINT_GRADE_A_PERCENT) / 100;
+	const std::size_t b_end = scores.size() * (HINT_GRADE_S_PERCENT + HINT_GRADE_A_PERCENT + HINT_GRADE_B_PERCENT) / 100;
+	for (std::size_t order = 0; order < scores.size(); ++order) {
+		const HintGrade grade = order < s_end ? HintGrade::S : order < a_end ? HintGrade::A : order < b_end ? HintGrade::B : HintGrade::C;
+		hints_[scores[order].second].grade = static_cast<std::uint8_t>(grade);
+	}
+}
+
+// 힌트마다 등급 배수 × 글로벌 배수만큼 상자에 넣을 힌트를 만들어 섞고, 그 수만큼 상자 자리를 골라 상자마다 하나씩 넣는다.
+// 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다. 배치 패킷은 상자 수에 맞춘 크기로 만든다.
+void GameRoom::PlaceBoxes(int player_count)
+{
+	const int global_multiplier = std::max(1, (player_count + HINT_BOX_PLAYERS_PER_MULTIPLIER - 1) / HINT_BOX_PLAYERS_PER_MULTIPLIER);
+	box_hint_indices_.clear();
+	for (std::uint32_t index = 0; index < hints_.size(); ++index) {
+		box_hint_indices_.insert(box_hint_indices_.end(), HINT_BOX_COPIES[hints_[index].grade] * global_multiplier, index);
+	}
+	std::mt19937 random(CreateRandomSeed());
+	std::shuffle(box_hint_indices_.begin(), box_hint_indices_.end(), random);
+	// 배치 패킷 크기는 패킷 헤더의 크기 칸에 담을 수 있는 만큼으로 제한한다.
+	constexpr std::size_t MAX_LAYOUT_BOX_COUNT = (UINT16_MAX - sizeof(S2C_BOX_LAYOUT_PACKET)) / sizeof(BOX_ENTRY);
+	box_hint_indices_.resize(std::min(box_hint_indices_.size(), MAX_LAYOUT_BOX_COUNT));
+	const BoxCandidateData& box_candidates = server_->GetBoxCandidateData();
+	box_placement_indices_ = box_candidates.SelectPlacements(box_hint_indices_.size());
+	// 상자 자리 후보가 모자라 덜 골랐으면 남는 힌트는 넣지 않는다.
+	box_hint_indices_.resize(box_placement_indices_.size());
+	const std::size_t packet_size = sizeof(S2C_BOX_LAYOUT_PACKET) + box_placement_indices_.size() * sizeof(BOX_ENTRY);
+	const S2C_BOX_LAYOUT_PACKET box_layout_p{ { static_cast<std::uint16_t>(packet_size), S2C_BOX_LAYOUT }, static_cast<std::uint16_t>(box_placement_indices_.size()) };
+	box_layout_packet_.resize(packet_size);
+	std::memcpy(box_layout_packet_.data(), &box_layout_p, sizeof(box_layout_p));
+	for (std::size_t index = 0; index < box_placement_indices_.size(); ++index) {
+		const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
+		const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z } };
+		std::memcpy(box_layout_packet_.data() + sizeof(box_layout_p) + index * sizeof(BOX_ENTRY), &entry, sizeof(entry));
+	}
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -767,7 +822,7 @@ void GameRoom::ProcessLoadedPlayers()
 			room_player.GetPose().Reset(server_->GetHitboxData());
 			session->SendPacket(reinterpret_cast<char*>(&platform_layout_p_), platform_layout_p_.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&tower_layout_p_), tower_layout_p_.header.size);
-			session->SendPacket(reinterpret_cast<char*>(&box_layout_p_), box_layout_p_.header.size);
+			session->SendLargePacket(box_layout_packet_.data(), static_cast<int>(box_layout_packet_.size()));
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);

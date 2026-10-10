@@ -1,0 +1,42 @@
+#pragma once
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+#include <DirectXMath.h>
+#include "game_packets.h"
+#include "settings.h"
+
+// 힌트 물체 트리의 점. 물체 바닥 위치의 지도 좌표(cm)와 종류다.
+struct HintPoint {
+	float x;
+	float y;
+	HintObjectKind kind;
+};
+
+// 가까운 종류 하나와 그 종류 물체 중 가장 가까운 것까지의 수평 거리(cm)
+struct HintKindDistance {
+	HintObjectKind kind;
+	float distance;
+};
+
+// 가까운 종류 순위. kinds의 앞 count개가 가까운 순서이고, 종류는 서로 다르다.
+struct NearestHintKinds {
+	std::array<HintKindDistance, HINT_NEAREST_KIND_COUNT> kinds;
+	std::size_t count;
+};
+
+// 방향 힌트 기준 영역 하나. region은 맵 영역 순서 번호이고, 사각형은 지도 좌표(cm)다.
+struct DirectionArea {
+	std::uint8_t region;
+	float min_x;
+	float max_x;
+	float min_y;
+	float max_y;
+};
+
+// 보임 힌트 기준 영역 하나. region은 맵 영역 순서 번호이고, eyes는 판정 위치(눈 위치, cm)다.
+struct ViewRegion {
+	std::uint8_t region;
+	std::vector<DirectX::XMFLOAT3> eyes;
+};

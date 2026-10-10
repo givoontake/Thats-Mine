@@ -65,6 +65,30 @@ bool Session::SendPacket(const char* packet, int packet_size)
 	return true;
 }
 
+bool Session::SendLargePacket(const char* packet, int packet_size)
+{
+	if (!packet || packet_size <= 0 || packet_size > UINT16_MAX) return false;
+	LargeSendBuffer* send_buffer = new LargeSendBuffer(packet, packet_size);
+
+	std::shared_lock<std::shared_mutex> socket_lock(socket_mutex_);
+	if (GetLifeState() != LifeState::ACTIVE || socket_ == INVALID_SOCKET) {
+		delete send_buffer;
+		return false;
+	}
+
+	send_buffer->ex_over.session_key = GetSessionKey();
+	++io_pending_count_;
+	std::unique_lock<std::mutex> send_lock(send_mutex_);
+	const int result = WSASend(socket_, &send_buffer->wsabuf, 1, 0, 0, &send_buffer->ex_over.over, 0);
+	const int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
+	send_lock.unlock();
+	if (result == SOCKET_ERROR && error != WSA_IO_PENDING) {
+		PostQueuedCompletionStatus(iocp_handle_, 0, SESSION_IO_COMPLETION, &send_buffer->ex_over.over);
+		std::cerr << "Session::SendLargePacket() WSASend error\n";
+		return false;
+	}
+	return true;
+}
 
 bool Session::RecvPacket()
 {

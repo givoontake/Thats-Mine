@@ -64,15 +64,19 @@ bool UBoxLayoutSubsystem::DoesSupportWorldType(const EWorldType::Type world_type
 
 void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 {
-	S2C_BOX_LAYOUT_PACKET packet;
-	const int32 entry_offset = offsetof(S2C_BOX_LAYOUT_PACKET, entries) - sizeof(PACKET_HEADER);
-	if (payload.Num() < entry_offset || payload[0] > MAX_BOX_COUNT || payload.Num() != entry_offset + payload[0] * static_cast<int32>(sizeof(BOX_ENTRY)))
+	// 상자 수 뒤에 상자 항목들이 이어 붙어 있다.
+	const int32 entry_offset = sizeof(S2C_BOX_LAYOUT_PACKET) - sizeof(PACKET_HEADER);
+	uint16 box_count = 0;
+	if (payload.Num() >= entry_offset)
+	{
+		FMemory::Memcpy(&box_count, payload.GetData() + offsetof(S2C_BOX_LAYOUT_PACKET, box_count) - sizeof(PACKET_HEADER), sizeof(box_count));
+	}
+	if (payload.Num() < entry_offset || payload.Num() != entry_offset + box_count * static_cast<int32>(sizeof(BOX_ENTRY)))
 	{
 		UE_LOG(LogBoxLayout, Warning, TEXT("Invalid box layout packet."));
 		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
 		return;
 	}
-	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	UStaticMesh* chest_mesh = LoadObject<UStaticMesh>(nullptr, CHEST_MESH_PATH);
 	UStaticMesh* gift_mesh = LoadObject<UStaticMesh>(nullptr, GIFT_MESH_PATH);
 	if (!chest_mesh || !gift_mesh)
@@ -80,9 +84,10 @@ void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 		UE_LOG(LogBoxLayout, Error, TEXT("Box mesh not found."));
 		return;
 	}
-	for (int32 index = 0; index < packet.box_count; ++index)
+	for (int32 index = 0; index < box_count; ++index)
 	{
-		const BOX_ENTRY& entry = packet.entries[index];
+		BOX_ENTRY entry;
+		FMemory::Memcpy(&entry, payload.GetData() + entry_offset + index * sizeof(BOX_ENTRY), sizeof(entry));
 		const bool is_gift = entry.kind == static_cast<uint8>(BoxKind::GIFT);
 		const FTransform transform(FRotator(entry.rotation[0], entry.rotation[1], entry.rotation[2]), FVector(entry.location[0], entry.location[1], entry.location[2]), FVector(is_gift ? 1.0f : CHEST_SCALE));
 		AHintBox* box = SpawnMeshActor<AHintBox>(GetWorld(), is_gift ? gift_mesh : chest_mesh, transform);

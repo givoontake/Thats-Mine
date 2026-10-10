@@ -40,6 +40,14 @@ void SendBuffer::Reset()
 	wsabuf.buf = packet_buffer;
 }
 
+LargeSendBuffer::LargeSendBuffer(const char* data, int data_size)
+	: packet(data, data + data_size)
+{
+	ex_over.op_type = OPType::LARGE_SEND;
+	wsabuf.len = static_cast<ULONG>(packet.size());
+	wsabuf.buf = packet.data();
+}
+
 SendBufferPool::SendBufferPool()
 {
 	for (auto& send_buffer : send_buffers)

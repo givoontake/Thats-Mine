@@ -54,6 +54,8 @@ public:
 	bool ApplyLoginResult(const DBLoginResult& result);
 	std::string GetNickname() const;
 	bool SendPacket(const char* packet, int packet_size);
+	// BUF_SIZE보다 큰 패킷을 크기에 맞춘 송신 버퍼를 새로 만들어 보낸다.
+	bool SendLargePacket(const char* packet, int packet_size);
 	bool RecvPacket();
 	bool BeginDisconnect(SessionKey session_key);
 	bool CompleteIO(SessionKey session_key);

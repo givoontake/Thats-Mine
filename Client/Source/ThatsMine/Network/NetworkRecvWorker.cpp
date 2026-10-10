@@ -7,7 +7,7 @@
 NetworkRecvWorker::NetworkRecvWorker(NetworkConnection& connection)
 	: connection_(connection)
 {
-	recv_buffer_.Reserve(NetworkLimits::MAX_PACKET_SIZE * 2);
+	recv_buffer_.Reserve(NetworkLimits::MAX_RECV_PACKET_SIZE * 2);
 }
 
 uint32 NetworkRecvWorker::Run()
@@ -70,7 +70,7 @@ bool NetworkRecvWorker::RecvPackets()
 	{
 		const uint8* data = recv_buffer_.GetData() + offset;
 		const int32 packet_size = static_cast<int32>(data[0]) | (static_cast<int32>(data[1]) << 8);
-		if (packet_size < NetworkLimits::HEADER_SIZE || packet_size > NetworkLimits::MAX_PACKET_SIZE)
+		if (packet_size < NetworkLimits::HEADER_SIZE || packet_size > NetworkLimits::MAX_RECV_PACKET_SIZE)
 		{
 			connection_.Stop(TEXT("Invalid packet size."));
 			return false;

@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <vector>
 #include "ExOverlapped.h"
 
 enum class SendBufferState : std::uint8_t
@@ -22,6 +23,17 @@ struct SendBuffer : public IOOverlapped
 
 private:
 	void Reset();
+};
+
+// BUF_SIZE보다 큰 패킷을 보낼 때 패킷 크기에 맞춰 새로 만드는 송신 버퍼. 송신이 끝나면 입출력 스레드가 지운다.
+// 완료 통지로 받은 ExOverlapped 주소를 이 구조체로 바꿔 쓰므로 ex_over가 첫 멤버여야 한다.
+struct LargeSendBuffer
+{
+	ExOverlapped ex_over;
+	WSABUF wsabuf;
+	std::vector<char> packet;
+
+	LargeSendBuffer(const char* data, int data_size);
 };
 
 constexpr int SEND_BUFFER_POOL_SIZE = 5;

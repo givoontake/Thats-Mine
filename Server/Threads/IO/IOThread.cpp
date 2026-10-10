@@ -74,6 +74,14 @@ void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, Ex
 		ProcessSendCompletion(result, transferred_bytes, send_buffer, ex_over->session_key);
 		break;
 
+	case OPType::LARGE_SEND: {
+		const SessionKey session_key = ex_over->session_key;
+		if (!result || transferred_bytes == 0) game_server_.GetSessionManager().RequestDisconnect(session_key);
+		delete reinterpret_cast<LargeSendBuffer*>(ex_over);
+		game_server_.GetSessionManager().CompleteSessionIO(session_key);
+		break;
+	}
+
 	default:
 		break;
 	}

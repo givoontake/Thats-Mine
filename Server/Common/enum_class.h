@@ -3,7 +3,7 @@
 #include "error_code.h"
 #include "info_code.h"
 
-enum class OPType { SEND, POOLED_SEND, RECV, ACCEPT, DB };
+enum class OPType { SEND, POOLED_SEND, LARGE_SEND, RECV, ACCEPT, DB };
 
 
 // LOADING: 게임 레벨을 불러오는 중, LOADED: 로딩을 마치고 스폰을 기다리는 중
