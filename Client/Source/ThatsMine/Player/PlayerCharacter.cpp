@@ -18,6 +18,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Interaction/BoxLayoutSubsystem.h"
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
@@ -230,9 +231,9 @@ void APlayerCharacter::Interact()
 	// 카메라는 목표만 정하고, 실제 거리는 캐릭터 중심에서 최대 1m로 제한한다.
 	if (GetWorld()->LineTraceSingleByChannel(hit, start, start + direction * 100.0, ECC_Visibility, query))
 	{
-		if (AHintBox* box = Cast<AHintBox>(hit.GetActor()))
+		if (const AHintBox* box = Cast<AHintBox>(hit.GetActor()))
 		{
-			box->Activate(false);
+			GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, false, 0);
 		}
 	}
 }
@@ -714,9 +715,9 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	on_shot_fired_.Broadcast(shot);
 	if (shot.has_hit)
 	{
-		if (AHintBox* box = Cast<AHintBox>(shot.hit.GetActor()))
+		if (const AHintBox* box = Cast<AHintBox>(shot.hit.GetActor()))
 		{
-			box->Activate(true);
+			GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, true, static_cast<uint8>(shot.weapon));
 		}
 	}
 }

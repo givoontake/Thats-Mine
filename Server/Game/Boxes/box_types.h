@@ -6,10 +6,12 @@
 #include "game_packets.h"
 
 // 상자 하나를 놓을 자리. 좌표는 언리얼 월드 좌표(cm), 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.
+// location은 상자 바닥 가운데이고, center는 읽을 때 계산해 둔 상자 중심이다.
 struct BoxPlacement {
 	BoxKind kind;
 	DirectX::XMFLOAT3 location;
 	DirectX::XMFLOAT3 rotation;
+	DirectX::XMFLOAT3 center;
 };
 
 // 자연 배치 기준(나무·바위) 하나. 선물 자리와 보물 방향을 함께 가지며, 한 판에 이 중 한 자리만 쓴다.

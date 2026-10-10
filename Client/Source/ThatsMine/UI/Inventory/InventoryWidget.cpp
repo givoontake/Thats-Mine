@@ -187,7 +187,8 @@ void UInventoryWidget::RefreshHints()
 		row_slot->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 5.0f));
 		UHorizontalBox* content = WidgetTree->ConstructWidget<UHorizontalBox>();
 		row->AddChild(content);
-		const FLinearColor grade_color = hint.grade == EHintGrade::A ? FLinearColor(1.0f, 0.64f, 0.17f)
+		const FLinearColor grade_color = hint.grade == EHintGrade::S ? FLinearColor(0.93f, 0.33f, 0.95f)
+			: hint.grade == EHintGrade::A ? FLinearColor(1.0f, 0.64f, 0.17f)
 			: hint.grade == EHintGrade::B ? FLinearColor(0.21f, 0.70f, 0.60f) : FLinearColor(0.65f, 0.65f, 0.65f);
 		USizeBox* badge_size = WidgetTree->ConstructWidget<USizeBox>();
 		badge_size->SetWidthOverride(42.0f);
@@ -201,7 +202,7 @@ void UInventoryWidget::RefreshHints()
 		UTextBlock* grade = WidgetTree->ConstructWidget<UTextBlock>();
 		grade->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 26));
 		grade->SetColorAndOpacity(grade_color);
-		grade->SetText(FText::AsCultureInvariant(hint.grade == EHintGrade::A ? TEXT("A") : hint.grade == EHintGrade::B ? TEXT("B") : TEXT("C")));
+		grade->SetText(FText::AsCultureInvariant(hint.grade == EHintGrade::S ? TEXT("S") : hint.grade == EHintGrade::A ? TEXT("A") : hint.grade == EHintGrade::B ? TEXT("B") : TEXT("C")));
 		badge->AddChild(grade);
 		UTextBlock* text = WidgetTree->ConstructWidget<UTextBlock>();
 		text->SetText(hint.text);

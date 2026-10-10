@@ -17,7 +17,11 @@ class THATSMINE_API AHintBox : public AStaticMeshActor
 
 public:
 	AHintBox();
-	void Activate(bool is_shot);
+	bool IsActivated() const { return is_activated_; }
+	// 서버가 인정한 열림. 선물은 사라지고 나무 상자는 열리는 연출을 재생한다.
+	void Open();
+	// 이미 열린 나무 상자를 연출 없이 열린 모습으로 둔다.
+	void ShowOpened();
 
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type end_play_reason) override;

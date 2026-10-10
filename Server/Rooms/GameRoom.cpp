@@ -299,6 +299,13 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		ProcessHit(*room_player, *reinterpret_cast<C2S_HIT_PACKET*>(packet));
 		break;
 	}
+	case C2S_BOX_OPEN: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
+		ProcessBoxOpen(*room_player, *reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet));
+		break;
+	}
 	case C2S_LOAD_COMPLETE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
@@ -700,15 +707,24 @@ void GameRoom::PlaceBoxes(int player_count)
 	box_placement_indices_ = box_candidates.SelectPlacements(box_hint_indices_.size());
 	// 상자 자리 후보가 모자라 덜 골랐으면 남는 힌트는 넣지 않는다.
 	box_hint_indices_.resize(box_placement_indices_.size());
+	is_box_opened_.assign(box_placement_indices_.size(), false);
+	box_layout_packet_ = BuildBoxLayoutPacket();
+}
+
+// 상자 배치 패킷을 지금 열림 상태로 만든다. 상자 수에 맞춘 크기라 BUF_SIZE보다 클 수 있다.
+std::vector<char> GameRoom::BuildBoxLayoutPacket() const
+{
+	const BoxCandidateData& box_candidates = server_->GetBoxCandidateData();
 	const std::size_t packet_size = sizeof(S2C_BOX_LAYOUT_PACKET) + box_placement_indices_.size() * sizeof(BOX_ENTRY);
 	const S2C_BOX_LAYOUT_PACKET box_layout_p{ { static_cast<std::uint16_t>(packet_size), S2C_BOX_LAYOUT }, static_cast<std::uint16_t>(box_placement_indices_.size()) };
-	box_layout_packet_.resize(packet_size);
-	std::memcpy(box_layout_packet_.data(), &box_layout_p, sizeof(box_layout_p));
+	std::vector<char> packet(packet_size);
+	std::memcpy(packet.data(), &box_layout_p, sizeof(box_layout_p));
 	for (std::size_t index = 0; index < box_placement_indices_.size(); ++index) {
 		const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
-		const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z } };
-		std::memcpy(box_layout_packet_.data() + sizeof(box_layout_p) + index * sizeof(BOX_ENTRY), &entry, sizeof(entry));
+		const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, is_box_opened_[index] };
+		std::memcpy(packet.data() + sizeof(box_layout_p) + index * sizeof(BOX_ENTRY), &entry, sizeof(entry));
 	}
+	return packet;
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
@@ -822,7 +838,13 @@ void GameRoom::ProcessLoadedPlayers()
 			room_player.GetPose().Reset(server_->GetHitboxData());
 			session->SendPacket(reinterpret_cast<char*>(&platform_layout_p_), platform_layout_p_.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&tower_layout_p_), tower_layout_p_.header.size);
-			session->SendLargePacket(box_layout_packet_.data(), static_cast<int>(box_layout_packet_.size()));
+			if (is_game_started_) {
+				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
+				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
+			}
+			else {
+				session->SendLargePacket(box_layout_packet_.data(), static_cast<int>(box_layout_packet_.size()));
+			}
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
@@ -916,6 +938,55 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	DirectX::XMFLOAT3 segment_end;
 	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
 	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, hit.distance - HIT_OCCLUSION_MARGIN)));
+	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
+	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
+	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+}
+
+// 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 그 상자의 힌트를 이어 보낸다.
+void GameRoom::ProcessBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p)
+{
+	if (!is_game_started_ || request_p.box >= is_box_opened_.size() || is_box_opened_[request_p.box] || !CheckBoxOpen(opener, request_p)) return;
+	is_box_opened_[request_p.box] = true;
+
+	S2C_BOX_OPEN_PACKET open_p;
+	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
+	open_p.box = request_p.box;
+	S2C_HINT_PACKET hint_p;
+	hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_HINT };
+	hint_p.hint = hints_[box_hint_indices_[request_p.box]];
+	char opener_buffer[sizeof(open_p) + sizeof(hint_p)];
+	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
+	std::memcpy(opener_buffer + sizeof(open_p), &hint_p, sizeof(hint_p));
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+		if (&room_player == &opener) session->SendPacket(opener_buffer, sizeof(opener_buffer));
+		else session->SendPacket(reinterpret_cast<char*>(&open_p), open_p.header.size);
+	}
+}
+
+// F키로 열면 캡슐 중심에서 상자 중심까지 HINT_BOX_OPEN_DISTANCE 안이어야 한다.
+// 쏴서 열면 선물이어야 하고, 총의 사거리 안이며, 캡슐 중심에서 상자까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않아야 한다.
+bool GameRoom::CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const
+{
+	if (!opener.HasMoveState()) return false;
+	const BoxPlacement& placement = server_->GetBoxCandidateData().GetPlacements()[box_placement_indices_[request_p.box]];
+	const float* location = opener.GetMoveState().location;
+	const DirectX::XMFLOAT3 start(location[0], location[1], location[2]);
+	if (!request_p.is_shot) return std::hypot(placement.center.x - start.x, placement.center.y - start.y, placement.center.z - start.z) <= HINT_BOX_OPEN_DISTANCE;
+
+	const DirectX::XMFLOAT3 target(placement.location.x, placement.location.y, placement.location.z + HINT_BOX_SHOT_TARGET_HEIGHT);
+	const float distance = std::hypot(target.x - start.x, target.y - start.y, target.z - start.z);
+	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(request_p.weapon);
+	if (placement.kind != BoxKind::GIFT || !weapon || !weapon->is_hitscan || distance > weapon->hitscan_distance) return false;
+	if (distance <= HIT_OCCLUSION_MARGIN + HINT_BOX_SHOT_END_MARGIN) return true;
+	const DirectX::XMVECTOR start_v = DirectX::XMLoadFloat3(&start);
+	const DirectX::XMVECTOR direction_v = DirectX::XMVectorScale(DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&target), start_v), 1.0f / distance);
+	DirectX::XMFLOAT3 segment_start;
+	DirectX::XMFLOAT3 segment_end;
+	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(start_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
+	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(start_v, DirectX::XMVectorScale(direction_v, distance - HINT_BOX_SHOT_END_MARGIN)));
 	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
 	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
 	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);

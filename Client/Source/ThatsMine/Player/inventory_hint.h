@@ -6,6 +6,7 @@
 UENUM(BlueprintType)
 enum class EHintGrade : uint8
 {
+	S,
 	A,
 	B,
 	C

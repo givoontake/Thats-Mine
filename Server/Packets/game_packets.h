@@ -177,6 +177,7 @@ struct BOX_ENTRY {
 	std::uint8_t kind;
 	float location[3];
 	float rotation[3];
+	bool is_opened;
 };
 
 // 이번 게임의 상자 배치. 이 구조체 뒤에 box_count개의 BOX_ENTRY가 이어 붙고, 상자 번호는 항목 순서다.
@@ -198,6 +199,26 @@ struct HINT_ENTRY {
 	std::uint8_t detail;
 	bool is_true;
 	std::uint8_t grade;
+};
+
+// 상자를 열려고 한다. 상자 번호는 상자 배치의 항목 순서다. 쏴서 열면 is_shot이 참이고 weapon은 쏜 무기다. 선물만 쏴서 열 수 있다.
+struct C2S_BOX_OPEN_PACKET {
+	PACKET_HEADER header;
+	std::uint16_t box;
+	bool is_shot;
+	std::uint8_t weapon;
+};
+
+// 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보낸다.
+struct S2C_BOX_OPEN_PACKET {
+	PACKET_HEADER header;
+	std::uint16_t box;
+};
+
+// 연 상자에 든 힌트. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다.
+struct S2C_HINT_PACKET {
+	PACKET_HEADER header;
+	HINT_ENTRY hint;
 };
 
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.

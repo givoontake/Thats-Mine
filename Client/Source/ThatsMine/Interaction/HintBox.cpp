@@ -22,10 +22,10 @@ AHintBox::AHintBox()
 	open_effect_ = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Thats_Mine/Effects/Chest/NS_ChestGoldBurst.NS_ChestGoldBurst")));
 }
 
-void AHintBox::Activate(bool is_shot)
+void AHintBox::Open()
 {
 	const bool is_gift = ActorHasTag(TEXT("HintGift"));
-	if (is_activated_ || (is_shot && !is_gift))
+	if (is_activated_)
 	{
 		return;
 	}
@@ -56,6 +56,12 @@ void AHintBox::Activate(bool is_shot)
 	animated_mesh_->PlayAnimation(open_animation_, false);
 	animated_mesh_->SetPlayRate(open_animation_->GetPlayLength() / OPEN_DURATION);
 	GetWorldTimerManager().SetTimer(open_timer_, this, &AHintBox::FinishOpening, OPEN_DURATION, false);
+}
+
+void AHintBox::ShowOpened()
+{
+	is_activated_ = true;
+	GetStaticMeshComponent()->SetStaticMesh(open_mesh_);
 }
 
 void AHintBox::FinishOpening()

@@ -97,9 +97,11 @@ private:
 	std::vector<TowerPlacement> tower_placements_;
 	S2C_TOWER_LAYOUT_PACKET tower_layout_p_{};
 	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 상자 번호는 이 목록의 순서다.
-	// 패킷은 상자 수에 맞춘 크기로 만들어 두고 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	// 패킷은 모두 닫힌 상태로 만들어 두고, 게임 시작 전에 로딩을 마친 플레이어에게 발판 배치 패킷과 함께 보낸다. 시작 뒤에 들어온 플레이어에게는 그때 열림 상태로 새로 만들어 보낸다.
 	std::vector<std::uint32_t> box_placement_indices_;
 	std::vector<char> box_layout_packet_;
+	// 상자마다 열렸는지. 상자 번호 순서다.
+	std::vector<bool> is_box_opened_;
 	// 게임 시작 때 정한 최종 보물 배치
 	TreasurePlacement treasure_placement_{};
 	// 게임 시작 때 최종 보물 위치로 만든 이번 게임의 힌트 목록
@@ -126,12 +128,15 @@ private:
 	void ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p);
 	void AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
+	void ProcessBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
+	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
 	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;
 	void RollbackMove(Player& player, Session& session);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
 	void GenerateHints();
 	void PlaceBoxes(int player_count);
+	std::vector<char> BuildBoxLayoutPacket() const;
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환
 	void TogglePlayerReady(int player_id);

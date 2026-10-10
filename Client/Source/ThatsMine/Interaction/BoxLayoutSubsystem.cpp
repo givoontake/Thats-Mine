@@ -39,7 +39,8 @@ void UBoxLayoutSubsystem::OnWorldBeginPlay(UWorld& world)
 		return;
 	}
 	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
-	is_active_ = network->RegisterPacketHandler(S2C_BOX_LAYOUT, FNetworkPacketHandler::CreateUObject(this, &UBoxLayoutSubsystem::HandleBoxLayoutPacket));
+	is_active_ = network->RegisterPacketHandler(S2C_BOX_LAYOUT, FNetworkPacketHandler::CreateUObject(this, &UBoxLayoutSubsystem::HandleBoxLayoutPacket))
+		&& network->RegisterPacketHandler(S2C_BOX_OPEN, FNetworkPacketHandler::CreateUObject(this, &UBoxLayoutSubsystem::HandleBoxOpenPacket));
 }
 
 void UBoxLayoutSubsystem::Deinitialize()
@@ -51,6 +52,7 @@ void UBoxLayoutSubsystem::Deinitialize()
 		if (UGameNetworkSubsystem* network = game_instance ? game_instance->GetSubsystem<UGameNetworkSubsystem>() : nullptr)
 		{
 			network->UnregisterPacketHandler(S2C_BOX_LAYOUT);
+			network->UnregisterPacketHandler(S2C_BOX_OPEN);
 		}
 		is_active_ = false;
 	}
@@ -89,8 +91,52 @@ void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 		BOX_ENTRY entry;
 		FMemory::Memcpy(&entry, payload.GetData() + entry_offset + index * sizeof(BOX_ENTRY), sizeof(entry));
 		const bool is_gift = entry.kind == static_cast<uint8>(BoxKind::GIFT);
+		// 이미 열린 선물은 사라진 상자라 만들지 않는다.
+		if (is_gift && entry.is_opened)
+		{
+			boxes_.Add(nullptr);
+			continue;
+		}
 		const FTransform transform(FRotator(entry.rotation[0], entry.rotation[1], entry.rotation[2]), FVector(entry.location[0], entry.location[1], entry.location[2]), FVector(is_gift ? 1.0f : CHEST_SCALE));
 		AHintBox* box = SpawnMeshActor<AHintBox>(GetWorld(), is_gift ? gift_mesh : chest_mesh, transform);
 		box->Tags = { TEXT("HintBox"), is_gift ? TEXT("HintGift") : TEXT("HintTreasure") };
+		if (entry.is_opened)
+		{
+			box->ShowOpened();
+		}
+		boxes_.Add(box);
+	}
+}
+
+void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box, bool is_shot, uint8 weapon) const
+{
+	const int32 box_index = boxes_.IndexOfByKey(box);
+	if (!is_active_ || box_index == INDEX_NONE || box->IsActivated() || (is_shot && !box->ActorHasTag(TEXT("HintGift"))))
+	{
+		return;
+	}
+	C2S_BOX_OPEN_PACKET packet{};
+	packet.box = static_cast<uint16>(box_index);
+	packet.is_shot = is_shot;
+	packet.weapon = weapon;
+	TArray<uint8> payload;
+	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BOX_OPEN, payload);
+}
+
+// 서버가 인정한 상자 열림. 플레이 중인 방 전체가 받는다.
+void UBoxLayoutSubsystem::HandleBoxOpenPacket(const TArray<uint8>& payload)
+{
+	S2C_BOX_OPEN_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogBoxLayout, Warning, TEXT("Invalid box open packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (boxes_.IsValidIndex(packet.box) && boxes_[packet.box])
+	{
+		boxes_[packet.box]->Open();
 	}
 }

@@ -47,4 +47,7 @@ constexpr std::uint8_t C2S_MOVE_CORRECTION_ACK = 75;
 constexpr std::uint8_t S2C_PLATFORM_LAYOUT = 76;
 constexpr std::uint8_t S2C_BOX_LAYOUT = 77;
 constexpr std::uint8_t S2C_TOWER_LAYOUT = 78;
+constexpr std::uint8_t C2S_BOX_OPEN = 79;
+constexpr std::uint8_t S2C_BOX_OPEN = 80;
+constexpr std::uint8_t S2C_HINT = 81;
 constexpr std::uint8_t S2C_INFO = 100;

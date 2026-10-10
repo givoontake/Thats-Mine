@@ -1,5 +1,6 @@
 #include "BoxCandidateData.h"
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -25,6 +26,18 @@ static std::optional<BoxKind> ParseBoxKind(const std::string& text)
 	return std::nullopt;
 }
 
+// 상자 중심. 바닥 가운데에서 땅 기울기에 맞춰 기운 상자의 위쪽 축으로 종류별 중심 높이만큼 올린 곳이다.
+static DirectX::XMFLOAT3 ComputeBoxCenter(const BoxPlacement& placement)
+{
+	// 언리얼 회전(pitch, yaw, roll)의 위쪽 축
+	const float sp = std::sin(DirectX::XMConvertToRadians(placement.rotation.x)), cp = std::cos(DirectX::XMConvertToRadians(placement.rotation.x));
+	const float sy = std::sin(DirectX::XMConvertToRadians(placement.rotation.y)), cy = std::cos(DirectX::XMConvertToRadians(placement.rotation.y));
+	const float sr = std::sin(DirectX::XMConvertToRadians(placement.rotation.z)), cr = std::cos(DirectX::XMConvertToRadians(placement.rotation.z));
+	const DirectX::XMFLOAT3 up(-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp);
+	const float center_height = HINT_BOX_CENTER_HEIGHTS[static_cast<std::size_t>(placement.kind)];
+	return { placement.location.x + up.x * center_height, placement.location.y + up.y * center_height, placement.location.z + up.z * center_height };
+}
+
 // 줄: 기준번호 기준x 기준y 종류 x y z pitch yaw roll. 같은 기준번호의 줄은 이어서 나온다.
 bool BoxCandidateData::LoadAnchors(const std::string& file_path)
 {
@@ -48,6 +61,7 @@ bool BoxCandidateData::LoadAnchors(const std::string& file_path)
 		const std::optional<BoxKind> kind = ParseBoxKind(kind_text);
 		if (!stream || !kind) return false;
 		placement.kind = *kind;
+		placement.center = ComputeBoxCenter(placement);
 
 		if (anchor != last_anchor)
 		{
@@ -80,6 +94,7 @@ bool BoxCandidateData::LoadGroups(const std::string& file_path)
 		const std::optional<BoxKind> kind = ParseBoxKind(kind_text);
 		if (!stream || !kind) return false;
 		placement.kind = *kind;
+		placement.center = ComputeBoxCenter(placement);
 
 		if (groups_.empty() || groups_.back().name != group_name) groups_.push_back({ group_name, {} });
 		groups_.back().placement_indices.push_back(static_cast<std::uint32_t>(placements_.size()));
