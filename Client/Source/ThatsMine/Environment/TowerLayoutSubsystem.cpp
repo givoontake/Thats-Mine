@@ -45,8 +45,8 @@ bool UTowerLayoutSubsystem::DoesSupportWorldType(const EWorldType::Type world_ty
 void UTowerLayoutSubsystem::HandleTowerLayoutPacket(const TArray<uint8>& payload)
 {
 	S2C_TOWER_LAYOUT_PACKET packet;
-	const int32 location_offset = offsetof(S2C_TOWER_LAYOUT_PACKET, locations) - sizeof(PACKET_HEADER);
-	if (payload.Num() < location_offset || payload[0] > TOWER_COUNT || payload.Num() != location_offset + payload[0] * static_cast<int32>(sizeof(packet.locations[0])))
+	const int32 entry_offset = offsetof(S2C_TOWER_LAYOUT_PACKET, entries) - sizeof(PACKET_HEADER);
+	if (payload.Num() < entry_offset || payload[0] > TOWER_COUNT || payload.Num() != entry_offset + payload[0] * static_cast<int32>(sizeof(TOWER_ENTRY)))
 	{
 		UE_LOG(LogTowerLayout, Warning, TEXT("Invalid tower layout packet."));
 		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
@@ -55,11 +55,20 @@ void UTowerLayoutSubsystem::HandleTowerLayoutPacket(const TArray<uint8>& payload
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	for (int32 index = 0; index < packet.tower_count; ++index)
 	{
-		const float* location = packet.locations[index];
-		ATower* tower = GetWorld()->SpawnActor<ATower>(FVector(location[0], location[1], location[2]), FRotator::ZeroRotator);
+		const TOWER_ENTRY& entry = packet.entries[index];
+		if (entry.kind >= TOWER_KIND_COUNT)
+		{
+			UE_LOG(LogTowerLayout, Warning, TEXT("Invalid tower layout packet."));
+			GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+			return;
+		}
+		const FTransform transform(FVector(entry.location[0], entry.location[1], entry.location[2]));
+		ATower* tower = GetWorld()->SpawnActorDeferred<ATower>(ATower::StaticClass(), transform);
 		if (tower)
 		{
+			tower->SetKind(static_cast<TowerKind>(entry.kind));
 			tower->Tags = { TEXT("Tower") };
+			tower->FinishSpawning(transform);
 		}
 	}
 }

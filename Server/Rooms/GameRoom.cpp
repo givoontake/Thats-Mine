@@ -596,19 +596,22 @@ void GameRoom::StartGame(int requester_id)
 	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
 		if (platform_layout_[index]) platform_layout_p_.spawned_bits[index / 8] |= static_cast<std::uint8_t>(1 << (index % 8));
 	}
-	// 이번 게임의 탑 자리를 후보 중에서 고르게 퍼뜨려 고른다. 보물은 놓인 탑을 피한다.
+	// 이번 게임의 탑 자리를 후보 중에서 고르게 퍼뜨려 고른다. 고른 순서대로 종류를 번갈아 정해 종류마다 고르게 퍼지게 한다. 보물은 놓인 탑을 피한다.
 	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
-	tower_indices_ = SelectSpreadIndices(tower_candidates, TOWER_COUNT, TOWER_MIN_DISTANCE);
+	const std::vector<std::size_t> tower_indices = SelectSpreadIndices(tower_candidates, TOWER_COUNT, TOWER_MIN_DISTANCE);
+	tower_placements_.clear();
 	tower_layout_p_ = {};
-	for (const std::size_t index : tower_indices_) {
-		const DirectX::XMFLOAT3& location = tower_candidates[index];
-		float* entry = tower_layout_p_.locations[tower_layout_p_.tower_count++];
-		entry[0] = location.x;
-		entry[1] = location.y;
-		entry[2] = location.z;
+	for (std::size_t order = 0; order < tower_indices.size(); ++order) {
+		const TowerPlacement& placement = tower_placements_.emplace_back(TowerPlacement{ tower_indices[order], static_cast<TowerKind>(order % TOWER_KIND_COUNT) });
+		const DirectX::XMFLOAT3& location = tower_candidates[placement.candidate_index];
+		TOWER_ENTRY& entry = tower_layout_p_.entries[tower_layout_p_.tower_count++];
+		entry.kind = static_cast<std::uint8_t>(placement.kind);
+		entry.location[0] = location.x;
+		entry.location[1] = location.y;
+		entry.location[2] = location.z;
 	}
-	tower_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_TOWER_LAYOUT_PACKET, locations) + tower_layout_p_.tower_count * sizeof(tower_layout_p_.locations[0])), S2C_TOWER_LAYOUT };
-	placed_objects_ = server_->GetMapData().GetCollisionObjects().CollectPlacedObjects(platform_layout_, tower_indices_);
+	tower_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_TOWER_LAYOUT_PACKET, entries) + tower_layout_p_.tower_count * sizeof(TOWER_ENTRY)), S2C_TOWER_LAYOUT };
+	placed_objects_ = server_->GetMapData().GetCollisionObjects().CollectPlacedObjects(platform_layout_, tower_placements_);
 	// 이번 게임의 상자 자리를 정해 둔다. 상자 번호는 배치 패킷의 항목 순서다.
 	const BoxCandidateData& box_candidates = server_->GetBoxCandidateData();
 	box_placement_indices_ = box_candidates.SelectPlacements();

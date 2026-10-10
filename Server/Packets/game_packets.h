@@ -10,6 +10,9 @@ enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT 
 // 상자 종류. 서버 후보 데이터와 상자 배치 패킷이 같은 값을 쓴다.
 enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 
+// 탑 종류. 값은 0부터 TOWER_KIND_COUNT - 1까지이고, 서버 충돌 배치물과 탑 배치 패킷이 같은 값을 쓴다.
+enum class TowerKind : std::uint8_t { TOWER_02, TOWER_04 };
+
 #pragma pack(push, 1)
 
 // 이동 상태. 위치·속도는 cm, 방향은 도 단위이고, 이동 입력은 -127~127로 줄여 담는다.
@@ -159,11 +162,17 @@ struct S2C_BOX_LAYOUT_PACKET {
 	BOX_ENTRY entries[MAX_BOX_COUNT];
 };
 
-// 이번 게임의 탑 위치. 실제 크기는 tower_count개의 위치까지이고, 위치는 탑 바닥 가운데(cm)다. 기초는 클라이언트가 탑 아래에 붙인다.
+// 탑 하나. 위치는 탑 바닥 가운데(cm)다.
+struct TOWER_ENTRY {
+	std::uint8_t kind;
+	float location[3];
+};
+
+// 이번 게임의 탑 배치. 실제 크기는 tower_count개의 항목까지다. 기초는 클라이언트가 탑 아래에 붙인다.
 struct S2C_TOWER_LAYOUT_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t tower_count;
-	float locations[TOWER_COUNT][3];
+	TOWER_ENTRY entries[TOWER_COUNT];
 };
 
 #pragma pack(pop)

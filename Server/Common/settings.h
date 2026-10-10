@@ -34,9 +34,11 @@ constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평
 constexpr int MAX_BOX_COUNT = 64; // 한 판의 상자 수 상한(상자 배치 패킷 크기). 유적 상자 최대 13개와 자연 상자 수를 합친 값보다 커야 한다.
 static_assert(NATURAL_BOX_COUNT + 13 <= MAX_BOX_COUNT, "MAX_BOX_COUNT must hold all boxes.");
 
-// 탑 배치. 게임 시작 때 탑 후보 자리(tower_candidates.txt) 중 TOWER_COUNT곳을 미첼 최적 후보 방식으로 고른다.
-// 탑(SM_tower_04)은 후보 자리의 높이(바닥에서 가장 높은 땅)에 놓고, 그 아래에 기초(SM_tower_foundation_03)를 붙여 땅까지 채운다.
-constexpr int TOWER_COUNT = 20;
+// 탑 배치. 게임 시작 때 탑 후보 자리(tower_candidates.txt) 중 TOWER_COUNT곳을 미첼 최적 후보 방식으로 고르고, 고른 순서대로 종류를 번갈아 정한다.
+// 탑(SM_tower_02, SM_tower_04)은 후보 자리의 높이(바닥에서 가장 높은 땅)에 놓고, 그 아래에 기초(SM_tower_foundation_03)를 붙여 땅까지 채운다.
+constexpr int TOWER_KIND_COUNT = 2;
+constexpr int TOWER_COUNT_PER_KIND = 10; // 종류마다 놓는 탑 수
+constexpr int TOWER_COUNT = TOWER_KIND_COUNT * TOWER_COUNT_PER_KIND;
 constexpr float TOWER_MIN_DISTANCE = 10000.0f; // 탑끼리 최소 수평 거리(cm)
 constexpr float TOWER_FOUNDATION_HEIGHT = 1565.0f; // 기초 높이(cm). 기초 바닥은 탑 바닥보다 이만큼 아래다.
 constexpr float TOWER_FOUNDATION_WIDTH_SCALE = 1.41f; // 기초 가로·세로 배율. 탑 아래 돌 받침 폭에 맞춘다.

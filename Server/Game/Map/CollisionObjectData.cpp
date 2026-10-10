@@ -14,7 +14,7 @@
 using namespace DirectX;
 
 // 탑과 기초의 충돌 모양 원본 이름. 동양 유적이 같은 메시를 써서 맵 데이터 파일에 들어 있다.
-constexpr const char* TOWER_SOURCE_NAME = "SM_tower_04";
+constexpr const char* TOWER_SOURCE_NAMES[TOWER_KIND_COUNT] = { "SM_tower_02", "SM_tower_04" }; // TowerKind 순서
 constexpr const char* TOWER_FOUNDATION_SOURCE_NAME = "SM_tower_foundation_03";
 // 배치물 공간 격자 한 칸의 크기(cm). 가로나 세로가 LARGE_OBJECT_SIZE보다 큰 배치물은 격자에 넣지 않는다.
 constexpr float GRID_CELL_SIZE = 1600.0f;
@@ -413,21 +413,27 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 		object.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
 	}
 
-	// 탑 후보. 후보 자리마다 탑과 기초를 만들어 두고 검사할 때 방이 넘긴 놓인 번호만 본다. 기초는 탑 바닥 바로 아래에 가로·세로를 넓혀 붙인다.
+	// 탑 후보. 후보 자리마다 종류별 탑과 기초를 만들어 두고 검사할 때 방이 넘긴 놓인 번호만 본다. 기초는 탑 바닥 바로 아래에 가로·세로를 넓혀 붙인다.
 	first_tower_object_ = static_cast<std::uint32_t>(candidate_objects_.size());
 	if (!tower_candidates.empty()) {
-		const TerrainSource* tower_source = FindSource(TOWER_SOURCE_NAME);
+		const TerrainSource* tower_sources[TOWER_KIND_COUNT];
+		for (int kind = 0; kind < TOWER_KIND_COUNT; ++kind) {
+			tower_sources[kind] = FindSource(TOWER_SOURCE_NAMES[kind]);
+			if (!tower_sources[kind]) return false;
+		}
 		const TerrainSource* foundation_source = FindSource(TOWER_FOUNDATION_SOURCE_NAME);
-		if (!tower_source || !foundation_source) return false;
+		if (!foundation_source) return false;
 		const XMFLOAT4 no_rotation{ 0.0f, 0.0f, 0.0f, 1.0f };
 		const XMFLOAT3 tower_scale{ 1.0f, 1.0f, 1.0f };
 		const XMFLOAT3 foundation_scale{ TOWER_FOUNDATION_WIDTH_SCALE, TOWER_FOUNDATION_WIDTH_SCALE, 1.0f };
 		for (std::size_t index = 0; index < tower_candidates.size(); ++index) {
 			const XMFLOAT3& location = tower_candidates[index];
-			TerrainObject& tower = candidate_objects_.emplace_back();
-			tower.source = static_cast<std::uint32_t>(tower_source - sources_.data());
-			tower.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
-			build_object(tower, XMMatrixTranslation(location.x, location.y, location.z), no_rotation, tower_scale);
+			for (const TerrainSource* tower_source : tower_sources) {
+				TerrainObject& tower = candidate_objects_.emplace_back();
+				tower.source = static_cast<std::uint32_t>(tower_source - sources_.data());
+				tower.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
+				build_object(tower, XMMatrixTranslation(location.x, location.y, location.z), no_rotation, tower_scale);
+			}
 			TerrainObject& foundation = candidate_objects_.emplace_back();
 			foundation.source = static_cast<std::uint32_t>(foundation_source - sources_.data());
 			foundation.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
@@ -571,18 +577,19 @@ bool CollisionObjectData::IsSegmentBlockedByObject(const TerrainObject& object, 
 	return false;
 }
 
-// 발판 후보는 자리 번호와 같은 번호이고, 탑 후보 i는 탑과 기초 두 개다.
-std::vector<std::uint32_t> CollisionObjectData::CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<std::size_t>& tower_indices) const
+// 발판 후보는 자리 번호와 같은 번호이고, 탑 후보 i는 종류별 탑과 기초다. 놓인 종류의 탑과 기초만 넣는다.
+std::vector<std::uint32_t> CollisionObjectData::CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<TowerPlacement>& tower_placements) const
 {
 	std::vector<std::uint32_t> placed_objects;
 	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
 		if (platform_layout[index]) placed_objects.push_back(static_cast<std::uint32_t>(index));
 	}
-	for (const std::size_t index : tower_indices) {
-		const std::uint32_t tower = first_tower_object_ + static_cast<std::uint32_t>(index) * 2;
-		if (tower + 1 >= candidate_objects_.size()) continue;
-		placed_objects.push_back(tower);
-		placed_objects.push_back(tower + 1);
+	for (const TowerPlacement& placement : tower_placements) {
+		const std::uint32_t first = first_tower_object_ + static_cast<std::uint32_t>(placement.candidate_index) * (TOWER_KIND_COUNT + 1);
+		const std::uint32_t foundation = first + TOWER_KIND_COUNT;
+		if (foundation >= candidate_objects_.size()) continue;
+		placed_objects.push_back(first + static_cast<std::uint32_t>(placement.kind));
+		placed_objects.push_back(foundation);
 	}
 	return placed_objects;
 }

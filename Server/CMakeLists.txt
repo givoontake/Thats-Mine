@@ -95,6 +95,7 @@ add_executable(GameServer
     Game/Regions/MapRegionData.h
     Game/Regions/region_types.h
     Game/Towers/TowerCandidateData.h
+    Game/Towers/tower_types.h
     Game/Treasure/treasure_types.h
     Lobby/lobby_tasks.h
     Lobby/LoginManager.h

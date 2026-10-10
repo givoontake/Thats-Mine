@@ -11,6 +11,7 @@
 #include "Player.h"
 #include "box_types.h"
 #include "platform_layout.h"
+#include "tower_types.h"
 #include "treasure_types.h"
 class Session;
 
@@ -92,8 +93,8 @@ private:
 	std::vector<std::uint32_t> placed_objects_;
 	// 발판 배치를 담은 패킷. 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
 	S2C_PLATFORM_LAYOUT_PACKET platform_layout_p_{};
-	// 게임 시작 때 고른 탑 후보 번호와, 그 탑 위치를 담은 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
-	std::vector<std::size_t> tower_indices_;
+	// 게임 시작 때 고른 탑 후보 번호·종류와, 그 탑 배치를 담은 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	std::vector<TowerPlacement> tower_placements_;
 	S2C_TOWER_LAYOUT_PACKET tower_layout_p_{};
 	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
 	std::vector<std::uint32_t> box_placement_indices_;

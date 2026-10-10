@@ -4,6 +4,7 @@
 #include <vector>
 #include "terrain_types.h"
 #include "platform_layout.h"
+#include "tower_types.h"
 
 class MapFileReader;
 
@@ -15,9 +16,10 @@ class CollisionObjectData
 	std::vector<TerrainSource> sources_;
 	// 맵 배치. 원본 순서로 줄 세워 같은 메시 배치가 이어지게 두고, 원본마다 자기 구간(시작 번호·개수)을 갖는다.
 	std::vector<TerrainObject> objects_;
-	// 판마다 놓이는 배치물 후보. 발판 자리 순서대로 발판, 그 뒤에 탑 후보마다 탑과 기초가 이어진다. 공간 격자에는 넣지 않는다.
+	// 판마다 놓이는 배치물 후보. 발판 자리 순서대로 발판, 그 뒤에 탑 후보마다 종류별 탑과 기초가 이어진다. 공간 격자에는 넣지 않는다.
 	std::vector<TerrainObject> candidate_objects_;
-	std::uint32_t first_tower_object_ = 0; // 탑 후보 i의 탑은 candidate_objects_[first_tower_object_ + 2i], 기초는 그 다음이다.
+	// 탑 후보 i의 종류 k 탑은 candidate_objects_[first_tower_object_ + i * (TOWER_KIND_COUNT + 1) + k], 기초는 종류별 탑 다음이다.
+	std::uint32_t first_tower_object_ = 0;
 	std::vector<TerrainWorldCapsule> object_capsules_;
 	// 배치물 공간 격자. 칸마다 겹치는 배치 번호를 cell_objects_에 이어 담고, 칸 c의 목록은 cell_starts_[c]부터 cell_starts_[c + 1] 전까지다.
 	// 격자보다 큰 배치물은 칸에 넣지 않고 large_objects_에 두어 매번 본다.
@@ -36,7 +38,7 @@ class CollisionObjectData
 
 public:
 	// 맵 파일의 충돌 모양 원본과 배치 부분을 읽는다.
-	// tower_candidates: 탑 후보마다 탑 바닥 가운데 위치. 후보마다 탑과 기초 배치를 넣는다.
+	// tower_candidates: 탑 후보마다 탑 바닥 가운데 위치. 후보마다 종류별 탑과 기초 배치를 넣는다.
 	bool Load(MapFileReader& reader, const std::vector<DirectX::XMFLOAT3>& tower_candidates);
 	bool IsLoaded() const { return is_loaded_; }
 	// 이름이 name인 충돌 모양 원본. 원본의 first_object, object_count가 그 메시 배치 구간이다. 없으면 nullptr이다.
@@ -44,7 +46,7 @@ public:
 	// 맵 배치의 월드 위치(메시 기준 원점 위치, cm)
 	DirectX::XMFLOAT3 GetObjectLocation(std::uint32_t index) const;
 	// 이번 게임에 놓인 발판·탑의 후보 배치물 번호 목록을 만든다. 방이 게임 시작 때 한 번 만들어 검사 함수에 넘긴다.
-	std::vector<std::uint32_t> CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<std::size_t>& tower_indices) const;
+	std::vector<std::uint32_t> CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<TowerPlacement>& tower_placements) const;
 	// 선분이 flag 채널을 막는 배치물(건물·나무·바위·경계 볼륨·발판·탑)에 닿는지 본다. 좌표는 언리얼 월드 좌표(cm)다.
 	// 발판·탑은 placed_objects(놓인 후보 배치물 번호)만 본다.
 	bool IsSegmentBlockedByObjects(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const;
