@@ -53,6 +53,7 @@ private:
 	static constexpr double MAX_ZOOM = 4.0;
 	static constexpr double WHEEL_ZOOM_FACTOR = 1.2;
 	static constexpr double ZOOM_SPEED = 18.0;
+	static constexpr float EXCLUSION_SHADE_OPACITY = 0.3f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanel> map_canvas_;
@@ -62,6 +63,13 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMapPlayerMarkerWidget> player_marker_;
+
+	// 힌트로 배제한 곳을 어둡게 덮는 이미지 하나. 배제 칸은 불투명, 나머지는 투명한 텍스처를 반투명 검정으로 그려 어느 곳이든 한 번만 어두워진다.
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> exclusion_image_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> exclusion_texture_;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextBlock>> place_labels_;
@@ -76,6 +84,8 @@ private:
 	void ChangeZoom(float wheel_delta, const FVector2D& anchor);
 	void UpdateMap();
 	void UpdatePlayerMarker();
+	// 힌트 서브시스템의 배제 칸으로 텍스처를 다시 만든다.
+	void UpdateExclusionTexture();
 
 	void ResetView();
 

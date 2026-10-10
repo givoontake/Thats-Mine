@@ -26,7 +26,9 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 		return;
 	}
 	LoadTexts();
-	is_active_ = game_instance->GetSubsystem<UGameNetworkSubsystem>()->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket));
+	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
+	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
+		&& network->RegisterPacketHandler(S2C_HINT_EXCLUSION, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionPacket));
 }
 
 void UHintSubsystem::Deinitialize()
@@ -38,6 +40,7 @@ void UHintSubsystem::Deinitialize()
 		if (UGameNetworkSubsystem* network = game_instance ? game_instance->GetSubsystem<UGameNetworkSubsystem>() : nullptr)
 		{
 			network->UnregisterPacketHandler(S2C_HINT);
+			network->UnregisterPacketHandler(S2C_HINT_EXCLUSION);
 		}
 		is_active_ = false;
 	}
@@ -122,4 +125,43 @@ void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
 	hint.grade = static_cast<EHintGrade>(packet.hint.grade);
 	hint.text = FText::FromString(BuildSentence(packet.hint));
 	character->AddHint(hint);
+}
+
+// 방향 힌트가 배제하는 영역. 칸 가운데가 경계선보다 배제 방위 쪽이면 그 칸을 배제한다. 북쪽은 x가 작은 쪽, 동쪽은 y가 작은 쪽이다.
+void UHintSubsystem::HandleExclusionPacket(const TArray<uint8>& payload)
+{
+	S2C_HINT_EXCLUSION_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogHint, Warning, TEXT("Invalid hint exclusion packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const HintDirection direction = static_cast<HintDirection>(packet.direction);
+	if (packet.direction >= static_cast<uint8>(HintDirection::COUNT))
+	{
+		return;
+	}
+	if (exclusion_mask_.IsEmpty())
+	{
+		exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
+	}
+	for (int32 row = 0; row < EXCLUSION_MASK_SIZE; ++row)
+	{
+		const double x = MAP_MIN[0] + (row + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[0] - MAP_MIN[0]);
+		for (int32 column = 0; column < EXCLUSION_MASK_SIZE; ++column)
+		{
+			const double y = MAP_MAX[1] - (column + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[1] - MAP_MIN[1]);
+			const bool is_excluded = direction == HintDirection::NORTH ? x < packet.boundary
+				: direction == HintDirection::SOUTH ? x > packet.boundary
+				: direction == HintDirection::EAST ? y < packet.boundary
+				: y > packet.boundary;
+			if (is_excluded)
+			{
+				exclusion_mask_[row * EXCLUSION_MASK_SIZE + column] = 1;
+			}
+		}
+	}
+	on_exclusion_mask_changed_.Broadcast();
 }

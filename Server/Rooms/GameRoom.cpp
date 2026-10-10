@@ -997,7 +997,7 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
 	open_p.box = request_p.box;
-	char opener_buffer[sizeof(open_p) + std::max(sizeof(S2C_HINT_PACKET), sizeof(S2C_AMMO_PACKET))];
+	char opener_buffer[sizeof(open_p) + std::max(sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET), sizeof(S2C_AMMO_PACKET))];
 	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
 	int opener_size = sizeof(open_p);
 	const BoxContent& content = box_contents_[request_p.box];
@@ -1007,6 +1007,17 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 		hint_p.hint = hints_[content.value];
 		std::memcpy(opener_buffer + opener_size, &hint_p, sizeof(hint_p));
 		opener_size += sizeof(hint_p);
+		// 방향 힌트는 지도에서 배제할 영역을 이어 보낸다. "있다"면 반대 방위 쪽, "없다"면 그 방위 쪽이 배제된다.
+		const HINT_ENTRY& hint = hint_p.hint;
+		const std::optional<float> boundary = hint.kind == static_cast<std::uint8_t>(HintKind::DIRECTION) ? server_->GetDirectionHintData().FindBoundary(hint.target, static_cast<HintDirection>(hint.detail)) : std::nullopt;
+		if (boundary) {
+			S2C_HINT_EXCLUSION_PACKET exclusion_p;
+			exclusion_p.header = { static_cast<std::uint16_t>(sizeof(exclusion_p)), S2C_HINT_EXCLUSION };
+			exclusion_p.direction = static_cast<std::uint8_t>(hint.is_true ? (hint.detail + 2) % static_cast<int>(HintDirection::COUNT) : hint.detail);
+			exclusion_p.boundary = *boundary;
+			std::memcpy(opener_buffer + opener_size, &exclusion_p, sizeof(exclusion_p));
+			opener_size += sizeof(exclusion_p);
+		}
 	}
 	else {
 		const std::uint8_t weapon = static_cast<std::uint8_t>(content.value);

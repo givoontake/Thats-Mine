@@ -10,6 +10,8 @@
 #include "Engine/Texture2D.h"
 #include "GameFramework/Pawn.h"
 #include "InputCoreTypes.h"
+#include "Interaction/HintSubsystem.h"
+#include "settings.h"
 
 UWorldMapWidget::UWorldMapWidget(const FObjectInitializer& object_initializer)
 	: Super(object_initializer)
@@ -53,6 +55,10 @@ TSharedRef<SWidget> UWorldMapWidget::RebuildWidget()
 		map_image_->SetBrushFromTexture(map_texture_.LoadSynchronous());
 		map_image_->SetVisibility(ESlateVisibility::HitTestInvisible);
 		map_canvas_->AddChildToCanvas(map_image_)->SetSize(FVector2D(MAP_SIZE, MAP_SIZE));
+		exclusion_image_ = WidgetTree->ConstructWidget<UImage>();
+		exclusion_image_->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, EXCLUSION_SHADE_OPACITY));
+		exclusion_image_->SetVisibility(ESlateVisibility::Collapsed);
+		map_canvas_->AddChildToCanvas(exclusion_image_);
 		for (const FMapPlace& place : places_)
 		{
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
@@ -86,12 +92,21 @@ TSharedRef<SWidget> UWorldMapWidget::RebuildWidget()
 void UWorldMapWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	if (UHintSubsystem* hints = GetWorld()->GetSubsystem<UHintSubsystem>())
+	{
+		hints->on_exclusion_mask_changed_.AddUObject(this, &UWorldMapWidget::UpdateExclusionTexture);
+	}
+	UpdateExclusionTexture();
 	ResetView();
 }
 
 void UWorldMapWidget::NativeDestruct()
 {
 	is_dragging_ = false;
+	if (UHintSubsystem* hints = GetWorld() ? GetWorld()->GetSubsystem<UHintSubsystem>() : nullptr)
+	{
+		hints->on_exclusion_mask_changed_.RemoveAll(this);
+	}
 	Super::NativeDestruct();
 }
 
@@ -162,7 +177,39 @@ void UWorldMapWidget::UpdateMap()
 		// 최대 크기의 글자를 연속 배율로 그려 정수 글꼴 크기 변경에 따른 튐을 없앤다.
 		place_labels_[index]->SetRenderScale(FVector2D(zoom_ / MAX_ZOOM, zoom_ / MAX_ZOOM));
 	}
+	// 배제 텍스처는 지도 범위(MAP_MIN~MAP_MAX)를 덮으므로 지도 촬영 경계 안에서 그 자리에 둔다.
+	const FVector2D world_size = world_max_ - world_min_;
+	const FVector2D mask_min((world_max_.Y - MAP_MAX[1]) / world_size.Y, (MAP_MIN[0] - world_min_.X) / world_size.X);
+	const FVector2D mask_max((world_max_.Y - MAP_MIN[1]) / world_size.Y, (MAP_MAX[0] - world_min_.X) / world_size.X);
+	UCanvasPanelSlot* exclusion_slot = CastChecked<UCanvasPanelSlot>(exclusion_image_->Slot);
+	exclusion_slot->SetPosition(mask_min * MAP_SIZE * zoom_ + pan_);
+	exclusion_slot->SetSize((mask_max - mask_min) * MAP_SIZE * zoom_);
 	UpdatePlayerMarker();
+}
+
+// 배제 칸은 알파 255, 나머지는 0인 텍스처를 만든다. 이미지 색의 불투명도와 곱해져 배제된 곳은 한 번만 어두워진다.
+void UWorldMapWidget::UpdateExclusionTexture()
+{
+	const UHintSubsystem* hints = GetWorld() ? GetWorld()->GetSubsystem<UHintSubsystem>() : nullptr;
+	const TArray<uint8>* mask = hints ? &hints->GetExclusionMask() : nullptr;
+	if (!exclusion_image_ || !mask || mask->IsEmpty())
+	{
+		return;
+	}
+	constexpr int32 size = UHintSubsystem::EXCLUSION_MASK_SIZE;
+	exclusion_texture_ = UTexture2D::CreateTransient(size, size, PF_B8G8R8A8);
+	exclusion_texture_->Filter = TF_Bilinear;
+	exclusion_texture_->SRGB = false;
+	FTexture2DMipMap& mip = exclusion_texture_->GetPlatformData()->Mips[0];
+	FColor* pixels = static_cast<FColor*>(mip.BulkData.Lock(LOCK_READ_WRITE));
+	for (int32 index = 0; index < size * size; ++index)
+	{
+		pixels[index] = FColor(0, 0, 0, (*mask)[index] ? 255 : 0);
+	}
+	mip.BulkData.Unlock();
+	exclusion_texture_->UpdateResource();
+	exclusion_image_->SetBrushFromTexture(exclusion_texture_);
+	exclusion_image_->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UWorldMapWidget::ResetView()

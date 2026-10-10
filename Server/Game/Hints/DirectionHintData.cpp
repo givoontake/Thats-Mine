@@ -32,6 +32,19 @@ bool DirectionHintData::Build(const MapRegionData& regions)
 	return is_loaded_;
 }
 
+std::optional<float> DirectionHintData::FindBoundary(std::uint8_t region, HintDirection direction) const
+{
+	const auto area = std::find_if(areas_.begin(), areas_.end(), [&](const DirectionArea& candidate) { return candidate.region == region; });
+	if (area == areas_.end()) return std::nullopt;
+	switch (direction) {
+	case HintDirection::NORTH: return area->min_x;
+	case HintDirection::SOUTH: return area->max_x;
+	case HintDirection::EAST: return area->min_y;
+	case HintDirection::WEST: return area->max_y;
+	default: return std::nullopt;
+	}
+}
+
 std::vector<HINT_ENTRY> DirectionHintData::JudgeDirections(float x, float y) const
 {
 	constexpr int DIRECTION_COUNT = static_cast<int>(HintDirection::COUNT);

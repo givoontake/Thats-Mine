@@ -51,5 +51,6 @@ constexpr std::uint8_t C2S_BOX_OPEN = 79;
 constexpr std::uint8_t S2C_BOX_OPEN = 80;
 constexpr std::uint8_t S2C_HINT = 81;
 constexpr std::uint8_t S2C_AMMO = 82;
+constexpr std::uint8_t S2C_HINT_EXCLUSION = 83;
 constexpr std::uint8_t S2C_PICKAXE_CHARGES = 84;
 constexpr std::uint8_t S2C_INFO = 100;

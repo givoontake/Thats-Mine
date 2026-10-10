@@ -242,6 +242,14 @@ struct S2C_HINT_PACKET {
 	HINT_ENTRY hint;
 };
 
+// 방향 힌트가 지도에서 배제하는 영역. boundary 선보다 direction(HintDirection) 쪽 전부가 배제된다.
+// 북·남이면 boundary는 x, 동·서면 y(cm)다. 방향 힌트를 보낼 때만 힌트 패킷 뒤에 이어 보낸다.
+struct S2C_HINT_EXCLUSION_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t direction;
+	float boundary;
+};
+
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.
 struct TOWER_ENTRY {
 	std::uint8_t kind;
