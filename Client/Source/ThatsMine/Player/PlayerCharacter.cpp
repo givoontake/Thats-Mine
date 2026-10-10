@@ -75,7 +75,7 @@ APlayerCharacter::APlayerCharacter()
 	weapon_settings_.Add(EWeaponType::PICKAXE, pickaxe);
 
 	FWeaponSettings sniper;
-	sniper.display_name = NSLOCTEXT("Equipment", "Sniper", "SNIPER");
+	sniper.display_name = NSLOCTEXT("Equipment", "Sniper", "Stun Sniper");
 	sniper.selection_key = EKeys::One;
 	sniper.mesh.ComponentProperty = TEXT("Sniper");
 	sniper.hitscan.is_enabled = true;
@@ -85,7 +85,7 @@ APlayerCharacter::APlayerCharacter()
 	weapon_settings_.Add(EWeaponType::SNIPER, sniper);
 
 	FWeaponSettings pistol;
-	pistol.display_name = NSLOCTEXT("Equipment", "Pistol", "PISTOL");
+	pistol.display_name = NSLOCTEXT("Equipment", "Pistol", "Stun Pistol");
 	pistol.selection_key = EKeys::Two;
 	pistol.mesh.ComponentProperty = TEXT("Pistol");
 	pistol.hitscan.is_enabled = true;

@@ -8,7 +8,6 @@
 class UTextBlock;
 class UCanvasPanel;
 class UBorder;
-class UMaterialInterface;
 
 UCLASS()
 class THATSMINE_API UEquipmentWidget : public UUserWidget
@@ -20,9 +19,6 @@ public:
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Equipment")
-	TSoftObjectPtr<UMaterialInterface> frame_material_ = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(TEXT("/Game/Thats_Mine/UI/Equipment/M_EquipmentFrame.M_EquipmentFrame")));
 
 private:
 	UPROPERTY(Transient)

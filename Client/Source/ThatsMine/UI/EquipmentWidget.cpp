@@ -7,7 +7,6 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
-#include "Materials/MaterialInterface.h"
 #include "Styling/CoreStyle.h"
 
 TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
@@ -44,11 +43,6 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		panel_slot->SetAlignment(FVector2D(1.0, 1.0));
 		panel_slot->SetPosition(FVector2D(-32.0, -32.0));
 		panel_slot->SetSize(FVector2D(400.0, 88.0));
-		UImage* frame = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("EquipmentFrame"));
-		frame->SetBrushFromMaterial(frame_material_.LoadSynchronous());
-		UCanvasPanelSlot* frame_slot = panel->AddChildToCanvas(frame);
-		frame_slot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
-		frame_slot->SetOffsets(FMargin(0.0f));
 
 		name_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentName"));
 		name_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24));
