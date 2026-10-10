@@ -47,6 +47,8 @@ static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
 // 줄어드는 기절 게이지 표시를 고치는 간격(초)
 static constexpr float STUN_GAUGE_DISPLAY_INTERVAL = 0.05f;
+// 곡괭이 충전 남은 시간 표시를 고치는 간격(초)
+static constexpr float PICKAXE_CHARGE_DISPLAY_INTERVAL = 0.25f;
 
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
@@ -66,6 +68,7 @@ APlayerCharacter::APlayerCharacter()
 	stun_gauge_widget_class_ = UStunGaugeWidget::StaticClass();
 	damage_direction_widget_class_ = UDamageDirectionWidget::StaticClass();
 
+	pickaxe_charges_ = PICKAXE_MAX_CHARGES;
 	FWeaponSettings pickaxe;
 	pickaxe.display_name = NSLOCTEXT("Equipment", "Pickaxe", "PICKAXE");
 	pickaxe.selection_key = EKeys::Three;
@@ -116,9 +119,8 @@ void APlayerCharacter::PostInitializeComponents()
 	{
 		if (settings.hitscan.is_enabled)
 		{
-			FWeaponAmmoState ammo;
-			ammo.rounds = FMath::Max(1, settings.hitscan.magazine_capacity);
-			weapon_ammo_.Add(weapon, ammo);
+			// 탄과 소지 탄 없이 시작한다.
+			weapon_ammo_.Add(weapon, FWeaponAmmoState());
 		}
 		if (USceneComponent* mesh = Cast<USceneComponent>(settings.mesh.GetComponent(this)))
 		{
@@ -145,6 +147,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	}
 	GetWorldTimerManager().ClearTimer(stun_timer_);
 	GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
+	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
 	if (equipment_widget_)
 	{
 		equipment_widget_->RemoveFromParent();
@@ -483,8 +486,25 @@ void APlayerCharacter::PrimaryAction()
 		{
 			FireHitscan(settings->hitscan);
 		}
-		else if (PlayAction(settings->primary_action, &settings->melee_hit))
+		else
 		{
+			// 곡괭이는 사용 가능 횟수가 있어야 휘두르고, 최대치에서 쓰면 충전을 시작한다.
+			const bool is_pickaxe = current_weapon_ == EWeaponType::PICKAXE;
+			UpdatePickaxeCharges();
+			if ((is_pickaxe && pickaxe_charges_ <= 0) || !PlayAction(settings->primary_action, &settings->melee_hit))
+			{
+				return;
+			}
+			if (is_pickaxe)
+			{
+				if (pickaxe_charges_ == PICKAXE_MAX_CHARGES)
+				{
+					pickaxe_charge_start_ = GetWorld()->GetTimeSeconds();
+					GetWorldTimerManager().SetTimer(pickaxe_charge_timer_, this, &APlayerCharacter::UpdatePickaxeCharges, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
+				}
+				--pickaxe_charges_;
+				UpdateEquipmentDisplay();
+			}
 			on_action_started_.Broadcast(EPlayerAction::MELEE, current_weapon_);
 		}
 	}
@@ -802,6 +822,58 @@ void APlayerCharacter::Jump()
 	}
 }
 
+void APlayerCharacter::SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rounds)
+{
+	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
+	if (!ammo)
+	{
+		return;
+	}
+	ammo->rounds = rounds;
+	ammo->spare_rounds = spare_rounds;
+	// 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면, 탄이 떨어졌을 때처럼 바로 재장전한다.
+	if (weapon == current_weapon_ && rounds == 0 && spare_rounds > 0)
+	{
+		BeginReload(weapon);
+	}
+	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::SetPickaxeCharges(int32 charges, int32 remaining_ms)
+{
+	pickaxe_charges_ = charges;
+	if (charges >= PICKAXE_MAX_CHARGES)
+	{
+		GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
+	}
+	else
+	{
+		pickaxe_charge_start_ = GetWorld()->GetTimeSeconds() - (PICKAXE_CHARGE_MS - remaining_ms) / 1000.0;
+		GetWorldTimerManager().SetTimer(pickaxe_charge_timer_, this, &APlayerCharacter::UpdatePickaxeCharges, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
+	}
+	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::UpdatePickaxeCharges()
+{
+	if (pickaxe_charges_ < PICKAXE_MAX_CHARGES)
+	{
+		const double charge_seconds = PICKAXE_CHARGE_MS / 1000.0;
+		const int32 gained = FMath::FloorToInt32((GetWorld()->GetTimeSeconds() - pickaxe_charge_start_) / charge_seconds);
+		if (gained > 0)
+		{
+			pickaxe_charges_ = FMath::Min(PICKAXE_MAX_CHARGES, pickaxe_charges_ + gained);
+			pickaxe_charge_start_ += gained * charge_seconds;
+		}
+	}
+	if (pickaxe_charges_ >= PICKAXE_MAX_CHARGES)
+	{
+		GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
+	}
+	// 인벤토리는 들고 있지 않은 곡괭이의 남은 시간도 표시하므로 들고 있는 무기와 관계없이 고친다.
+	UpdateEquipmentDisplay();
+}
+
 void APlayerCharacter::SetStunGauge(float gauge)
 {
 	stun_gauge_ = gauge;
@@ -962,16 +1034,28 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 	if (const FWeaponSettings* settings = weapon_settings_.Find(weapon))
 	{
 		display.name = settings->display_name;
-		display.uses_ammo = settings->hitscan.is_enabled;
+		display.uses_ammo = settings->hitscan.is_enabled || weapon == EWeaponType::PICKAXE;
 		display.should_show_crosshair = settings->hitscan.is_enabled && !is_aiming_;
 		if (display.uses_ammo)
 		{
 			display.capacity = FMath::Max(1, settings->hitscan.magazine_capacity);
-			display.total_ammo = FText::AsCultureInvariant(TEXT("∞"));
 			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
 			{
 				display.rounds = ammo->rounds;
+				display.total_ammo = FText::AsNumber(ammo->spare_rounds);
 				display.is_reloading = ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer);
+			}
+		}
+		// 곡괭이는 사용 가능 횟수와, 다 차 있지 않으면 다음 1번이 찰 때까지 남은 시간(분:초, 초 올림)을 표시한다.
+		if (weapon == EWeaponType::PICKAXE)
+		{
+			display.rounds = pickaxe_charges_;
+			if (pickaxe_charges_ < PICKAXE_MAX_CHARGES)
+			{
+				const double charge_seconds = PICKAXE_CHARGE_MS / 1000.0;
+				const double elapsed = FMath::Max(0.0, GetWorld()->GetTimeSeconds() - pickaxe_charge_start_);
+				const int32 remaining = FMath::CeilToInt32(charge_seconds - FMath::Fmod(elapsed, charge_seconds));
+				display.total_ammo = FText::AsCultureInvariant(FString::Printf(TEXT("%d:%02d"), remaining / 60, remaining % 60));
 			}
 		}
 	}
@@ -1010,7 +1094,7 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if ((weapon == current_weapon_ && is_equipping_) || !ammo || !settings || !settings->hitscan.is_enabled || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if ((weapon == current_weapon_ && is_equipping_) || !ammo || !settings || !settings->hitscan.is_enabled || ammo->spare_rounds <= 0 || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
 	{
 		return;
 	}
@@ -1057,7 +1141,10 @@ void APlayerCharacter::FinishReload(EWeaponType weapon)
 		}
 	}
 	GetWorldTimerManager().ClearTimer(ammo->reload_timer);
-	ammo->rounds = FMath::Max(1, settings->hitscan.magazine_capacity);
+	// 소지 탄에서 탄창이 빈 만큼 채운다.
+	const int32 loaded = FMath::Min(FMath::Max(1, settings->hitscan.magazine_capacity) - ammo->rounds, ammo->spare_rounds);
+	ammo->rounds += loaded;
+	ammo->spare_rounds -= loaded;
 	UpdateEquipmentDisplay();
 }
 

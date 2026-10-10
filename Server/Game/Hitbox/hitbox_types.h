@@ -80,6 +80,9 @@ struct WeaponInfo {
 	float aim_pitch_down_limit;
 	bool is_hitscan;
 	float hitscan_distance;
+	std::uint32_t magazine_capacity; // 탄창 하나의 탄 수
+	float reload_duration; // 재장전 시간(초)
+	float fire_interval; // 발사 간격(초)
 };
 
 // FULL_BODY: 전신, UPPER_BODY: 허리부터 위, RIGHT_ARM: 오른팔

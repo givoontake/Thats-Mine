@@ -1,11 +1,14 @@
 #pragma once
 #include <atomic>
 #include <string>
+#include <vector>
 #include "types.h"
 #include "settings.h"
 #include "enum_class.h"
 #include "game_packets.h"
 #include "CharacterPose.h"
+#include "hitbox_types.h"
+#include "weapon_ammo.h"
 
 // 방 슬롯 하나를 나타낸다. 방을 처리하는 스레드만 변경하므로 슬롯 사용 여부는 세션 키 유무로 판단한다.
 class Player
@@ -30,8 +33,17 @@ class Player
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
 	std::uint32_t move_correction_id_ = 0;
 	bool is_awaiting_move_correction_ = false;
+	// 무기 값 순서의 탄약 상태. 게임마다 탄과 탄창 없이 시작한다.
+	std::vector<WeaponAmmo> ammo_;
+	// 곡괭이 사용 가능 횟수와, 최대치보다 적을 때 지금 1번이 차기 시작한 시각(ms). 다 차 있으면 0이다.
+	int pickaxe_charges_ = PICKAXE_MAX_CHARGES;
+	long long pickaxe_charge_start_ms_ = 0;
 
 	void ClearStun();
+	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채운다.
+	void UpdateReload(WeaponAmmo& ammo, const WeaponInfo& info, long long time_ms);
+	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채운다.
+	void UpdatePickaxeCharges(long long time_ms);
 
 	void ClearMoveState();
 
@@ -74,4 +86,22 @@ public:
 	std::uint32_t StartMoveCorrection();
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.
 	void CompleteMoveCorrection(std::uint32_t correction_id);
+	// 무기 수만큼 탄약 상태를 탄과 탄창 없이 만든다.
+	void ResetAmmo(std::size_t weapon_count);
+	const WeaponAmmo* GetAmmo(std::uint8_t weapon) const { return weapon < ammo_.size() ? &ammo_[weapon] : nullptr; }
+	// 재장전 중이 아니고 탄이 있고 발사 간격이 지났으면 탄 하나를 쓰고 인정한다.
+	bool TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
+	// 재장전 중이 아니고 탄창이 가득 차 있지 않고 소지 탄이 있으면 재장전을 시작한다.
+	bool TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
+	// 인정한 발사 하나를 명중이나 선물 열기에 쓴다. 쓸 발사가 없으면 false다.
+	bool ClaimShot(std::uint8_t weapon);
+	// 소지 탄을 count발 늘린다.
+	void AddSpareRounds(std::uint8_t weapon, int count, const WeaponInfo& info, long long time_ms);
+	// 곡괭이 사용 가능 횟수를 최대치로 채운다.
+	void ResetPickaxe();
+	// 사용 가능 횟수가 있으면 1번 쓰고 인정한다. 최대치에서 쓰면 충전을 시작한다.
+	bool TryUsePickaxe(long long time_ms);
+	int GetPickaxeCharges() const { return pickaxe_charges_; }
+	// 다음 1번이 찰 때까지 남은 시간(ms). 다 차 있으면 0이다.
+	long long GetPickaxeChargeRemainingMs(long long time_ms) const;
 };

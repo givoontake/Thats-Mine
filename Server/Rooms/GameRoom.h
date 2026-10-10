@@ -106,8 +106,8 @@ private:
 	TreasurePlacement treasure_placement_{};
 	// 게임 시작 때 최종 보물 위치로 만든 이번 게임의 힌트 목록
 	std::vector<HINT_ENTRY> hints_;
-	// 상자마다 넣은 힌트의 힌트 목록 번호. 상자 번호 순서다.
-	std::vector<std::uint32_t> box_hint_indices_;
+	// 상자마다 넣은 내용물(힌트 또는 탄약). 상자 번호 순서다.
+	std::vector<BoxContent> box_contents_;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -125,10 +125,11 @@ private:
 	void ProcessGameTick(long long tick_time_ms);
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
-	void ProcessHit(const Player& shooter, const C2S_HIT_PACKET& request_p);
+	bool AcceptAction(Player& player, Session& session, const C2S_ACTION_PACKET& request_p);
+	void ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p);
 	void AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
-	void ProcessBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
+	void ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
 	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;
 	void RollbackMove(Player& player, Session& session);

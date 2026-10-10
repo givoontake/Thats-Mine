@@ -84,6 +84,7 @@ add_executable(GameServer
     Database/DBOverlapped.h
     Database/DBResultHandler.h
     Game/Player.h
+    Game/weapon_ammo.h
     Game/Boxes/box_types.h
     Game/Boxes/BoxCandidateData.h
     Game/Hints/DirectionHintData.h

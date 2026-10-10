@@ -13,6 +13,12 @@ enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 // 탑 종류. 값은 0부터 TOWER_KIND_COUNT - 1까지이고, 서버 충돌 배치물과 탑 배치 패킷이 같은 값을 쓴다.
 enum class TowerKind : std::uint8_t { TOWER_02, TOWER_04 };
 
+// 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다.
+enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
+
+// 무기. 클라이언트 EWeaponType과 같은 순서다.
+enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL };
+
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
 enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER };
 
@@ -70,7 +76,7 @@ struct S2C_MOVE_PACKET {
 	S2C_MOVE_ENTRY entries[MAX_ROOM_PLAYER_COUNT];
 };
 
-// 동작과 무기 값은 클라이언트가 정하며 서버는 그대로 중계한다.
+// 동작과 무기 값은 클라이언트가 정한다. 총 발사와 재장전은 서버가 탄약을 확인해 인정한 것만 중계한다.
 struct C2S_ACTION_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t action;
@@ -201,6 +207,21 @@ struct HINT_ENTRY {
 	std::uint8_t grade;
 };
 
+// 서버가 아는 무기 하나의 탄약 상태(탄창의 탄, 소지 탄). 서버가 발사나 재장전을 인정하지 않았을 때와 탄약 상자를 열었을 때 그 사람에게만 보낸다.
+struct S2C_AMMO_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t weapon;
+	std::uint16_t rounds;
+	std::uint16_t spare_rounds;
+};
+
+// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간(ms, 다 차 있으면 0). 서버가 곡괭이 휘두르기를 인정하지 않았을 때 그 사람에게만 보낸다.
+struct S2C_PICKAXE_CHARGES_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t charges;
+	std::uint32_t remaining_ms;
+};
+
 // 상자를 열려고 한다. 상자 번호는 상자 배치의 항목 순서다. 쏴서 열면 is_shot이 참이고 weapon은 쏜 무기다. 선물만 쏴서 열 수 있다.
 struct C2S_BOX_OPEN_PACKET {
 	PACKET_HEADER header;
@@ -215,7 +236,7 @@ struct S2C_BOX_OPEN_PACKET {
 	std::uint16_t box;
 };
 
-// 연 상자에 든 힌트. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다.
+// 연 상자에 든 힌트. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다. 탄약 상자는 힌트 대신 탄약 상태를 보낸다.
 struct S2C_HINT_PACKET {
 	PACKET_HEADER header;
 	HINT_ENTRY hint;

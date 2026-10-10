@@ -62,9 +62,12 @@ constexpr int HINT_GRADE_S_PERCENT = 10;
 constexpr int HINT_GRADE_A_PERCENT = 20;
 constexpr int HINT_GRADE_B_PERCENT = 30;
 constexpr float HINT_EXCLUSION_GRID_STEP = 5000.0f; // 배제 영역을 셀 격자 간격(cm)
-// 힌트 상자. 힌트마다 등급 배수 × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다.
+// 힌트 상자. 힌트마다 등급 배수 × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.
 constexpr int HINT_BOX_COPIES[] = { 1, 1, 2, 2 }; // 등급별 배수(S, A, B, C 순서)
 constexpr int HINT_BOX_PLAYERS_PER_MULTIPLIER = 5;
+// 탄약 상자. 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 만들고, 한 상자에는 한 무기의 탄만 든다. 열면 그 무기의 소지 탄이 늘어난다.
+constexpr int AMMO_BOX_COUNT = 50;
+constexpr int AMMO_BOX_ROUNDS[] = { 0, 1, 3 }; // 상자 하나로 느는 탄 수. 무기 값 순서: 곡괭이, 저격총, 권총. 0이면 그 무기의 탄약 상자를 만들지 않는다.
 // 힌트 상자 열기 검증(임시값). 게임이 시작된 뒤에만 열 수 있다.
 constexpr float HINT_BOX_OPEN_DISTANCE = 150.0f; // F키로 열 때 캡슐 중심에서 상자 중심까지 최대 거리(cm)
 constexpr float HINT_BOX_CENTER_HEIGHTS[] = { 45.5f, 53.1f }; // 상자 바닥 가운데에서 상자 중심까지 상자 위쪽 방향 거리(cm). BoxKind 순서(0.7배 나무 상자, 선물)
@@ -85,6 +88,12 @@ constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기
 constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여유에 더하는 지연 허용 시간(초)
 constexpr float HIT_ORIGIN_MAX_OFFSET = 200.0f; // 발사 시작점이 쏜 사람 위치에서 벗어날 수 있는 기본 거리(cm)
 constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.
+
+// 탄약 검증. 재장전 완료와 발사 간격, 곡괭이 충전은 클라이언트보다 늦게 받은 만큼 이 시간(ms)을 봐준다.
+constexpr long long AMMO_LATENCY_ALLOWANCE_MS = 150;
+// 곡괭이 사용 가능 횟수. 게임마다 최대치로 시작하고, 최대치보다 적으면 PICKAXE_CHARGE_MS마다 1번씩 찬다.
+constexpr int PICKAXE_MAX_CHARGES = 3;
+constexpr int PICKAXE_CHARGE_MS = 120000;
 
 // 기절 게이지. 명중당하면 무기별 증가량에 맞은 부위 배율을 곱해 올리고, 초당 감소량만큼 줄어든다. 최대치에 닿으면 기절한다.
 constexpr float STUN_GAUGE_MAX = 100.0f;

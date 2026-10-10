@@ -107,9 +107,11 @@ void UEquipmentWidget::SetEquipment(const FEquipmentDisplay& display)
 	name_slot->SetAlignment(FVector2D(display.uses_ammo ? 0.0 : 0.5, 0.5));
 	name_slot->SetPosition(FVector2D(display.uses_ammo ? 40.0 : 0.0, 0.0));
 	const ESlateVisibility ammo_visibility = display.uses_ammo ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
+	// 오른쪽 값이 비어 있으면(다 찬 곡괭이) 사선과 함께 숨긴다.
+	const ESlateVisibility total_visibility = display.uses_ammo && !display.total_ammo.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 	ammo_text_->SetVisibility(ammo_visibility);
-	total_text_->SetVisibility(ammo_visibility);
-	slash_text_->SetVisibility(ammo_visibility);
+	total_text_->SetVisibility(total_visibility);
+	slash_text_->SetVisibility(total_visibility);
 	divider_->SetVisibility(ammo_visibility);
 	ammo_text_->SetText(FText::AsNumber(display.rounds));
 	total_text_->SetText(display.total_ammo);

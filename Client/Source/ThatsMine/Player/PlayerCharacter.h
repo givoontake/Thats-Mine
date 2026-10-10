@@ -51,6 +51,10 @@ public:
 
 	// 서버가 보낸 내 기절 게이지 값을 표시하고, 이후 초당 감소량만큼 줄여 표시한다.
 	void SetStunGauge(float gauge);
+	// 서버가 아는 탄약 상태로 맞춘다. 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면 재장전한다.
+	void SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rounds);
+	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다.
+	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
 	void StartStun(float duration_seconds);
 	virtual void Jump() override;
@@ -205,6 +209,9 @@ private:
 	TObjectPtr<UDamageDirectionWidget> damage_direction_widget_;
 
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
+	// 곡괭이 사용 가능 횟수(pickaxe_charges_)가 최대치보다 적을 때 지금 1번이 차기 시작한 월드 시각(초)
+	double pickaxe_charge_start_ = 0.0;
+	FTimerHandle pickaxe_charge_timer_;
 	TMap<EWeaponType, double> next_fire_times_;
 
 	UPROPERTY(Transient)
@@ -240,5 +247,7 @@ private:
 	void PlayReloadAnimation(EWeaponType weapon);
 	void UpdateEquipmentDisplay();
 	void UpdateStunGaugeDisplay();
+	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채우고 장비·인벤토리 표시를 고친다. 다 차면 충전 표시 타이머를 멈춘다.
+	void UpdatePickaxeCharges();
 	void EndStun();
 };

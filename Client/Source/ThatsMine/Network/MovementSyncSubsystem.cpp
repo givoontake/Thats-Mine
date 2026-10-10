@@ -100,6 +100,8 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_ACTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleActionPacket));
 	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
 	network->RegisterPacketHandler(S2C_STUN_GAUGE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunGaugePacket));
+	network->RegisterPacketHandler(S2C_AMMO, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoPacket));
+	network->RegisterPacketHandler(S2C_PICKAXE_CHARGES, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandlePickaxeChargesPacket));
 	network->RegisterPacketHandler(S2C_STUN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunPacket));
 	network->RegisterPacketHandler(S2C_MOVE_CORRECTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveCorrectionPacket));
 	game_instance->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &UMovementSyncSubsystem::RemoveLeftPlayers);
@@ -117,6 +119,8 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_ACTION);
 			network->UnregisterPacketHandler(S2C_HIT);
 			network->UnregisterPacketHandler(S2C_STUN_GAUGE);
+			network->UnregisterPacketHandler(S2C_AMMO);
+			network->UnregisterPacketHandler(S2C_PICKAXE_CHARGES);
 			network->UnregisterPacketHandler(S2C_STUN);
 			network->UnregisterPacketHandler(S2C_MOVE_CORRECTION);
 		}
@@ -319,6 +323,38 @@ void UMovementSyncSubsystem::HandleStunGaugePacket(const TArray<uint8>& payload)
 	if (APlayerCharacter* character = local_character_.Get())
 	{
 		character->SetStunGauge(packet.gauge);
+	}
+}
+
+// 서버가 내 발사나 재장전을 인정하지 않았거나 내가 탄약 상자를 열어 보낸 그 무기의 탄약 상태
+void UMovementSyncSubsystem::HandleAmmoPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_AMMO_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_AMMO_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* character = local_character_.Get())
+	{
+		character->SetAmmo(static_cast<EWeaponType>(packet.weapon), packet.rounds, packet.spare_rounds);
+	}
+}
+
+// 서버가 내 곡괭이 휘두르기를 인정하지 않아 보낸 사용 가능 횟수와 남은 충전 시간
+void UMovementSyncSubsystem::HandlePickaxeChargesPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_PICKAXE_CHARGES_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_PICKAXE_CHARGES_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* character = local_character_.Get())
+	{
+		character->SetPickaxeCharges(packet.charges, static_cast<int32>(packet.remaining_ms));
 	}
 }
 

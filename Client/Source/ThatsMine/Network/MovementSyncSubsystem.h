@@ -38,6 +38,8 @@ private:
 	void HandleShotFired(const FShotResult& shot);
 	void HandleHitPacket(const TArray<uint8>& payload);
 	void HandleStunGaugePacket(const TArray<uint8>& payload);
+	void HandleAmmoPacket(const TArray<uint8>& payload);
+	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
 	void HandleStunPacket(const TArray<uint8>& payload);
 	void HandleMoveCorrectionPacket(const TArray<uint8>& payload);
 	void HandleMovePacket(const TArray<uint8>& payload);

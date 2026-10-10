@@ -151,9 +151,10 @@ void UInventoryWidget::RefreshEquipment()
 		const EWeaponType weapon = EQUIPMENT_ORDER[index];
 		const FEquipmentDisplay display = character->GetWeaponDisplay(weapon);
 		equipment_names_[index]->SetText(display.name);
-		equipment_ammo_[index]->SetText(weapon == EWeaponType::PICKAXE
-			? FText::Format(NSLOCTEXT("Inventory", "Charges", "탄약 {0}"), FText::AsNumber(character->GetPickaxeCharges()))
-			: FText::Format(NSLOCTEXT("Inventory", "Ammo", "탄약 {0} / {1}"), FText::AsNumber(display.rounds), FText::AsNumber(display.capacity)));
+		// 화면 아래 장비 표시와 같은 값이다. 총은 현재 탄 / 소지 탄, 곡괭이는 사용 가능 수와 충전 중이면 남은 시간이다.
+		equipment_ammo_[index]->SetText(display.total_ammo.IsEmpty()
+			? FText::Format(NSLOCTEXT("Inventory", "Charges", "탄약 {0}"), FText::AsNumber(display.rounds))
+			: FText::Format(NSLOCTEXT("Inventory", "Ammo", "탄약 {0} / {1}"), FText::AsNumber(display.rounds), display.total_ammo));
 		const bool is_selected = character->GetCurrentWeapon() == weapon;
 		equipment_frames_[index]->SetBrush(FSlateRoundedBoxBrush(FLinearColor(0.022f, 0.016f, 0.010f, 0.72f), 4.0f,
 			is_selected ? FLinearColor(1.0f, 0.61f, 0.12f) : FLinearColor(0.18f, 0.12f, 0.075f), is_selected ? 2.5f : 1.5f));
