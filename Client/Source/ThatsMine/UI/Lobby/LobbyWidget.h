@@ -13,7 +13,6 @@ class UEditableTextBox;
 class UListView;
 class UTextBlock;
 class UWidgetSwitcher;
-class USlider;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLobbyRefreshRequested);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnLobbyCreateRequested, const FString&, room_name, bool, is_private, const FString&, password);
@@ -103,8 +102,6 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UWidgetSwitcher> menu_pages_;
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UWidgetSwitcher> settings_pages_;
-	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UEditableTextBox> search_input_;
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UCheckBox> joinable_checkbox_;
@@ -115,41 +112,11 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> private_button_;
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> audio_tab_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> controls_tab_;
-	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> exit_confirm_button_;
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UButton> exit_cancel_button_;
 
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> master_volume_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UTextBlock> master_volume_text_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> music_volume_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UTextBlock> music_volume_text_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> effects_volume_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UTextBlock> effects_volume_text_;
-
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> mouse_sensitivity_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UTextBlock> mouse_sensitivity_text_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> zoom_sensitivity_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UTextBlock> zoom_sensitivity_text_;
-
 private:
-	UFUNCTION()
-	void UpdateSensitivityLabels(float value);
-	UFUNCTION()
-	void UpdateVolumeLabels(float value);
 	UFUNCTION()
 	void SelectQuickStart();
 	UFUNCTION()
@@ -174,12 +141,7 @@ private:
 	UFUNCTION()
 	void SelectPrivate();
 	UFUNCTION()
-	void SelectAudioTab();
-	UFUNCTION()
-	void SelectControlsTab();
-	UFUNCTION()
 	void ConfirmExit();
-	void SelectSettingsTab(UButton* button);
 	void FilterRooms();
 	TArray<FLobbyRoomInfo> rooms_;
 

@@ -15,12 +15,17 @@
 #include "Components/InputComponent.h"
 #include "UI/Map/WorldMapWidget.h"
 #include "UI/Inventory/InventoryWidget.h"
+#include "UI/Settings/SettingsWidget.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
+#include "UObject/ConstructorHelpers.h"
 
 AThatsMinePlayerController::AThatsMinePlayerController()
 {
 	// set the player camera manager class
 	PlayerCameraManagerClass = AThatsMineCameraManager::StaticClass();
 	map_widget_class_ = UWorldMapWidget::StaticClass();
+	static ConstructorHelpers::FClassFinder<USettingsWidget> settings_widget_class(TEXT("/Game/Thats_Mine/UI/Settings/WBP_Settings"));
+	settings_widget_class_ = settings_widget_class.Class;
 }
 
 void AThatsMinePlayerController::FlushPressedKeys()
@@ -74,6 +79,7 @@ void AThatsMinePlayerController::SetupInputComponent()
 	{
 		InputComponent->BindKey(EKeys::M, IE_Pressed, this, &AThatsMinePlayerController::ToggleMap);
 		InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AThatsMinePlayerController::ToggleInventory);
+		InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AThatsMinePlayerController::ToggleSettings);
 
 		// Add Input Mapping Context
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
@@ -106,8 +112,10 @@ void AThatsMinePlayerController::EndPlay(const EEndPlayReason::Type end_play_rea
 {
 	CloseMap();
 	CloseInventory();
+	CloseSettings();
 	map_widget_ = nullptr;
 	inventory_widget_ = nullptr;
+	settings_widget_ = nullptr;
 	Super::EndPlay(end_play_reason);
 }
 
@@ -122,7 +130,7 @@ void AThatsMinePlayerController::ToggleMap()
 	{
 		return;
 	}
-	if (inventory_widget_ && inventory_widget_->IsInViewport())
+	if ((inventory_widget_ && inventory_widget_->IsInViewport()) || (settings_widget_ && settings_widget_->IsInViewport()))
 	{
 		return;
 	}
@@ -169,7 +177,7 @@ void AThatsMinePlayerController::ToggleInventory()
 	{
 		return;
 	}
-	if (map_widget_ && map_widget_->IsInViewport())
+	if ((map_widget_ && map_widget_->IsInViewport()) || (settings_widget_ && settings_widget_->IsInViewport()))
 	{
 		return;
 	}
@@ -196,6 +204,57 @@ void AThatsMinePlayerController::CloseInventory()
 		return;
 	}
 	inventory_widget_->RemoveFromParent();
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = was_mouse_cursor_visible_;
+	SetInputMode(FInputModeGameOnly());
+}
+
+// 로비 설정 메뉴와 같은 크기(1600x900 화면 기준 885x630)로 화면 가운데에 띄운다. 지도·인벤토리가 열려 있으면 그쪽이 ESC를 받아 닫는다.
+void AThatsMinePlayerController::ToggleSettings()
+{
+	if (settings_widget_ && settings_widget_->IsInViewport())
+	{
+		CloseSettings();
+		return;
+	}
+	if (!IsLocalController() || !GetPawn() || !settings_widget_class_)
+	{
+		return;
+	}
+	if ((map_widget_ && map_widget_->IsInViewport()) || (inventory_widget_ && inventory_widget_->IsInViewport()))
+	{
+		return;
+	}
+	if (!settings_widget_)
+	{
+		settings_widget_ = CreateWidget<USettingsWidget>(this, settings_widget_class_);
+		settings_widget_->on_close_requested_.BindUObject(this, &AThatsMinePlayerController::CloseSettings);
+	}
+	const FVector2D viewport_size = UWidgetLayoutLibrary::GetViewportSize(this);
+	const float scale = FMath::Min(viewport_size.X / 1600.0f, viewport_size.Y / 900.0f) / UWidgetLayoutLibrary::GetViewportScale(this);
+	was_mouse_cursor_visible_ = bShowMouseCursor;
+	SetIgnoreLookInput(true);
+	settings_widget_->AddToPlayerScreen(200);
+	// 크기 지정이 기준점을 왼쪽 위로 되돌리므로 크기를 먼저 정하고 기준점·정렬을 가운데로 둔다.
+	settings_widget_->SetDesiredSizeInViewport(FVector2D(885.0f, 630.0f));
+	settings_widget_->SetAnchorsInViewport(FAnchors(0.5f, 0.5f));
+	settings_widget_->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
+	settings_widget_->SetRenderScale(FVector2D(scale, scale));
+	bShowMouseCursor = true;
+	FInputModeGameAndUI input_mode;
+	input_mode.SetWidgetToFocus(settings_widget_->TakeWidget());
+	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	input_mode.SetHideCursorDuringCapture(false);
+	SetInputMode(input_mode);
+}
+
+void AThatsMinePlayerController::CloseSettings()
+{
+	if (!settings_widget_ || !settings_widget_->IsInViewport())
+	{
+		return;
+	}
+	settings_widget_->RemoveFromParent();
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());

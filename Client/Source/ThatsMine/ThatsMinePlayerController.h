@@ -10,6 +10,7 @@ class UInputMappingContext;
 class UUserWidget;
 class UWorldMapWidget;
 class UInventoryWidget;
+class USettingsWidget;
 
 /**
  *  Simple first person Player Controller
@@ -69,10 +70,19 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryWidget> inventory_widget_;
 
+	// 로비 설정 메뉴와 같은 설정 창. 게임 중 ESC로 연다.
+	UPROPERTY()
+	TSubclassOf<USettingsWidget> settings_widget_class_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<USettingsWidget> settings_widget_;
+
 	bool was_mouse_cursor_visible_ = false;
 
 	void ToggleMap();
 	void CloseMap();
 	void ToggleInventory();
 	void CloseInventory();
+	void ToggleSettings();
+	void CloseSettings();
 };

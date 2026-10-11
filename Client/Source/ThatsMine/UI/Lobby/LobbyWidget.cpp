@@ -6,7 +6,6 @@
 #include "Components/ListView.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
-#include "Components/Slider.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Engine/GameInstance.h"
 #include "Flow/ClientStateSubsystem.h"
@@ -41,21 +40,8 @@ void ULobbyWidget::NativeOnInitialized()
 	joinable_checkbox_->OnCheckStateChanged.AddDynamic(this, &ULobbyWidget::HandleJoinableChanged);
 	public_button_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectPublic);
 	private_button_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectPrivate);
-	audio_tab_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectAudioTab);
-	controls_tab_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectControlsTab);
 	exit_confirm_button_->OnClicked.AddDynamic(this, &ULobbyWidget::ConfirmExit);
 	exit_cancel_button_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectQuickStart);
-	for (USlider* slider : {master_volume_.Get(), music_volume_.Get(), effects_volume_.Get()})
-	{
-		slider->OnValueChanged.AddDynamic(this, &ULobbyWidget::UpdateVolumeLabels);
-	}
-	UpdateVolumeLabels(0.0f);
-	for (USlider* slider : {mouse_sensitivity_.Get(), zoom_sensitivity_.Get()})
-	{
-		slider->OnValueChanged.AddDynamic(this, &ULobbyWidget::UpdateSensitivityLabels);
-	}
-	UpdateSensitivityLabels(0.0f);
-	SelectAudioTab();
 	SelectQuickStart();
 	password_input_->SetIsPassword(true);
 	dialog_overlay_->SetVisibility(ESlateVisibility::Collapsed);
@@ -411,56 +397,6 @@ void ULobbyWidget::SelectPrivate()
 {
 	private_checkbox_->SetIsChecked(true);
 	HandlePrivateChanged(true);
-}
-
-void ULobbyWidget::UpdateSensitivityLabels(float value)
-{
-	FNumberFormattingOptions format;
-	format.SetMinimumFractionalDigits(1);
-	format.SetMaximumFractionalDigits(1);
-	mouse_sensitivity_text_->SetText(FText::AsNumber(mouse_sensitivity_->GetValue(), &format));
-	zoom_sensitivity_text_->SetText(FText::AsNumber(zoom_sensitivity_->GetValue(), &format));
-}
-
-void ULobbyWidget::UpdateVolumeLabels(float value)
-{
-	master_volume_text_->SetText(FText::AsNumber(FMath::RoundToInt(master_volume_->GetValue() * 100.0f)));
-	music_volume_text_->SetText(FText::AsNumber(FMath::RoundToInt(music_volume_->GetValue() * 100.0f)));
-	effects_volume_text_->SetText(FText::AsNumber(FMath::RoundToInt(effects_volume_->GetValue() * 100.0f)));
-}
-
-void ULobbyWidget::SelectSettingsTab(UButton* button)
-{
-	int32 index = 0;
-	for (UButton* tab : {audio_tab_.Get(), controls_tab_.Get()})
-	{
-		FButtonStyle style = tab->GetStyle();
-		style.Normal = menu_button_style_.Normal;
-		style.Normal.ImageSize *= style.Hovered.ImageSize.Y / style.Normal.ImageSize.Y;
-		style.NormalForeground = menu_button_style_.NormalForeground;
-		style.Hovered.SetResourceObject(menu_button_style_.Hovered.GetResourceObject());
-		style.HoveredForeground = menu_button_style_.HoveredForeground;
-		if (tab == button)
-		{
-			style.Normal.SetResourceObject(selected_button_brush_.GetResourceObject());
-			style.NormalForeground = style.PressedForeground;
-			style.Hovered = style.Normal;
-			style.HoveredForeground = style.PressedForeground;
-			settings_pages_->SetActiveWidgetIndex(index);
-		}
-		tab->SetStyle(style);
-		++index;
-	}
-}
-
-void ULobbyWidget::SelectAudioTab()
-{
-	SelectSettingsTab(audio_tab_);
-}
-
-void ULobbyWidget::SelectControlsTab()
-{
-	SelectSettingsTab(controls_tab_);
 }
 
 void ULobbyWidget::ConfirmExit()

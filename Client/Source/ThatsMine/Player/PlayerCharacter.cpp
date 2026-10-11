@@ -18,6 +18,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Player/ControlSettingsSubsystem.h"
 #include "Interaction/BoxLayoutSubsystem.h"
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
@@ -285,7 +286,10 @@ void APlayerCharacter::Look(const FInputActionValue& value)
 	{
 		return;
 	}
-	const FVector2D look = value.Get<FVector2D>();
+	// 조준 중이면 줌 감도, 아니면 일반 감도를 곱한다.
+	const UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr;
+	const float sensitivity = settings ? (is_aiming_ ? settings->GetZoomSensitivity() : settings->GetMouseSensitivity()) : 1.0f;
+	const FVector2D look = value.Get<FVector2D>() * sensitivity;
 	AddControllerYawInput(look.X);
 	AddControllerPitchInput(look.Y);
 }
