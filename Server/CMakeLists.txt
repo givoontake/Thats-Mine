@@ -118,6 +118,7 @@ add_executable(GameServer
     Network/session_tasks.h
     Network/Session.h
     Network/SessionManager.h
+    Network/packet_size_table.h
     Packets/common_packets.h
     Packets/database_packets.h
     Packets/game_packets.h

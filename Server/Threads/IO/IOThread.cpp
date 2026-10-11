@@ -4,6 +4,7 @@
 #include "SessionManager.h"
 #include "common_packets.h"
 #include "packet_types.h"
+#include "packet_size_table.h"
 #include "session_tasks.h"
 #include "DBOverlapped.h"
 
@@ -122,6 +123,13 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 		const auto* header = reinterpret_cast<const PACKET_HEADER*>(packet);
 		const int packet_size = header->size;
 		if (packet_size < PACKET_HEADER_SIZE || packet_size > BUF_SIZE) {
+			game_server_.GetSessionManager().RequestDisconnect(session_key);
+			should_receive = false;
+			break;
+		}
+		// 처리 함수는 종류만 보고 구조체로 읽으므로, 종류별 허용 크기와 다르면 받은 범위를 넘어 읽게 된다. 정상 클라이언트가 만들 수 없는 패킷이라 연결을 끊는다.
+		const PacketSizeRange& size_range = CLIENT_PACKET_SIZE_TABLE[header->type];
+		if (packet_size < size_range.min_size || packet_size > size_range.max_size) {
 			game_server_.GetSessionManager().RequestDisconnect(session_key);
 			should_receive = false;
 			break;
