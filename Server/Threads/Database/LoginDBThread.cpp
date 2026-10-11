@@ -24,9 +24,9 @@ void LoginDBThread::HandleResult(SessionKey session_key, DBLoginResult result)
 DBLoginResult LoginDBThread::ProcessTask(const DBLoginTask& task)
 {
 	const char* SQL_LOGIN =
-		"SELECT player_id, nickname, password_hash "
-		"FROM players "
-		"WHERE login_id=? "
+		"SELECT player_id, id, password "
+		"FROM test_accounts "
+		"WHERE id=? "
 		"LIMIT 1";
 	std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(SQL_LOGIN));
 	statement->setString(1, task.login_id);
