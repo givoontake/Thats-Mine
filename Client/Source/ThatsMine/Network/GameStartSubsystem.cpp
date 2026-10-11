@@ -13,6 +13,7 @@
 #include "GameNetworkSubsystem.h"
 #include "MovementSyncSubsystem.h"
 #include "OnlineSessionSubsystem.h"
+#include "PipelineStateCache.h"
 #include "Player/PlayerCharacter.h"
 #include "ShaderPipelineCache.h"
 #include "ThatsMineGameMode.h"
@@ -102,11 +103,13 @@ void UGameStartSubsystem::Tick(float delta_seconds)
 {
 	Super::Tick(delta_seconds);
 	// 게임 중에 불러오는 일이 없도록 남은 비동기 로딩, 미리 불러올 에셋, 텍스처, 셰이더 준비가 끝났는지 본다.
+	// 셰이더는 기록해 둔 파이프라인 목록의 미리 컴파일과, 불러온 물체·효과 재질의 파이프라인 미리 준비(PSO Precaching)를 모두 기다린다.
 	const bool is_ready[] = {
 		!IsAsyncLoading(),
 		!preload_handle_.IsValid() || preload_handle_->HasLoadCompleted(),
 		IStreamingManager::Get().GetNumWantingResources() == 0,
 		FShaderPipelineCache::NumPrecompilesRemaining() == 0,
+		PipelineStateCache::NumActivePrecacheRequests() == 0,
 	};
 	int32 ready_count = 0;
 	for (const bool ready : is_ready)
@@ -121,7 +124,7 @@ void UGameStartSubsystem::Tick(float delta_seconds)
 	}
 	else if (GetWorld()->GetRealTimeSeconds() - prepare_start_time_ >= PREPARE_TIMEOUT_SECONDS)
 	{
-		UE_LOG(LogGameStart, Warning, TEXT("Preparation timed out. async=%d assets=%d textures=%d shaders=%d"), is_ready[0], is_ready[1], is_ready[2], is_ready[3]);
+		UE_LOG(LogGameStart, Warning, TEXT("Preparation timed out. async=%d assets=%d textures=%d shaders=%d psos=%d"), is_ready[0], is_ready[1], is_ready[2], is_ready[3], is_ready[4]);
 		SendLoadComplete();
 	}
 }

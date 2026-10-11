@@ -26,7 +26,7 @@ public class ThatsMine : ModuleRules
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Packets")));
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Common")));
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Niagara", "MoviePlayer", "RenderCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Niagara", "MoviePlayer", "RenderCore", "RHI" });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"ThatsMine",
