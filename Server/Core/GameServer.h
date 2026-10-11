@@ -1,6 +1,7 @@
 #pragma once
 #include <WinSock2.h>
 #include <MSWSock.h>
+#include <array>
 #include <atomic>
 #include <memory>
 #include "BoxCandidateData.h"
@@ -26,11 +27,15 @@ struct RoomLifecycleTask;
 
 class GameServer
 {
+	// 동시에 걸어 두는 접속 수락 요청 수. 하나가 처리되는 동안에도 나머지가 접속을 받는다.
+	static constexpr int ACCEPT_COUNT = 10;
+
 	HANDLE iocp_handle_;
-	SOCKET listen_socket_, accept_socket_;
+	SOCKET listen_socket_;
 	WSADATA wsa_data_;
 	SOCKADDR_IN server_addr_;
-	IOOverlapped accept_over_;
+	// 수락 요청마다 자기 소켓과 OVERLAPPED를 가진다. 완료된 요청은 같은 자리에서 다시 건다.
+	std::array<AcceptOverlapped, ACCEPT_COUNT> accept_overs_;
 	std::unique_ptr<SessionManager> session_manager_;
 
 	std::atomic<bool> is_running_ = true;
@@ -44,6 +49,8 @@ class GameServer
 	DirectionHintData direction_hint_data_; // 서버 시작 시 맵 영역으로 만든 뒤 읽기만 하는 방향 힌트 기준
 	ViewHintData view_hint_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 보임 힌트 판정 위치
 	HintExclusionData hint_exclusion_data_; // 서버 시작 시 힌트 데이터로 만든 뒤 읽기만 하는 힌트 배제 영역
+
+	void PostAccept(AcceptOverlapped& accept_over);
 
 public:
 
@@ -68,7 +75,7 @@ public:
 	void SyncLobbyList(int session_index);
 
 	void StartServer();
-	void CompleteAccept();
+	void CompleteAccept(AcceptOverlapped& accept_over);
 	void StartThreads();
 	void CloseThreads();
 	void JoinThreads();

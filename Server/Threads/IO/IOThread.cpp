@@ -52,7 +52,8 @@ void IOThread::ProcessAcceptCompletion(BOOL result, ExOverlapped* ex_over)
 		return;
 	}
 
-	game_server_.CompleteAccept();
+	// 받은 주소는 수락 요청을 걸 때 넘긴 AcceptOverlapped의 주소이므로, 형식을 바꿔 그 요청의 소켓을 찾는다.
+	game_server_.CompleteAccept(*static_cast<AcceptOverlapped*>(reinterpret_cast<IOOverlapped*>(ex_over)));
 }
 
 void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, ExOverlapped* ex_over)

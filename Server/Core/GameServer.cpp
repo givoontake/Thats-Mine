@@ -16,13 +16,10 @@ GameServer::GameServer()
 	session_manager_ = std::make_unique<SessionManager>();
 
 	listen_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-	accept_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	memset(&server_addr_, 0, sizeof(server_addr_));
 	server_addr_.sin_family = AF_INET;
 	server_addr_.sin_port = htons(SERVER_PORT);
 	server_addr_.sin_addr.S_un.S_addr = INADDR_ANY;
-
-	accept_over_.SetOperationType(OPType::ACCEPT);
 
 }
 
@@ -30,7 +27,9 @@ GameServer::~GameServer()
 {
 	session_manager_->GetActivePlayerManager().Clear();
 	closesocket(listen_socket_);
-	closesocket(accept_socket_);
+	for (auto& accept_over : accept_overs_) {
+		if (accept_over.accept_socket != INVALID_SOCKET) closesocket(accept_over.accept_socket);
+	}
 	WSACleanup();
 }
 
@@ -60,30 +59,36 @@ void GameServer::StartServer()
 	listen(listen_socket_, SOMAXCONN);
 	iocp_handle_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(listen_socket_), iocp_handle_, LISTEN_IO_COMPLETION, 0);
-	int addr_size = sizeof(SOCKADDR_IN);
-	AcceptEx(listen_socket_, accept_socket_, accept_over_.packet_buffer, 0, addr_size + 16, addr_size + 16, 0, &accept_over_.ex_over.over);
+	for (auto& accept_over : accept_overs_) PostAccept(accept_over);
 }
 
-void GameServer::CompleteAccept()
+// 완료된 수락 요청의 소켓을 세션에 넘기고, 같은 자리에서 다음 수락 요청을 건다.
+void GameServer::CompleteAccept(AcceptOverlapped& accept_over)
 {
-	auto* new_session = session_manager_->AcquireSession(accept_socket_, iocp_handle_);
+	const SOCKET accept_socket = accept_over.accept_socket;
+	auto* new_session = session_manager_->AcquireSession(accept_socket, iocp_handle_);
 	if (new_session) {
-		CreateIoCompletionPort(reinterpret_cast<HANDLE>(accept_socket_), iocp_handle_, SESSION_IO_COMPLETION, 0);
+		CreateIoCompletionPort(reinterpret_cast<HANDLE>(accept_socket), iocp_handle_, SESSION_IO_COMPLETION, 0);
 		// 세션 관리는 로비를 알지 않으므로, 새 세션을 로비 목록에 넣도록 서버가 로비에 알린다.
 		EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::SESSION_ADDED, new_session->GetSessionKey()));
 		new_session->RecvPacket();
 	}
 	else {
-		closesocket(accept_socket_);
+		closesocket(accept_socket);
 	}
-	accept_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	PostAccept(accept_over);
+}
 
-	if (accept_socket_ != INVALID_SOCKET) {
-		ZeroMemory(&accept_over_.ex_over.over, sizeof(accept_over_.ex_over.over));
-		int addr_size = sizeof(SOCKADDR_IN);
-		BOOL result = AcceptEx(listen_socket_, accept_socket_, accept_over_.packet_buffer, 0, addr_size + 16, addr_size + 16, 0, &accept_over_.ex_over.over);
-		if (!result && WSAGetLastError() != ERROR_IO_PENDING) std::cerr << "AcceptEx fail.. " << std::endl;
-	}
+// 새 수락용 소켓을 만들어 이 자리의 OVERLAPPED로 수락 요청을 건다.
+void GameServer::PostAccept(AcceptOverlapped& accept_over)
+{
+	accept_over.accept_socket = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+	if (accept_over.accept_socket == INVALID_SOCKET) return;
+
+	ZeroMemory(&accept_over.ex_over.over, sizeof(accept_over.ex_over.over));
+	int addr_size = sizeof(SOCKADDR_IN);
+	BOOL result = AcceptEx(listen_socket_, accept_over.accept_socket, accept_over.packet_buffer, 0, addr_size + 16, addr_size + 16, 0, &accept_over.ex_over.over);
+	if (!result && WSAGetLastError() != ERROR_IO_PENDING) std::cerr << "AcceptEx fail.. " << std::endl;
 }
 
 void GameServer::StartThreads()
