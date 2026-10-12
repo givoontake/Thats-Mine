@@ -18,6 +18,8 @@ public:
 	virtual void Deinitialize() override;
 	// 캡슐 중심에서 가장 가까운 두루마리를 주우려고 서버에 요청한다. 서버와 같은 거리·높이 조건에 맞는 두루마리가 없으면 보내지 않고 false를 돌려준다.
 	bool RequestPickup(const FVector& capsule_location) const;
+	// 서버와 같은 거리·높이 조건으로 캡슐 중심에서 주울 수 있는 가장 가까운 두루마리의 드랍 번호. 없으면 INDEX_NONE이다.
+	int32 FindPickupDrop(const FVector& capsule_location) const;
 
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;

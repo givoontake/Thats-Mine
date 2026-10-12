@@ -23,6 +23,8 @@ class UPhysicsAsset;
 class USearchGaugeWidget;
 class UStunGaugeWidget;
 class UHintPopupWidget;
+class UInteractPromptWidget;
+class AHintBox;
 class UUserWidget;
 struct FInputActionValue;
 
@@ -237,6 +239,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<USearchGaugeWidget> search_gauge_widget_;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UInteractPromptWidget> interact_prompt_widget_;
+	FTimerHandle interact_prompt_timer_;
+
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
 	// 곡괭이 사용 가능 횟수(pickaxe_charges_)가 최대치보다 적을 때 지금 1번이 차기 시작한 월드 시각(초)
 	double pickaxe_charge_start_ = 0.0;
@@ -301,8 +307,12 @@ private:
 	// 탐색 상태를 MAGNIFIER_SEARCH_MS 동안 둔다. 내 캐릭터면 화면 가운데에 탐색 게이지를 채운다.
 	void StartSearch();
 	void EndSearch();
-	// 힌트·아이템 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다.
-	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title);
+	// 화면 중앙이 가리키는 쪽으로 캐릭터 중심에서 1m 안에 있는, 아직 열리지 않은 상자. 없으면 nullptr이다.
+	const AHintBox* FindInteractBox() const;
+	// 열 수 있는 상자나 주울 수 있는 두루마리가 있으면 상호작용 안내를 보인다.
+	void UpdateInteractPrompt();
+	// 힌트·아이템·탄약 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. has_badge가 false면 등급 없이 보인다.
+	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge);
 	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
 	double GetPickaxeChargeSeconds() const;
 	float GetStunGaugeDecayPerSecond() const;

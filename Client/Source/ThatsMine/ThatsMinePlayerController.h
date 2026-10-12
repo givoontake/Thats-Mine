@@ -11,6 +11,7 @@ class UUserWidget;
 class UWorldMapWidget;
 class UInventoryWidget;
 class USettingsWidget;
+class UScaleBox;
 
 /**
  *  Simple first person Player Controller
@@ -76,6 +77,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<USettingsWidget> settings_widget_;
+
+	// 설정 창을 감싸 화면 크기에 맞춰 키우는 틀. 설정 창 크기를 정하는 크기 상자를 담는다.
+	UPROPERTY(Transient)
+	TObjectPtr<UScaleBox> settings_frame_;
 
 	bool was_mouse_cursor_visible_ = false;
 

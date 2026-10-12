@@ -53,7 +53,7 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		divider_ = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("EquipmentDivider"));
 		divider_->SetBrushColor(FLinearColor(0.27f, 0.29f, 0.30f, 0.8f));
 		UCanvasPanelSlot* divider_slot = panel->AddChildToCanvas(divider_);
-		divider_slot->SetAnchors(FAnchors(0.52f, 0.5f));
+		divider_slot->SetAnchors(FAnchors(DIVIDER_ANCHOR, 0.5f));
 		divider_slot->SetAlignment(FVector2D(0.5, 0.5));
 		divider_slot->SetSize(FVector2D(1.0, 40.0));
 		divider_slot->SetPosition(FVector2D::ZeroVector);
@@ -61,9 +61,9 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		ammo_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentAmmo"));
 		ammo_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 36));
 		UCanvasPanelSlot* ammo_slot = panel->AddChildToCanvas(ammo_text_);
-		ammo_slot->SetAnchors(FAnchors(0.60f, 0.5f));
+		ammo_slot->SetAnchors(FAnchors(DIVIDER_ANCHOR, 0.5f));
 		ammo_slot->SetAlignment(FVector2D(0.0, 0.5));
-		ammo_slot->SetPosition(FVector2D::ZeroVector);
+		ammo_slot->SetPosition(FVector2D(DIVIDER_GAP, 0.0));
 		ammo_slot->SetAutoSize(true);
 
 		slash_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentSlash"));
@@ -103,9 +103,10 @@ void UEquipmentWidget::SetEquipment(const FEquipmentDisplay& display)
 	}
 	name_text_->SetText(display.name);
 	UCanvasPanelSlot* name_slot = CastChecked<UCanvasPanelSlot>(name_text_->Slot);
-	name_slot->SetAnchors(FAnchors(display.uses_ammo ? 0.0f : 0.5f, 0.5f));
-	name_slot->SetAlignment(FVector2D(display.uses_ammo ? 0.0 : 0.5, 0.5));
-	name_slot->SetPosition(FVector2D(display.uses_ammo ? 40.0 : 0.0, 0.0));
+	// 탄을 쓰는 장비는 이름 길이와 관계없이 구분선까지 같은 간격을 두도록 이름 오른쪽 끝을 구분선 앞에 맞춘다.
+	name_slot->SetAnchors(FAnchors(display.uses_ammo ? DIVIDER_ANCHOR : 0.5f, 0.5f));
+	name_slot->SetAlignment(FVector2D(display.uses_ammo ? 1.0 : 0.5, 0.5));
+	name_slot->SetPosition(FVector2D(display.uses_ammo ? -DIVIDER_GAP : 0.0, 0.0));
 	const ESlateVisibility ammo_visibility = display.uses_ammo ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 	// 오른쪽 값이 비어 있으면(다 찬 곡괭이) 사선과 함께 숨긴다.
 	const ESlateVisibility total_visibility = display.uses_ammo && !display.total_ammo.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;

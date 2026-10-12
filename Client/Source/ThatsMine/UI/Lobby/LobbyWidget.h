@@ -13,6 +13,7 @@ class UEditableTextBox;
 class UListView;
 class UTextBlock;
 class UWidgetSwitcher;
+class USettingsWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLobbyRefreshRequested);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnLobbyCreateRequested, const FString&, room_name, bool, is_private, const FString&, password);
@@ -98,6 +99,9 @@ protected:
 	TObjectPtr<UButton> settings_button_;
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> exit_button_;
+	// 설정 메뉴 화면. 메뉴를 고를 때마다 저장된 값으로 다시 맞춘다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<USettingsWidget> settings_page_;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UWidgetSwitcher> menu_pages_;

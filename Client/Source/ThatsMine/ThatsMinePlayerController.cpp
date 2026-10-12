@@ -16,6 +16,9 @@
 #include "UI/Map/WorldMapWidget.h"
 #include "UI/Inventory/InventoryWidget.h"
 #include "UI/Settings/SettingsWidget.h"
+#include "Blueprint/GameViewportSubsystem.h"
+#include "Components/ScaleBox.h"
+#include "Components/SizeBox.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -116,6 +119,7 @@ void AThatsMinePlayerController::EndPlay(const EEndPlayReason::Type end_play_rea
 	map_widget_ = nullptr;
 	inventory_widget_ = nullptr;
 	settings_widget_ = nullptr;
+	settings_frame_ = nullptr;
 	Super::EndPlay(end_play_reason);
 }
 
@@ -130,7 +134,7 @@ void AThatsMinePlayerController::ToggleMap()
 	{
 		return;
 	}
-	if ((inventory_widget_ && inventory_widget_->IsInViewport()) || (settings_widget_ && settings_widget_->IsInViewport()))
+	if ((inventory_widget_ && inventory_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport()))
 	{
 		return;
 	}
@@ -177,7 +181,7 @@ void AThatsMinePlayerController::ToggleInventory()
 	{
 		return;
 	}
-	if ((map_widget_ && map_widget_->IsInViewport()) || (settings_widget_ && settings_widget_->IsInViewport()))
+	if ((map_widget_ && map_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport()))
 	{
 		return;
 	}
@@ -212,7 +216,7 @@ void AThatsMinePlayerController::CloseInventory()
 // 로비 설정 메뉴와 같은 크기(1600x900 화면 기준 885x630)로 화면 가운데에 띄운다. 지도·인벤토리가 열려 있으면 그쪽이 ESC를 받아 닫는다.
 void AThatsMinePlayerController::ToggleSettings()
 {
-	if (settings_widget_ && settings_widget_->IsInViewport())
+	if (settings_frame_ && settings_frame_->IsInViewport())
 	{
 		CloseSettings();
 		return;
@@ -229,17 +233,27 @@ void AThatsMinePlayerController::ToggleSettings()
 	{
 		settings_widget_ = CreateWidget<USettingsWidget>(this, settings_widget_class_);
 		settings_widget_->on_close_requested_.BindUObject(this, &AThatsMinePlayerController::CloseSettings);
+		// 로비처럼 배치 단계에서 키워 글자를 키운 크기로 다시 그린다. 그림 배율로 키우면 글자가 흐려진다.
+		USizeBox* size_box = NewObject<USizeBox>(this);
+		size_box->SetWidthOverride(885.0f);
+		size_box->SetHeightOverride(630.0f);
+		settings_frame_ = NewObject<UScaleBox>(this);
+		settings_frame_->SetStretch(EStretch::UserSpecified);
+		settings_frame_->AddChild(size_box);
 	}
 	const FVector2D viewport_size = UWidgetLayoutLibrary::GetViewportSize(this);
 	const float scale = FMath::Min(viewport_size.X / 1600.0f, viewport_size.Y / 900.0f) / UWidgetLayoutLibrary::GetViewportScale(this);
 	was_mouse_cursor_visible_ = bShowMouseCursor;
 	SetIgnoreLookInput(true);
-	settings_widget_->AddToPlayerScreen(200);
-	// 크기 지정이 기준점을 왼쪽 위로 되돌리므로 크기를 먼저 정하고 기준점·정렬을 가운데로 둔다.
-	settings_widget_->SetDesiredSizeInViewport(FVector2D(885.0f, 630.0f));
-	settings_widget_->SetAnchorsInViewport(FAnchors(0.5f, 0.5f));
-	settings_widget_->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
-	settings_widget_->SetRenderScale(FVector2D(scale, scale));
+	// 열 때마다 설정 창을 틀에 다시 넣어 저장된 값으로 새로 맞추게 한다.
+	CastChecked<USizeBox>(settings_frame_->GetContent())->AddChild(settings_widget_);
+	settings_frame_->SetUserSpecifiedScale(scale);
+	FGameViewportWidgetSlot slot;
+	slot.Anchors = FAnchors(0.5f, 0.5f);
+	slot.Alignment = FVector2D(0.5, 0.5);
+	slot.Offsets = FMargin(0.0f, 0.0f, 885.0f * scale, 630.0f * scale);
+	slot.ZOrder = 200;
+	UGameViewportSubsystem::Get()->AddWidgetForPlayer(settings_frame_, GetLocalPlayer(), slot);
 	bShowMouseCursor = true;
 	FInputModeGameAndUI input_mode;
 	input_mode.SetWidgetToFocus(settings_widget_->TakeWidget());
@@ -250,11 +264,12 @@ void AThatsMinePlayerController::ToggleSettings()
 
 void AThatsMinePlayerController::CloseSettings()
 {
-	if (!settings_widget_ || !settings_widget_->IsInViewport())
+	if (!settings_frame_ || !settings_frame_->IsInViewport())
 	{
 		return;
 	}
 	settings_widget_->RemoveFromParent();
+	settings_frame_->RemoveFromParent();
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());

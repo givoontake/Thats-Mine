@@ -6,6 +6,7 @@
 #include "Components/ListView.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
+#include "UI/Settings/SettingsWidget.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Engine/GameInstance.h"
 #include "Flow/ClientStateSubsystem.h"
@@ -347,6 +348,11 @@ void ULobbyWidget::SelectNewRoom()
 
 void ULobbyWidget::SelectSettings()
 {
+	// 다른 메뉴로 갔다 오면 적용하지 않은 값은 버린다.
+	if (settings_page_)
+	{
+		settings_page_->LoadSavedSettings();
+	}
 	SelectMenu(settings_button_);
 }
 

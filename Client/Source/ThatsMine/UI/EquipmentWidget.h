@@ -21,6 +21,10 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 
 private:
+	// 패널 폭에 대한 구분선 위치 비율과, 구분선에서 이름·탄 숫자까지의 간격
+	static constexpr float DIVIDER_ANCHOR = 0.52f;
+	static constexpr float DIVIDER_GAP = 32.0f;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanel> crosshair_;
 

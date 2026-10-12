@@ -42,6 +42,9 @@ static constexpr int32 GRAPHICS_QUALITY_OPTION_COUNT = UE_ARRAY_COUNT(GRAPHICS_Q
 static constexpr int32 QUALITY_LEVEL_COUNT = 3;
 static constexpr float RESOLUTION_SCALES[QUALITY_LEVEL_COUNT] = { 50.0f, 75.0f, 100.0f };
 static constexpr int32 ENGINE_QUALITY_OFFSET = 1;
+// 기본값 단계. 품질은 높음, 렌더 해상도는 100%다.
+static constexpr int32 DEFAULT_QUALITY_LEVEL = QUALITY_LEVEL_COUNT - 1;
+static constexpr int32 DEFAULT_RESOLUTION_LEVEL = QUALITY_LEVEL_COUNT - 1;
 static const TCHAR* DESCRIPTION_HINT = TEXT("항목에 마우스를 올리면 설명이 표시됩니다.");
 
 void USettingsWidget::NativeOnInitialized()
@@ -51,6 +54,8 @@ void USettingsWidget::NativeOnInitialized()
 	audio_tab_->OnClicked.AddDynamic(this, &USettingsWidget::SelectAudioTab);
 	controls_tab_->OnClicked.AddDynamic(this, &USettingsWidget::SelectControlsTab);
 	graphics_tab_->OnClicked.AddDynamic(this, &USettingsWidget::SelectGraphicsTab);
+	defaults_button_->OnClicked.AddDynamic(this, &USettingsWidget::ResetToDefaults);
+	apply_button_->OnClicked.AddDynamic(this, &USettingsWidget::ApplySettings);
 	const UFrameRateSettingsSubsystem* frame_rate = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrameRateSettingsSubsystem>() : nullptr;
 	TArray<FText> lobby_frame_names;
 	for (int32 option = 0; option < UFrameRateSettingsSubsystem::LOBBY_OPTION_COUNT; ++option)
@@ -108,31 +113,26 @@ void USettingsWidget::NativeOnInitialized()
 		slider->SetMinValue(UControlSettingsSubsystem::MIN_SENSITIVITY);
 		slider->SetMaxValue(UControlSettingsSubsystem::MAX_SENSITIVITY);
 		slider->SetStepSize(SENSITIVITY_STEP);
-		slider->OnMouseCaptureEnd.AddDynamic(this, &USettingsWidget::SaveSettings);
-		slider->OnControllerCaptureEnd.AddDynamic(this, &USettingsWidget::SaveSettings);
+		slider->OnValueChanged.AddDynamic(this, &USettingsWidget::UpdateSensitivityLabels);
 	}
-	mouse_sensitivity_->OnValueChanged.AddDynamic(this, &USettingsWidget::ChangeMouseSensitivity);
-	zoom_sensitivity_->OnValueChanged.AddDynamic(this, &USettingsWidget::ChangeZoomSensitivity);
 	SelectGraphicsTab();
 }
 
-// 열 때마다 저장된 감도로 슬라이더를 맞춘다.
 void USettingsWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	LoadSavedSettings();
+}
+
+void USettingsWidget::LoadSavedSettings()
+{
 	if (const UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
 	{
 		mouse_sensitivity_->SetValue(settings->GetMouseSensitivity());
 		zoom_sensitivity_->SetValue(settings->GetZoomSensitivity());
 	}
-	UpdateSensitivityLabels();
+	UpdateSensitivityLabels(0.0f);
 	UpdateGraphicsRows();
-}
-
-void USettingsWidget::NativeDestruct()
-{
-	SaveSettings();
-	Super::NativeDestruct();
 }
 
 FReply USettingsWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const FKeyEvent& event)
@@ -217,25 +217,7 @@ void USettingsWidget::CommitVolumeText(const FText& text, ETextCommit::Type comm
 	UpdateVolumeLabels(0.0f);
 }
 
-void USettingsWidget::ChangeMouseSensitivity(float value)
-{
-	if (UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
-	{
-		settings->SetMouseSensitivity(value);
-	}
-	UpdateSensitivityLabels();
-}
-
-void USettingsWidget::ChangeZoomSensitivity(float value)
-{
-	if (UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
-	{
-		settings->SetZoomSensitivity(value);
-	}
-	UpdateSensitivityLabels();
-}
-
-void USettingsWidget::UpdateSensitivityLabels()
+void USettingsWidget::UpdateSensitivityLabels(float value)
 {
 	FNumberFormattingOptions format;
 	format.SetMinimumFractionalDigits(1);
@@ -244,7 +226,7 @@ void USettingsWidget::UpdateSensitivityLabels()
 	zoom_sensitivity_text_->SetText(FText::AsNumber(zoom_sensitivity_->GetValue(), &format));
 }
 
-// 입력한 숫자를 소수 첫째 자리로 반올림하고 범위 안으로 맞춰 슬라이더와 감도에 넣고 저장한다.
+// 입력한 숫자를 소수 첫째 자리로 반올림하고 범위 안으로 맞춰 슬라이더에 넣는다.
 void USettingsWidget::CommitSensitivityText(const FText& text, ETextCommit::Type commit_type)
 {
 	if (commit_type != ETextCommit::OnCleared)
@@ -257,14 +239,8 @@ void USettingsWidget::CommitSensitivityText(const FText& text, ETextCommit::Type
 				sensitivity.Key->SetValue(FMath::Clamp(FMath::RoundToFloat(FCString::Atof(*input) / SENSITIVITY_STEP) * SENSITIVITY_STEP, UControlSettingsSubsystem::MIN_SENSITIVITY, UControlSettingsSubsystem::MAX_SENSITIVITY));
 			}
 		}
-		if (UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
-		{
-			settings->SetMouseSensitivity(mouse_sensitivity_->GetValue());
-			settings->SetZoomSensitivity(zoom_sensitivity_->GetValue());
-			settings->SaveConfig();
-		}
 	}
-	UpdateSensitivityLabels();
+	UpdateSensitivityLabels(0.0f);
 }
 
 UCycleOptionRow* USettingsWidget::AddOptionRow(const FText& label, const TArray<FText>& option_names, const FText& description)
@@ -284,20 +260,11 @@ void USettingsWidget::UpdateGraphicsRows()
 		game_frame_row_->SetOption(frame_rate->GetGameOption());
 	}
 	const UGameUserSettings* settings = UGameUserSettings::GetGameUserSettings();
-	bool is_same = true;
 	for (int32 option = 0; option < GRAPHICS_QUALITY_OPTION_COUNT; ++option)
 	{
 		quality_rows_[option]->SetOption((settings->*GRAPHICS_QUALITY_OPTIONS[option].get)() - ENGINE_QUALITY_OFFSET);
-		is_same &= quality_rows_[option]->GetOption() == quality_rows_[0]->GetOption();
 	}
-	if (is_same)
-	{
-		overall_quality_row_->SetOption(quality_rows_[0]->GetOption());
-	}
-	else
-	{
-		overall_quality_row_->SetCustomText(FText::FromString(TEXT("사용자 지정")));
-	}
+	UpdateOverallQualityRow();
 	// 해상도 값 0은 엔진 기본(100%)이다. 가장 가까운 단계로 보여 준다.
 	float scale_normalized = 0.0f, scale = 0.0f, min_scale = 0.0f, max_scale = 0.0f;
 	settings->GetResolutionScaleInformationEx(scale_normalized, scale, min_scale, max_scale);
@@ -313,29 +280,36 @@ void USettingsWidget::UpdateGraphicsRows()
 	resolution_row_->SetOption(resolution_level);
 }
 
+void USettingsWidget::UpdateOverallQualityRow()
+{
+	bool is_same = true;
+	for (const UCycleOptionRow* row : quality_rows_)
+	{
+		is_same &= row->GetOption() == quality_rows_[0]->GetOption();
+	}
+	if (is_same)
+	{
+		overall_quality_row_->SetOption(quality_rows_[0]->GetOption());
+	}
+	else
+	{
+		overall_quality_row_->SetCustomText(FText::FromString(TEXT("사용자 지정")));
+	}
+}
+
 void USettingsWidget::StepLobbyFrame(int32 step)
 {
-	if (UFrameRateSettingsSubsystem* frame_rate = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrameRateSettingsSubsystem>() : nullptr)
-	{
-		frame_rate->SetLobbyOption(frame_rate->GetLobbyOption() + step);
-		lobby_frame_row_->SetOption(frame_rate->GetLobbyOption());
-	}
+	lobby_frame_row_->SetOption(FMath::Clamp(lobby_frame_row_->GetOption() + step, 0, UFrameRateSettingsSubsystem::LOBBY_OPTION_COUNT - 1));
 }
 
 void USettingsWidget::StepGameFrame(int32 step)
 {
-	if (UFrameRateSettingsSubsystem* frame_rate = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrameRateSettingsSubsystem>() : nullptr)
-	{
-		frame_rate->SetGameOption(frame_rate->GetGameOption() + step);
-		game_frame_row_->SetOption(frame_rate->GetGameOption());
-	}
+	game_frame_row_->SetOption(FMath::Clamp(game_frame_row_->GetOption() + step, 0, UFrameRateSettingsSubsystem::GAME_OPTION_COUNT - 1));
 }
 
 void USettingsWidget::StepResolution(int32 step)
 {
-	const int32 level = FMath::Clamp(resolution_row_->GetOption() + step, 0, QUALITY_LEVEL_COUNT - 1);
-	UGameUserSettings::GetGameUserSettings()->SetResolutionScaleValueEx(RESOLUTION_SCALES[level]);
-	ApplyGraphicsSettings();
+	resolution_row_->SetOption(FMath::Clamp(resolution_row_->GetOption() + step, 0, QUALITY_LEVEL_COUNT - 1));
 }
 
 // 사용자 지정에서 왼쪽은 지금 가장 낮은 단계, 오른쪽은 가장 높은 단계로 모두 맞춘다.
@@ -354,33 +328,54 @@ void USettingsWidget::StepOverallQuality(int32 step)
 	{
 		level = FMath::Clamp(level + step, 0, QUALITY_LEVEL_COUNT - 1);
 	}
-	UGameUserSettings* settings = UGameUserSettings::GetGameUserSettings();
-	for (const GraphicsQualityOption& option : GRAPHICS_QUALITY_OPTIONS)
+	for (UCycleOptionRow* row : quality_rows_)
 	{
-		(settings->*option.set)(level + ENGINE_QUALITY_OFFSET);
+		row->SetOption(level);
 	}
-	ApplyGraphicsSettings();
+	UpdateOverallQualityRow();
 }
 
 void USettingsWidget::StepQuality(int32 step, int32 option)
 {
-	const int32 level = FMath::Clamp(quality_rows_[option]->GetOption() + step, 0, QUALITY_LEVEL_COUNT - 1);
-	(UGameUserSettings::GetGameUserSettings()->*GRAPHICS_QUALITY_OPTIONS[option].set)(level + ENGINE_QUALITY_OFFSET);
-	ApplyGraphicsSettings();
+	quality_rows_[option]->SetOption(FMath::Clamp(quality_rows_[option]->GetOption() + step, 0, QUALITY_LEVEL_COUNT - 1));
+	UpdateOverallQualityRow();
 }
 
-void USettingsWidget::ApplyGraphicsSettings()
+void USettingsWidget::ApplySettings()
 {
+	if (UControlSettingsSubsystem* control = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
+	{
+		control->SetMouseSensitivity(mouse_sensitivity_->GetValue());
+		control->SetZoomSensitivity(zoom_sensitivity_->GetValue());
+		control->SaveConfig();
+	}
 	UGameUserSettings* settings = UGameUserSettings::GetGameUserSettings();
+	for (int32 option = 0; option < GRAPHICS_QUALITY_OPTION_COUNT; ++option)
+	{
+		(settings->*GRAPHICS_QUALITY_OPTIONS[option].set)(quality_rows_[option]->GetOption() + ENGINE_QUALITY_OFFSET);
+	}
+	settings->SetResolutionScaleValueEx(RESOLUTION_SCALES[resolution_row_->GetOption()]);
 	settings->ApplyNonResolutionSettings();
 	settings->SaveSettings();
+	// 그래픽 설정을 적용하면 엔진이 최대 프레임을 사용자 설정 값으로 되돌리므로 프레임 제한은 그 뒤에 맞춘다.
+	if (UFrameRateSettingsSubsystem* frame_rate = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFrameRateSettingsSubsystem>() : nullptr)
+	{
+		frame_rate->SetLobbyOption(lobby_frame_row_->GetOption());
+		frame_rate->SetGameOption(game_frame_row_->GetOption());
+	}
 	UpdateGraphicsRows();
 }
 
-void USettingsWidget::SaveSettings()
+void USettingsWidget::ResetToDefaults()
 {
-	if (UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
+	mouse_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
+	zoom_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
+	lobby_frame_row_->SetOption(UFrameRateSettingsSubsystem::DEFAULT_LOBBY_OPTION);
+	game_frame_row_->SetOption(UFrameRateSettingsSubsystem::DEFAULT_GAME_OPTION);
+	resolution_row_->SetOption(DEFAULT_RESOLUTION_LEVEL);
+	for (UCycleOptionRow* row : quality_rows_)
 	{
-		settings->SaveConfig();
+		row->SetOption(DEFAULT_QUALITY_LEVEL);
 	}
+	UpdateOverallQualityRow();
 }

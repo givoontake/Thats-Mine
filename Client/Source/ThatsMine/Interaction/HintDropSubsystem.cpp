@@ -58,31 +58,37 @@ bool UHintDropSubsystem::DoesSupportWorldType(const EWorldType::Type world_type)
 
 bool UHintDropSubsystem::RequestPickup(const FVector& capsule_location) const
 {
-	if (!is_active_)
+	const int32 nearest = FindPickupDrop(capsule_location);
+	if (nearest == INDEX_NONE)
 	{
 		return false;
 	}
-	const uint16* nearest = nullptr;
+	C2S_HINT_PICKUP_PACKET packet{};
+	packet.drop = static_cast<uint16>(nearest);
+	TArray<uint8> payload;
+	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_HINT_PICKUP, payload);
+	return true;
+}
+
+int32 UHintDropSubsystem::FindPickupDrop(const FVector& capsule_location) const
+{
+	if (!is_active_)
+	{
+		return INDEX_NONE;
+	}
+	int32 nearest = INDEX_NONE;
 	double nearest_distance = HINT_DROP_PICKUP_DISTANCE;
 	for (const auto& [drop, location] : drop_locations_)
 	{
 		const double distance = FVector::Dist2D(capsule_location, location);
 		if (distance <= nearest_distance && capsule_location.Z <= location.Z + HINT_DROP_PICKUP_HEIGHT)
 		{
-			nearest = &drop;
+			nearest = drop;
 			nearest_distance = distance;
 		}
 	}
-	if (!nearest)
-	{
-		return false;
-	}
-	C2S_HINT_PICKUP_PACKET packet{};
-	packet.drop = *nearest;
-	TArray<uint8> payload;
-	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_HINT_PICKUP, payload);
-	return true;
+	return nearest;
 }
 
 // 떨어진 힌트. 플레이 중인 방 전체가 받고, 게임 도중 들어오면 아직 줍지 않은 것을 받는다.

@@ -2,6 +2,7 @@
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/ButtonSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/SizeBox.h"
@@ -14,6 +15,8 @@ static constexpr float ARROW_BUTTON_WIDTH = 70.0f;
 static constexpr float BUTTON_HEIGHT = 48.0f;
 static constexpr float VALUE_WIDTH = 281.0f;
 static constexpr float ROW_PADDING = 6.0f;
+// 화살표 글자를 칸 가운데로 올리는 거리
+static constexpr float ARROW_RAISE = 4.0f;
 
 void UCycleOptionRow::Setup(const FText& label, const TArray<FText>& option_names, const FSlateFontInfo& label_font, const FSlateFontInfo& value_font, const FButtonStyle& button_style, const FSlateBrush& selected_brush)
 {
@@ -74,7 +77,8 @@ TSharedRef<SWidget> UCycleOptionRow::RebuildWidget()
 			text->SetFont(value_font_);
 			text->SetText(FText::FromString(index == 0 ? TEXT("<") : TEXT(">")));
 			text->SetColorAndOpacity(FSlateColor::UseForeground());
-			button->AddChild(text);
+			// 화살표가 칸 가운데보다 아래에 서므로 조금 올린다.
+			CastChecked<UButtonSlot>(button->AddChild(text))->SetPadding(FMargin(4.0f, 2.0f - ARROW_RAISE, 4.0f, 2.0f + ARROW_RAISE));
 			button_box->AddChild(button);
 			buttons[index] = button;
 			if (index == 1)

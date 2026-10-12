@@ -13,6 +13,7 @@
 #include "Flow/ClientStateSubsystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "InputActionValue.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -25,6 +26,7 @@
 #include "Interaction/ItemSubsystem.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
+#include "UI/InteractPromptWidget.h"
 #include "UI/Effects/DamageDirectionWidget.h"
 #include "UI/Effects/SearchGaugeWidget.h"
 #include "UI/Effects/StunGaugeWidget.h"
@@ -47,6 +49,8 @@
 
 // 조준 카메라 출렁임의 기준 머리 높이가 실제 머리 높이를 따라가는 속도. 걸음마다의 출렁임보다 충분히 느려야 출렁임이 남는다.
 static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
+// 3인칭 카메라가 잔디에 묻히지 않도록 땅에서 띄워 두는 최소 높이
+static constexpr double CAMERA_GROUND_CLEARANCE = 100.0;
 
 // 기절 게이지를 화면 아래 끝에서 띄우는 거리
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
@@ -58,6 +62,8 @@ static constexpr float PROTECTION_DISPLAY_INTERVAL = 0.1f;
 static constexpr float PICKAXE_CHARGE_DISPLAY_INTERVAL = 0.25f;
 // 탐색 게이지를 화면 가운데에서 아래로 띄우는 거리
 static constexpr float SEARCH_GAUGE_CENTER_OFFSET = 90.0f;
+// 상호작용 안내를 보일지 다시 확인하는 간격(초)
+static constexpr float INTERACT_PROMPT_INTERVAL = 0.1f;
 
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
@@ -168,10 +174,16 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	GetWorldTimerManager().ClearTimer(protection_timer_);
 	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
 	GetWorldTimerManager().ClearTimer(search_timer_);
+	GetWorldTimerManager().ClearTimer(interact_prompt_timer_);
 	if (equipment_widget_)
 	{
 		equipment_widget_->RemoveFromParent();
 		equipment_widget_ = nullptr;
+	}
+	if (interact_prompt_widget_)
+	{
+		interact_prompt_widget_->RemoveFromParent();
+		interact_prompt_widget_ = nullptr;
 	}
 	if (search_gauge_widget_)
 	{
@@ -235,14 +247,26 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* player_input_c
 
 void APlayerCharacter::Interact()
 {
-	if (is_stunned_)
+	// 높은 곳의 상자는 점프해서 열 수 있도록 공중에서도 상호작용한다.
+	if (is_stunned_ || is_action_locked_ || !GetWorld())
 	{
 		return;
 	}
-	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
-	if (is_action_locked_ || GetCharacterMovement()->IsFalling() || !GetWorld() || !IsValid(camera) || !camera->IsActive())
+	if (const AHintBox* box = FindInteractBox())
 	{
+		GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, false, 0);
 		return;
+	}
+	// 조준한 상자가 없으면 발밑 근처의 떨어진 두루마리를 줍는다.
+	GetWorld()->GetSubsystem<UHintDropSubsystem>()->RequestPickup(GetCapsuleComponent()->GetComponentLocation());
+}
+
+const AHintBox* APlayerCharacter::FindInteractBox() const
+{
+	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
+	if (!GetWorld() || !IsValid(camera) || !camera->IsActive())
+	{
+		return nullptr;
 	}
 	const FVector start = GetCapsuleComponent()->GetComponentLocation();
 	const FVector view_direction = camera->GetForwardVector();
@@ -262,16 +286,18 @@ void APlayerCharacter::Interact()
 	const FVector direction = ((has_aim_hit ? aim_hit.ImpactPoint : aim_end) - start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
 	FHitResult hit;
 	// 카메라는 목표만 정하고, 실제 거리는 캐릭터 중심에서 최대 1m로 제한한다.
-	if (GetWorld()->LineTraceSingleByChannel(hit, start, start + direction * 100.0, ECC_Visibility, query))
+	if (!GetWorld()->LineTraceSingleByChannel(hit, start, start + direction * 100.0, ECC_Visibility, query))
 	{
-		if (const AHintBox* box = Cast<AHintBox>(hit.GetActor()))
-		{
-			GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, false, 0);
-			return;
-		}
+		return nullptr;
 	}
-	// 조준한 상자가 없으면 발밑 근처의 떨어진 두루마리를 줍는다.
-	GetWorld()->GetSubsystem<UHintDropSubsystem>()->RequestPickup(start);
+	const AHintBox* box = Cast<AHintBox>(hit.GetActor());
+	return box && !box->IsActivated() ? box : nullptr;
+}
+
+void APlayerCharacter::UpdateInteractPrompt()
+{
+	const bool can_interact = !is_stunned_ && !is_searching_ && (FindInteractBox() || GetWorld()->GetSubsystem<UHintDropSubsystem>()->FindPickupDrop(GetCapsuleComponent()->GetComponentLocation()) != INDEX_NONE);
+	interact_prompt_widget_->SetVisibility(can_interact ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
 void APlayerCharacter::Move(const FInputActionValue& value)
@@ -308,6 +334,20 @@ void APlayerCharacter::CalcCamera(float delta_time, FMinimalViewInfo& out_result
 		const double head_height = GetActorTransform().InverseTransformPosition(GetMesh()->GetSocketLocation(TEXT("head"))).Z;
 		aim_head_height_ = is_aiming_ ? FMath::FInterpTo(aim_head_height_, head_height, delta_time, AIM_HEAD_HEIGHT_INTERP_SPEED) : head_height;
 		first_person_camera_->SetRelativeLocation(first_person_camera_location_ + FVector(0.0, 0.0, (head_height - aim_head_height_) * aim_camera_bob_scale_));
+	}
+	// 위를 올려다보면 카메라 팔 끝이 땅 아래로 내려가 카메라가 잔디에 묻히므로, 팔 끝이 땅에서 일정 높이 위에 오도록 팔 전체를 올린다.
+	// 팔은 이번 프레임 위치를 이미 정했으므로 올린 높이는 다음 프레임부터 적용된다.
+	USpringArmComponent* arm = third_person_camera_ ? Cast<USpringArmComponent>(third_person_camera_->GetAttachParent()) : nullptr;
+	if (arm && GetWorld())
+	{
+		const FRotator rotation = arm->GetTargetRotation();
+		const FVector origin = arm->GetComponentLocation();
+		const FVector end = origin - rotation.Vector() * arm->TargetArmLength + FRotationMatrix(rotation).TransformVector(arm->SocketOffset);
+		const FVector top(end.X, end.Y, origin.Z);
+		FCollisionQueryParams query(SCENE_QUERY_STAT(CameraGround), false, this);
+		FHitResult hit;
+		const bool has_ground = GetWorld()->LineTraceSingleByChannel(hit, top, FVector(end.X, end.Y, FMath::Min(origin.Z, end.Z) - CAMERA_GROUND_CLEARANCE), ECC_Camera, query);
+		arm->TargetOffset.Z = has_ground ? FMath::Max(0.0, hit.ImpactPoint.Z + CAMERA_GROUND_CLEARANCE - end.Z) : 0.0;
 	}
 	Super::CalcCamera(delta_time, out_result);
 }
@@ -767,8 +807,8 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
 	next_fire_times_.Add(current_weapon_, now + FMath::Max(0.01f, settings.fire_interval));
 	--ammo->rounds;
+	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
-	PlayMuzzleEffect(settings);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
@@ -892,6 +932,19 @@ void APlayerCharacter::PawnClientRestart()
 			UGameViewportSubsystem::Get()->AddWidgetForPlayer(damage_direction_widget_, controller->GetLocalPlayer(), slot);
 		}
 	}
+	if (!interact_prompt_widget_ && controller && controller->IsLocalController())
+	{
+		interact_prompt_widget_ = CreateWidget<UInteractPromptWidget>(controller, UInteractPromptWidget::StaticClass());
+		if (interact_prompt_widget_)
+		{
+			// 화면 전체에 깔고, 열 수 있는 상자나 주울 수 있는 두루마리가 있을 때만 보인다.
+			interact_prompt_widget_->SetVisibility(ESlateVisibility::Collapsed);
+			FGameViewportWidgetSlot slot;
+			slot.ZOrder = 10;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(interact_prompt_widget_, controller->GetLocalPlayer(), slot);
+			GetWorldTimerManager().SetTimer(interact_prompt_timer_, this, &APlayerCharacter::UpdateInteractPrompt, INTERACT_PROMPT_INTERVAL, true);
+		}
+	}
 
 #if WITH_LOCAL_HITBOX_DEBUG
 	// 로컬 플레이에서는 내 히트박스를 테두리로 그려 확인한다.
@@ -947,6 +1000,13 @@ void APlayerCharacter::SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rou
 	if (!ammo)
 	{
 		return;
+	}
+	// 소지 탄이 늘었으면 탄약 상자를 연 것이므로 획득 안내를 띄운다. 서버가 발사·재장전을 인정하지 않아 맞출 때는 소지 탄이 늘지 않는다.
+	if (spare_rounds > ammo->spare_rounds)
+	{
+		FInventoryHint entry;
+		entry.text = FText::Format(NSLOCTEXT("Item", "AmmoText", "{0} 탄약 {1}발"), weapon_settings_[weapon].display_name, spare_rounds - ammo->spare_rounds);
+		ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewAmmo", "탄약 획득!"), false);
 	}
 	ammo->rounds = rounds;
 	ammo->spare_rounds = spare_rounds;
@@ -1170,10 +1230,16 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 
 void APlayerCharacter::UnPossessed()
 {
+	GetWorldTimerManager().ClearTimer(interact_prompt_timer_);
 	if (equipment_widget_)
 	{
 		equipment_widget_->RemoveFromParent();
 		equipment_widget_ = nullptr;
+	}
+	if (interact_prompt_widget_)
+	{
+		interact_prompt_widget_->RemoveFromParent();
+		interact_prompt_widget_ = nullptr;
 	}
 	if (stun_gauge_widget_)
 	{
@@ -1251,10 +1317,10 @@ void APlayerCharacter::AddHint(const FInventoryHint& hint)
 		acquired_hints_.Add(hint);
 		on_hints_changed_.Broadcast();
 	}
-	ShowAcquirePopup(hint, NSLOCTEXT("Hint", "NewHint", "새 힌트 획득!"));
+	ShowAcquirePopup(hint, NSLOCTEXT("Hint", "NewHint", "새 힌트 획득!"), true);
 }
 
-void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText& title)
+void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge)
 {
 	APlayerController* controller = Cast<APlayerController>(GetController());
 	if (!hint_popup_widget_ && controller && controller->IsLocalController())
@@ -1267,7 +1333,7 @@ void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText
 	}
 	if (hint_popup_widget_)
 	{
-		hint_popup_widget_->Enqueue(entry, title);
+		hint_popup_widget_->Enqueue(entry, title, has_badge);
 	}
 }
 
@@ -1317,7 +1383,7 @@ void APlayerCharacter::AddItem(EItemKind kind, EHintGrade grade)
 	FInventoryHint entry;
 	entry.grade = grade;
 	entry.text = GetItemText(kind, grade);
-	ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewItem", "새 아이템 획득!"));
+	ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewItem", "새 아이템 획득!"), true);
 }
 
 void APlayerCharacter::ConsumeMagnifier(EHintGrade grade)
@@ -1512,6 +1578,32 @@ void APlayerCharacter::SetAiming(bool is_aiming)
 	is_aiming_ = is_aiming && settings && settings->can_aim;
 	if (is_aiming_)
 	{
+		// 3인칭 화면 중앙이 가리키던 지점을 조준경 중앙이 그대로 가리키도록 시점을 돌린다.
+		if (third_person_camera_->IsActive() && Controller && GetWorld())
+		{
+			const FVector view_direction = third_person_camera_->GetForwardVector();
+			const FVector view_location = third_person_camera_->GetComponentLocation();
+			FCollisionQueryParams query(SCENE_QUERY_STAT(AimView), false, this);
+			for (const auto& [weapon, mesh] : weapon_meshes_)
+			{
+				if (UPrimitiveComponent* component = Cast<UPrimitiveComponent>(mesh))
+				{
+					query.AddIgnoredComponent(component);
+				}
+			}
+			const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(GetActorLocation() - view_location, view_direction));
+			const FVector aim_end = aim_start + view_direction * FMath::Max(1.0f, settings->hitscan.distance);
+			FHitResult aim_hit;
+			const FVector aim_point = GetWorld()->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, settings->hitscan.trace_channel, query) ? aim_hit.ImpactPoint : aim_end;
+			// 조준 카메라 위치는 몸 방향을 따라 돌기 때문에 바뀐 방향으로 한 번 더 맞춘다.
+			FRotator rotation = Controller->GetControlRotation();
+			for (int32 index = 0; index < 2; ++index)
+			{
+				const FVector camera_location = GetActorLocation() + FRotator(0.0, rotation.Yaw, 0.0).RotateVector(first_person_camera_->GetRelativeLocation());
+				rotation = (aim_point - camera_location).Rotation();
+			}
+			Controller->SetControlRotation(rotation);
+		}
 		third_person_camera_->Deactivate();
 		first_person_camera_->SetFieldOfView(settings->aiming_field_of_view);
 		first_person_camera_->Activate();
@@ -1534,6 +1626,15 @@ void APlayerCharacter::SetAiming(bool is_aiming)
 		third_person_camera_->Activate();
 	}
 
+	// 조준 중에는 자기 몸과 무기를 자기 화면에서만 숨기고, 다른 플레이어 화면에는 그대로 보인다.
+	GetMesh()->SetOwnerNoSee(is_aiming_);
+	for (const auto& [weapon, mesh] : weapon_meshes_)
+	{
+		if (UPrimitiveComponent* component = Cast<UPrimitiveComponent>(mesh))
+		{
+			component->SetOwnerNoSee(is_aiming_);
+		}
+	}
 	if (scope_widget_)
 	{
 		scope_widget_->SetVisibility(is_aiming_ ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);

@@ -18,6 +18,9 @@ public:
 	static constexpr int32 GAME_OPTION_COUNT = 5;
 	static constexpr int32 GAME_OPTION_MONITOR = 3;
 	static constexpr int32 GAME_OPTION_UNLIMITED = 4;
+	// 처음 값. 로비 60, 게임은 모니터에 맞춤이다.
+	static constexpr int32 DEFAULT_LOBBY_OPTION = 1;
+	static constexpr int32 DEFAULT_GAME_OPTION = GAME_OPTION_MONITOR;
 
 	virtual void Initialize(FSubsystemCollectionBase& collection) override;
 
@@ -38,10 +41,10 @@ private:
 	void ApplyLimit();
 
 	UPROPERTY(Config)
-	int32 lobby_option_ = 1;
+	int32 lobby_option_ = DEFAULT_LOBBY_OPTION;
 
 	UPROPERTY(Config)
-	int32 game_option_ = GAME_OPTION_MONITOR;
+	int32 game_option_ = DEFAULT_GAME_OPTION;
 
 	float monitor_max_refresh_rate_ = 0.0f;
 };

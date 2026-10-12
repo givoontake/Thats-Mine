@@ -7,7 +7,7 @@
 
 static TAutoConsoleVariable<int32> DEBUG_MELEE(TEXT("tm.DebugMelee"), 0, TEXT("Draw local melee traces: 0 off, 1 on."), ECVF_Cheat);
 static TAutoConsoleVariable<int32> DEBUG_SHOT(TEXT("tm.DebugShot"), 0, TEXT("Draw local shot traces: 0 off, 1 on."), ECVF_Cheat);
-static TAutoConsoleVariable<int32> DEBUG_SHOT_IMPACT(TEXT("tm.DebugShotImpact"), 1, TEXT("Draw local shot impact points for 5 seconds: 0 off, 1 on."), ECVF_Cheat);
+static TAutoConsoleVariable<int32> DEBUG_SHOT_IMPACT(TEXT("tm.DebugShotImpact"), 0, TEXT("Draw local shot impact points for 5 seconds: 0 off, 1 on."), ECVF_Cheat);
 
 void CombatDebug::DrawMelee(UWorld* world, const FVector& start, const FVector& end, bool has_hit, const FHitResult& hit)
 {
