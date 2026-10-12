@@ -26,6 +26,7 @@
 #include "UI/EquipmentWidget.h"
 #include "UI/Effects/DamageDirectionWidget.h"
 #include "UI/Effects/StunGaugeWidget.h"
+#include "UI/Hint/HintPopupWidget.h"
 #include "settings.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
@@ -162,6 +163,11 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	{
 		stun_gauge_widget_->RemoveFromParent();
 		stun_gauge_widget_ = nullptr;
+	}
+	if (hint_popup_widget_)
+	{
+		hint_popup_widget_->RemoveFromParent();
+		hint_popup_widget_ = nullptr;
 	}
 	if (damage_direction_widget_)
 	{
@@ -1059,6 +1065,11 @@ void APlayerCharacter::UnPossessed()
 		stun_gauge_widget_->RemoveFromParent();
 		stun_gauge_widget_ = nullptr;
 	}
+	if (hint_popup_widget_)
+	{
+		hint_popup_widget_->RemoveFromParent();
+		hint_popup_widget_ = nullptr;
+	}
 	if (damage_direction_widget_)
 	{
 		damage_direction_widget_->RemoveFromParent();
@@ -1112,6 +1123,19 @@ void APlayerCharacter::AddHint(const FInventoryHint& hint)
 	{
 		acquired_hints_.Add(hint);
 		on_hints_changed_.Broadcast();
+	}
+	APlayerController* controller = Cast<APlayerController>(GetController());
+	if (!hint_popup_widget_ && controller && controller->IsLocalController())
+	{
+		hint_popup_widget_ = CreateWidget<UHintPopupWidget>(controller, UHintPopupWidget::StaticClass());
+		if (hint_popup_widget_)
+		{
+			hint_popup_widget_->AddToViewport(10);
+		}
+	}
+	if (hint_popup_widget_)
+	{
+		hint_popup_widget_->Enqueue(hint);
 	}
 }
 

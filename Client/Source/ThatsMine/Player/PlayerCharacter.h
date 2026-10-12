@@ -19,6 +19,7 @@ class UNiagaraComponent;
 class UNiagaraSystem;
 class UPhysicsAsset;
 class UStunGaugeWidget;
+class UHintPopupWidget;
 class UUserWidget;
 struct FInputActionValue;
 
@@ -74,7 +75,7 @@ public:
 	int32 GetPickaxeCharges() const { return pickaxe_charges_; }
 	const TArray<FInventoryHint>& GetAcquiredHints() const { return acquired_hints_; }
 
-	// 얻은 힌트를 인벤토리에 넣는다. 이미 가진 힌트는 다시 넣지 않는다.
+	// 얻은 힌트를 인벤토리에 넣고 힌트 획득 안내를 띄운다. 이미 가진 힌트는 인벤토리에 다시 넣지 않고 안내만 띄운다.
 	UFUNCTION(BlueprintCallable, Category = "Player|Inventory")
 	void AddHint(const FInventoryHint& hint);
 	// 문장이 같은 힌트를 인벤토리에서 뺀다.
@@ -211,6 +212,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UStunGaugeWidget> stun_gauge_widget_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UHintPopupWidget> hint_popup_widget_;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UDamageDirectionWidget> damage_direction_widget_;
