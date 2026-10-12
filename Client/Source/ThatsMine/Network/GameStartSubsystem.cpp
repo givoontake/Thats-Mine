@@ -9,6 +9,7 @@
 #include "EngineUtils.h"
 #include "Environment/StartDome.h"
 #include "Flow/ClientStateSubsystem.h"
+#include "Interaction/TreasureChest.h"
 #include "GameFramework/PlayerController.h"
 #include "GameNetworkSubsystem.h"
 #include "MovementSyncSubsystem.h"
@@ -243,7 +244,7 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄운다.
+// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고, 보물 자리에 보물 상자를 놓고, 지도가 보물 위치를 표시하도록 알린다.
 void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_TREASURE_FOUND_PACKET) - sizeof(PACKET_HEADER))
@@ -259,6 +260,9 @@ void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload
 	{
 		timer->SetMessage(FText::Format(LOCTEXT("TreasureFound", "{0}님이 보물을 발견했습니다!"), finder ? FText::FromString(finder->nickname) : LOCTEXT("UnknownPlayer", "누군가")), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
 	}
+	treasure_location_ = FVector(packet.location[0], packet.location[1], packet.location[2]);
+	GetWorld()->SpawnActor<ATreasureChest>(*treasure_location_, FRotator(0.0, packet.yaw, 0.0));
+	on_treasure_found_.Broadcast();
 }
 
 UMatchTimerWidget* UGameStartSubsystem::ShowTimerWidget()

@@ -1195,6 +1195,10 @@ void GameRoom::DigTreasure(const Player& digger)
 	S2C_TREASURE_FOUND_PACKET found_p;
 	found_p.header = { static_cast<std::uint16_t>(sizeof(found_p)), S2C_TREASURE_FOUND };
 	found_p.player_id = digger.GetSessionKey().player_id;
+	found_p.location[0] = treasure_placement_.location.x;
+	found_p.location[1] = treasure_placement_.location.y;
+	found_p.location[2] = treasure_placement_.location.z;
+	found_p.yaw = treasure_placement_.yaw;
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&found_p), found_p.header.size);

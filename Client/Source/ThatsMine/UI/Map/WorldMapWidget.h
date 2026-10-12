@@ -41,6 +41,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Map")
 	TArray<FMapPlace> places_;
 
+	// 보물을 발견하면 그 자리에 놓는 주황 별
+	UPROPERTY(EditDefaultsOnly, Category = "Map")
+	TSoftObjectPtr<UTexture2D> treasure_marker_texture_ = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/Thats_Mine/UI/Map/T_TreasureMarker.T_TreasureMarker")));
+
 	// 지도 촬영 시 사용한 경계. 이미지 위쪽은 -X, 오른쪽은 -Y이다.
 	UPROPERTY(EditDefaultsOnly, Category = "Map|Coordinates")
 	FVector2D world_min_ = FVector2D(-100750.0, -100700.0);
@@ -54,6 +58,7 @@ private:
 	static constexpr double WHEEL_ZOOM_FACTOR = 1.2;
 	static constexpr double ZOOM_SPEED = 18.0;
 	static constexpr float EXCLUSION_SHADE_OPACITY = 0.3f;
+	static constexpr double TREASURE_MARKER_SIZE = 36.0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanel> map_canvas_;
@@ -63,6 +68,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMapPlayerMarkerWidget> player_marker_;
+
+	// 보물 별. 보물이 발견되기 전에는 숨긴다.
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> treasure_marker_;
 
 	// 힌트로 배제한 곳을 어둡게 덮는 이미지 하나. 배제 칸은 불투명, 나머지는 투명한 텍스처를 반투명 검정으로 그려 어느 곳이든 한 번만 어두워진다.
 	UPROPERTY(Transient)
@@ -84,6 +93,7 @@ private:
 	void ChangeZoom(float wheel_delta, const FVector2D& anchor);
 	void UpdateMap();
 	void UpdatePlayerMarker();
+	void UpdateTreasureMarker();
 	// 힌트 서브시스템의 배제 칸으로 텍스처를 다시 만든다.
 	void UpdateExclusionTexture();
 

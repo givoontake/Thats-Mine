@@ -11,6 +11,7 @@
 #include "GameFramework/Pawn.h"
 #include "InputCoreTypes.h"
 #include "Interaction/HintSubsystem.h"
+#include "Network/GameStartSubsystem.h"
 #include "settings.h"
 
 UWorldMapWidget::UWorldMapWidget(const FObjectInitializer& object_initializer)
@@ -77,6 +78,14 @@ TSharedRef<SWidget> UWorldMapWidget::RebuildWidget()
 			place_labels_.Add(label);
 		}
 
+		treasure_marker_ = WidgetTree->ConstructWidget<UImage>();
+		treasure_marker_->SetBrushFromTexture(treasure_marker_texture_.LoadSynchronous());
+		treasure_marker_->SetVisibility(ESlateVisibility::Collapsed);
+		UCanvasPanelSlot* treasure_slot = map_canvas_->AddChildToCanvas(treasure_marker_);
+		treasure_slot->SetAlignment(FVector2D(0.5, 0.5));
+		treasure_slot->SetSize(FVector2D(TREASURE_MARKER_SIZE, TREASURE_MARKER_SIZE));
+		treasure_slot->SetZOrder(9);
+
 		player_marker_ = WidgetTree->ConstructWidget<UMapPlayerMarkerWidget>();
 		player_marker_->SetVisibility(ESlateVisibility::HitTestInvisible);
 		player_marker_->SetRenderTransformPivot(FVector2D(0.5, 0.5));
@@ -96,6 +105,10 @@ void UWorldMapWidget::NativeConstruct()
 	{
 		hints->on_exclusion_mask_changed_.AddUObject(this, &UWorldMapWidget::UpdateExclusionTexture);
 	}
+	if (UGameStartSubsystem* game_start = GetWorld()->GetSubsystem<UGameStartSubsystem>())
+	{
+		game_start->on_treasure_found_.AddUObject(this, &UWorldMapWidget::UpdateTreasureMarker);
+	}
 	UpdateExclusionTexture();
 	ResetView();
 }
@@ -106,6 +119,10 @@ void UWorldMapWidget::NativeDestruct()
 	if (UHintSubsystem* hints = GetWorld() ? GetWorld()->GetSubsystem<UHintSubsystem>() : nullptr)
 	{
 		hints->on_exclusion_mask_changed_.RemoveAll(this);
+	}
+	if (UGameStartSubsystem* game_start = GetWorld() ? GetWorld()->GetSubsystem<UGameStartSubsystem>() : nullptr)
+	{
+		game_start->on_treasure_found_.RemoveAll(this);
 	}
 	Super::NativeDestruct();
 }
@@ -184,7 +201,23 @@ void UWorldMapWidget::UpdateMap()
 	UCanvasPanelSlot* exclusion_slot = CastChecked<UCanvasPanelSlot>(exclusion_image_->Slot);
 	exclusion_slot->SetPosition(mask_min * MAP_SIZE * zoom_ + pan_);
 	exclusion_slot->SetSize((mask_max - mask_min) * MAP_SIZE * zoom_);
+	UpdateTreasureMarker();
 	UpdatePlayerMarker();
+}
+
+void UWorldMapWidget::UpdateTreasureMarker()
+{
+	const UGameStartSubsystem* game_start = GetWorld()->GetSubsystem<UGameStartSubsystem>();
+	if (!game_start || !game_start->GetTreasureLocation())
+	{
+		treasure_marker_->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	treasure_marker_->SetVisibility(ESlateVisibility::HitTestInvisible);
+	const FVector location = *game_start->GetTreasureLocation();
+	const FVector2D world_size = world_max_ - world_min_;
+	const FVector2D position((world_max_.Y - location.Y) / world_size.Y, (location.X - world_min_.X) / world_size.X);
+	CastChecked<UCanvasPanelSlot>(treasure_marker_->Slot)->SetPosition(position * MAP_SIZE * zoom_ + pan_);
 }
 
 // 배제 칸은 알파 255, 나머지는 0인 텍스처를 만든다. 이미지 색의 불투명도와 곱해져 배제된 곳은 한 번만 어두워진다.
