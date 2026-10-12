@@ -919,11 +919,11 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 	AddStunGauge(*target, request_p);
 }
 
-// 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이면 게이지는 그대로다.
+// 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
 // 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
 void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
 {
-	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunned(tick_time_ms_)) return;
+	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
 	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
 		target.StopMovement();
 		S2C_STUN_PACKET stun_p;

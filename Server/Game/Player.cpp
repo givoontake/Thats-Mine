@@ -162,7 +162,7 @@ float Player::GetStunGauge(long long time_ms) const
 // 기절하면 끝나는 시각에 게이지가 0이 되도록 기록해 두어, 끝난 뒤부터 0에서 다시 계산한다.
 bool Player::AddStunGauge(float amount, long long time_ms)
 {
-	if (IsStunned(time_ms)) return false;
+	if (IsStunProtected(time_ms)) return false;
 	stun_gauge_ = GetStunGauge(time_ms) + amount;
 	stun_gauge_time_ms_ = time_ms;
 	if (stun_gauge_ < STUN_GAUGE_MAX) return false;

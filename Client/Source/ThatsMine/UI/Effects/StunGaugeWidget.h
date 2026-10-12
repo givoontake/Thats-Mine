@@ -20,6 +20,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Stun Gauge")
 	void SetStunProgress(float progress, bool animate = true);
 
+	// 기절이 끝난 뒤 보호 중이면 남은 초를 받아 아이콘을 방패로 바꾸고 아래에 남은 초를 표시한다. 0이면 기절 아이콘으로 돌아간다.
+	void SetProtectionSeconds(int32 seconds);
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeTick(const FGeometry& geometry, float delta_time) override;
@@ -31,10 +34,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Stun Gauge")
 	TSoftObjectPtr<UTexture2D> icon_texture_ = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/Thats_Mine/UI/Shared/T_StunIcon.T_StunIcon")));
 
+	UPROPERTY(EditDefaultsOnly, Category = "Stun Gauge")
+	TSoftObjectPtr<UTexture2D> protection_icon_texture_ = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/Thats_Mine/UI/Shared/T_ShieldIcon.T_ShieldIcon")));
+
 private:
 	UPROPERTY(Transient)
 	FSlateBrush icon_brush_;
 
+	UPROPERTY(Transient)
+	FSlateBrush protection_icon_brush_;
+
 	float progress_ = 0.0f;
 	float displayed_progress_ = 0.0f;
+	int32 protection_seconds_ = 0;
 };

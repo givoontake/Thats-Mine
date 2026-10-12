@@ -48,6 +48,8 @@ static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
 // 줄어드는 기절 게이지 표시를 고치는 간격(초)
 static constexpr float STUN_GAUGE_DISPLAY_INTERVAL = 0.05f;
+// 보호 남은 시간 표시를 고치는 간격(초)
+static constexpr float PROTECTION_DISPLAY_INTERVAL = 0.1f;
 // 곡괭이 충전 남은 시간 표시를 고치는 간격(초)
 static constexpr float PICKAXE_CHARGE_DISPLAY_INTERVAL = 0.25f;
 
@@ -148,6 +150,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	}
 	GetWorldTimerManager().ClearTimer(stun_timer_);
 	GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
+	GetWorldTimerManager().ClearTimer(protection_timer_);
 	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
 	if (equipment_widget_)
 	{
@@ -442,6 +445,10 @@ TArray<FSoftObjectPath> APlayerCharacter::GetPreloadAssets() const
 	if (!stun_effect_.IsNull())
 	{
 		assets.AddUnique(stun_effect_.ToSoftObjectPath());
+	}
+	if (!protection_effect_.IsNull())
+	{
+		assets.AddUnique(protection_effect_.ToSoftObjectPath());
 	}
 	if (!hitbox_asset_.IsNull())
 	{
@@ -905,7 +912,8 @@ void APlayerCharacter::UpdateStunGaugeDisplay()
 
 void APlayerCharacter::StartStun(float duration_seconds)
 {
-	SetStunEffectActive(true);
+	EndProtection();
+	SetHeadEffectActive(stun_effect_, stun_effect_component_, true);
 	is_stunned_ = true;
 	if (IsLocallyControlled())
 	{
@@ -924,38 +932,66 @@ void APlayerCharacter::StartStun(float duration_seconds)
 void APlayerCharacter::EndStun()
 {
 	is_stunned_ = false;
-	SetStunEffectActive(false);
+	SetHeadEffectActive(stun_effect_, stun_effect_component_, false);
 	stun_gauge_ = 0.0f;
 	if (stun_gauge_widget_)
 	{
 		stun_gauge_widget_->SetStunProgress(0.0f);
 	}
+	SetHeadEffectActive(protection_effect_, protection_effect_component_, true);
+	protection_end_time_ = GetWorld()->GetTimeSeconds() + STUN_PROTECTION_MS / 1000.0;
+	UpdateProtection();
+	GetWorldTimerManager().SetTimer(protection_timer_, this, &APlayerCharacter::UpdateProtection, PROTECTION_DISPLAY_INTERVAL, true);
 }
 
-void APlayerCharacter::SetStunEffectActive(bool is_active)
+void APlayerCharacter::UpdateProtection()
+{
+	const double remaining = protection_end_time_ - GetWorld()->GetTimeSeconds();
+	if (remaining <= 0.0)
+	{
+		EndProtection();
+		return;
+	}
+	if (stun_gauge_widget_)
+	{
+		stun_gauge_widget_->SetProtectionSeconds(FMath::CeilToInt32(remaining));
+	}
+}
+
+void APlayerCharacter::EndProtection()
+{
+	GetWorldTimerManager().ClearTimer(protection_timer_);
+	SetHeadEffectActive(protection_effect_, protection_effect_component_, false);
+	if (stun_gauge_widget_)
+	{
+		stun_gauge_widget_->SetProtectionSeconds(0);
+	}
+}
+
+void APlayerCharacter::SetHeadEffectActive(const TSoftObjectPtr<UNiagaraSystem>& effect, TObjectPtr<UNiagaraComponent>& component, bool is_active)
 {
 	if (!is_active)
 	{
-		if (stun_effect_component_)
+		if (component)
 		{
-			stun_effect_component_->DestroyComponent();
-			stun_effect_component_ = nullptr;
+			component->DestroyComponent();
+			component = nullptr;
 		}
 		return;
 	}
-	UNiagaraSystem* effect = stun_effect_.LoadSynchronous();
-	if (stun_effect_component_ || !effect)
+	UNiagaraSystem* system = effect.LoadSynchronous();
+	if (component || !system)
 	{
 		return;
 	}
-	stun_effect_component_ = UNiagaraFunctionLibrary::SpawnSystemAttached(effect, GetMesh(), TEXT("head"), FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, false);
-	// 머리 뼈 위치만 따라가고, 별 고리는 뼈의 방향과 배율을 따르지 않아 늘 수평으로 같은 크기로 돈다.
-	if (stun_effect_component_)
+	component = UNiagaraFunctionLibrary::SpawnSystemAttached(system, GetMesh(), TEXT("head"), FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, false);
+	// 머리 뼈 위치만 따라가고, 고리는 뼈의 방향과 배율을 따르지 않아 늘 수평으로 같은 크기로 있다.
+	if (component)
 	{
-		stun_effect_component_->SetUsingAbsoluteRotation(true);
-		stun_effect_component_->SetUsingAbsoluteScale(true);
-		stun_effect_component_->SetWorldRotation(FRotator::ZeroRotator);
-		stun_effect_component_->SetWorldScale3D(FVector::OneVector);
+		component->SetUsingAbsoluteRotation(true);
+		component->SetUsingAbsoluteScale(true);
+		component->SetWorldRotation(FRotator::ZeroRotator);
+		component->SetWorldScale3D(FVector::OneVector);
 	}
 }
 

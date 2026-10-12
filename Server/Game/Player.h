@@ -66,6 +66,8 @@ public:
 	bool IsAwaitingMoveCorrection() const { return is_awaiting_move_correction_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
+	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
+	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + STUN_PROTECTION_MS; }
 	const CharacterPose& GetPose() const { return pose_; }
 	bool CanRelayMoveState(long long tick_time_ms) const { return has_new_move_state_ && (has_input_change_ || tick_time_ms - last_move_relay_ms_ >= MOVE_RELAY_INTERVAL_MS); }
 
@@ -78,7 +80,7 @@ public:
 	void ClearSendBuffer();
 	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change);
 	void MarkMoveStateRelayed(long long tick_time_ms);
-	// 기절 게이지를 올린다. 기절 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
+	// 기절 게이지를 올린다. 기절 중이거나 보호 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
 	bool AddStunGauge(float amount, long long time_ms);
 	// 기절을 시작할 때 이동을 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
 	void StopMovement();

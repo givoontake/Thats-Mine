@@ -46,9 +46,6 @@ public:
 	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
 	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
 
-	// 기절 상태 동안 머리 위에 별 이펙트를 켜고 끈다.
-	void SetStunEffectActive(bool is_active);
-
 	// 서버가 보낸 내 기절 게이지 값을 표시하고, 이후 초당 감소량만큼 줄여 표시한다.
 	void SetStunGauge(float gauge);
 	// 서버가 아는 탄약 상태로 맞춘다. 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면 재장전한다.
@@ -56,6 +53,7 @@ public:
 	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다.
 	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
+	// 기절이 끝나면 보호 시간 동안 머리 위에 방패 이펙트를 켜고, 내 캐릭터면 게이지 아이콘을 방패로 바꿔 남은 초를 표시한다.
 	void StartStun(float duration_seconds);
 	virtual void Jump() override;
 
@@ -141,6 +139,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
 	TSoftObjectPtr<UNiagaraSystem> stun_effect_;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
+	TSoftObjectPtr<UNiagaraSystem> protection_effect_;
+
 	// 로컬 플레이에서 내 캐릭터에 테두리로 그려 확인할 히트박스
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Debug")
 	TSoftObjectPtr<UPhysicsAsset> hitbox_asset_;
@@ -200,6 +201,9 @@ private:
 	TObjectPtr<UNiagaraComponent> stun_effect_component_;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> protection_effect_component_;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UEquipmentWidget> equipment_widget_;
 
 	UPROPERTY(Transient)
@@ -232,6 +236,9 @@ private:
 	bool is_stunned_ = false;
 	FTimerHandle stun_timer_;
 	FTimerHandle stun_gauge_timer_;
+	// 기절이 끝난 뒤 보호가 끝나는 시각
+	double protection_end_time_ = 0.0;
+	FTimerHandle protection_timer_;
 
 	void Move(const FInputActionValue& value);
 	void Look(const FInputActionValue& value);
@@ -250,4 +257,9 @@ private:
 	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채우고 장비·인벤토리 표시를 고친다. 다 차면 충전 표시 타이머를 멈춘다.
 	void UpdatePickaxeCharges();
 	void EndStun();
+	// 남은 보호 시간을 게이지에 표시하고, 다 되면 보호를 끝낸다.
+	void UpdateProtection();
+	void EndProtection();
+	// 머리 위 상태 이펙트를 켜고 끈다.
+	void SetHeadEffectActive(const TSoftObjectPtr<UNiagaraSystem>& effect, TObjectPtr<UNiagaraComponent>& component, bool is_active);
 };

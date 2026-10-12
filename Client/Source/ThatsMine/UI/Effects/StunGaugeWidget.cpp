@@ -4,7 +4,11 @@
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "Components/SizeBox.h"
 #include "Engine/Texture2D.h"
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Rendering/DrawElementTypes.h"
+#include "Rendering/SlateRenderer.h"
+#include "Styling/CoreStyle.h"
 
 TSharedRef<SWidget> UStunGaugeWidget::RebuildWidget()
 {
@@ -15,12 +19,17 @@ TSharedRef<SWidget> UStunGaugeWidget::RebuildWidget()
 		size->SetHeightOverride(WIDGET_HEIGHT);
 		WidgetTree->RootWidget = size;
 	}
-	if (UTexture2D* icon = icon_texture_.LoadSynchronous())
+	const auto load_icon = [](const TSoftObjectPtr<UTexture2D>& texture, FSlateBrush& brush)
 	{
-		icon_brush_.SetResourceObject(icon);
-		// 에디터에서는 텍스처가 컴파일 중이면 임시 크기가 나오므로 원본 크기로 비율을 정한다.
-		icon_brush_.ImageSize = FVector2D(icon->GetImportedSize());
-	}
+		if (UTexture2D* icon = texture.LoadSynchronous())
+		{
+			brush.SetResourceObject(icon);
+			// 에디터에서는 텍스처가 컴파일 중이면 임시 크기가 나오므로 원본 크기로 비율을 정한다.
+			brush.ImageSize = FVector2D(icon->GetImportedSize());
+		}
+	};
+	load_icon(icon_texture_, icon_brush_);
+	load_icon(protection_icon_texture_, protection_icon_brush_);
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	return Super::RebuildWidget();
 }
@@ -32,6 +41,11 @@ void UStunGaugeWidget::SetStunProgress(float progress, bool animate)
 	{
 		displayed_progress_ = progress_;
 	}
+}
+
+void UStunGaugeWidget::SetProtectionSeconds(int32 seconds)
+{
+	protection_seconds_ = FMath::Max(seconds, 0);
 }
 
 void UStunGaugeWidget::NativeTick(const FGeometry& geometry, float delta_time)
@@ -53,8 +67,12 @@ int32 UStunGaugeWidget::NativePaint(const FPaintArgs& args, const FGeometry& geo
 	// 아이콘은 막대 왼쪽에 간격을 두고 그린다.
 	constexpr float ICON_HEIGHT = 25.0f;
 	constexpr float ICON_GAP = 8.0f;
-	const bool has_icon = icon_brush_.GetResourceObject() && icon_brush_.ImageSize.Y > 0.0;
-	const float icon_width = has_icon ? ICON_HEIGHT * static_cast<float>(icon_brush_.ImageSize.X / icon_brush_.ImageSize.Y) : 0.0f;
+	// 보호 중이면 방패 아이콘과 그 아래 남은 초를 한 묶음으로 세로 가운데에 둔다.
+	constexpr float TIMER_HEIGHT = 15.0f;
+	const bool is_protected = protection_seconds_ > 0;
+	const FSlateBrush& icon_brush = is_protected ? protection_icon_brush_ : icon_brush_;
+	const bool has_icon = icon_brush.GetResourceObject() && icon_brush.ImageSize.Y > 0.0;
+	const float icon_width = has_icon ? ICON_HEIGHT * static_cast<float>(icon_brush.ImageSize.X / icon_brush.ImageSize.Y) : 0.0f;
 	const float bar_offset = has_icon ? icon_width + ICON_GAP : 0.0f;
 	const FVector2f size = FVector2f(geometry.GetLocalSize());
 	const float content_left = (size.X - (bar_offset + BAR_WIDTH)) * 0.5f;
@@ -98,7 +116,18 @@ int32 UStunGaugeWidget::NativePaint(const FPaintArgs& args, const FGeometry& geo
 	}
 	if (has_icon)
 	{
-		draw_box(icon_brush_, FVector2f(content_left, (size.Y - ICON_HEIGHT) * 0.5f), FVector2f(icon_width, ICON_HEIGHT), FLinearColor::White);
+		const float icon_top = (size.Y - ICON_HEIGHT - (is_protected ? TIMER_HEIGHT : 0.0f)) * 0.5f;
+		draw_box(icon_brush, FVector2f(content_left, icon_top), FVector2f(icon_width, ICON_HEIGHT), FLinearColor::White);
+		if (is_protected)
+		{
+			FSlateFontInfo font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 10);
+			font.OutlineSettings.OutlineSize = 1;
+			font.OutlineSettings.OutlineColor = FLinearColor::FromSRGBColor(FColor(16, 40, 90, 255));
+			const FString text = FString::FromInt(protection_seconds_);
+			const FVector2f text_size = FVector2f(FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(text, font));
+			const FVector2f text_origin(content_left + (icon_width - text_size.X) * 0.5f, icon_top + ICON_HEIGHT + (TIMER_HEIGHT - text_size.Y) * 0.5f);
+			FSlateDrawElement::MakeText(draw_elements, ++layer, geometry.ToPaintGeometry(text_size, FSlateLayoutTransform(text_origin)), text, font, ESlateDrawEffect::None, FLinearColor::White * tint);
+		}
 	}
 	return layer;
 }
