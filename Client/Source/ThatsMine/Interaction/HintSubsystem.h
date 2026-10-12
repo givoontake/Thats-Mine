@@ -14,12 +14,15 @@ struct FReceivedHint
 	float boundary = 0.0f;
 };
 
+class UHintNoticeWidget;
+
 DECLARE_MULTICAST_DELEGATE(FOnExclusionMaskChanged);
 
 // 서버가 보낸 힌트를 문장으로 만들어 내 캐릭터의 인벤토리에 넣는다.
 // 문장 틀과 이름은 Content/Data/hint_texts.txt에서 읽고, 힌트 항목의 번호로 빈칸을 채운다. 온라인 게임 레벨에서만 동작한다.
 // 받은 배제 영역을 지도 범위(MAP_MIN~MAP_MAX)를 나눈 칸마다 배제됐는지로 모아 둔다. 어떤 배제든 칸을 "배제됨"으로 칠할 뿐이라 여러 배제가 겹쳐도 한 번만 배제된다.
 // 기절해서 힌트를 잃으면 인벤토리에서 빼고, 그 힌트에 배제가 있었으면 남은 힌트의 배제로 칸을 다시 칠한다.
+// 서버가 다음 공개 힌트까지 남은 시간을 보내면, 정해 둔 남은 시간마다 화면 위쪽 가운데에 힌트 제공 안내를 띄운다. 공개 힌트 자체는 다른 힌트처럼 힌트 패킷으로 온다.
 UCLASS()
 class THATSMINE_API UHintSubsystem : public UWorldSubsystem
 {
@@ -47,6 +50,9 @@ private:
 	void HandleHintPacket(const TArray<uint8>& payload);
 	void HandleExclusionPacket(const TArray<uint8>& payload);
 	void HandleHintLostPacket(const TArray<uint8>& payload);
+	void HandlePublicHintTimePacket(const TArray<uint8>& payload);
+	// 공개 힌트까지 seconds초 남았다는 안내를 띄운다.
+	void ShowPublicHintNotice(int32 seconds);
 	// 배제 영역 하나를 배제 칸에 칠한다. 칸이 없으면 먼저 만든다.
 	void PaintExclusion(uint8 direction_value, float boundary);
 
@@ -56,5 +62,9 @@ private:
 	TArray<FReceivedHint> received_hints_;
 	// 다음에 오는 배제 영역이 속한 받은 힌트의 위치. 배제 영역은 힌트 바로 뒤에 온다.
 	int32 exclusion_hint_index_ = INDEX_NONE;
+	// 남은 시간 안내마다 하나씩 건 타이머. 새 남은 시간을 받으면 모두 다시 건다.
+	TArray<FTimerHandle> notice_timers_;
+	UPROPERTY(Transient)
+	TObjectPtr<UHintNoticeWidget> notice_widget_;
 	bool is_active_ = false;
 };

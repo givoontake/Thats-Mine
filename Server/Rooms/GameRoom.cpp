@@ -640,6 +640,9 @@ void GameRoom::StartGame(int requester_id)
 	GenerateHints();
 	PlaceBoxes(player_count);
 	hint_drops_.clear();
+	public_hints_.clear();
+	public_hint_turn_ = 0;
+	next_public_hint_ms_ = 0;
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·시작 돔) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
@@ -765,6 +768,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 {
 	ProcessLoadedPlayers();
 	ProcessGameStart();
+	ProcessPublicHint();
 	// 플레이 중인 플레이어의 판정용 자세를 지난 틱 이후 시간만큼 진행한다.
 	const float pose_delta_seconds = last_pose_tick_ms_ != 0 ? (tick_time_ms - last_pose_tick_ms_) / 1000.0f : 0.0f;
 	last_pose_tick_ms_ = tick_time_ms;
@@ -822,7 +826,7 @@ static S2C_HINT_DROP_PACKET MakeHintDropPacket(std::uint16_t drop, const HintDro
 }
 
 // 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.
-// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다. 게임 도중 합류하면 아직 줍지 않은 떨어진 힌트도 보낸다.
+// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다. 게임 도중 합류하면 아직 줍지 않은 떨어진 힌트와 공개된 힌트도 보낸다.
 void GameRoom::ProcessLoadedPlayers()
 {
 	bool has_loaded_player = false;
@@ -879,7 +883,16 @@ void GameRoom::ProcessLoadedPlayers()
 			}
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
-			if (is_game_started_) session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
+			if (is_game_started_) {
+				session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
+				// 지금까지 공개된 힌트를 받고 다음 공개까지 남은 시간을 받는다. 힌트는 캐릭터가 생긴 뒤에 보낸다.
+				for (const std::uint32_t hint : public_hints_) {
+					room_player.AddHint(hint);
+					char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
+					session->SendPacket(hint_buffer, AppendHintPackets(hint_buffer, hint));
+				}
+				SendPublicHintTime(*session);
+			}
 			else if (game_start_ms_ != 0) session->SendPacket(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
 			room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
 		}
@@ -1123,6 +1136,46 @@ void GameRoom::DropHint(Player& target)
 	}
 }
 
+// 공개 차례가 되면 그 차례에 고를 수 있는 등급의 아직 공개하지 않은 힌트 중 하나를 무작위로 골라 플레이 중인 전원이 가진 것으로 기록하고 보낸다.
+// 고를 힌트가 없으면 그 차례는 건너뛴다. 차례가 지나면 다음 공개까지 남은 시간을 플레이 중인 전원에게 보낸다.
+void GameRoom::ProcessPublicHint()
+{
+	if (!is_game_started_ || tick_time_ms_ < next_public_hint_ms_) return;
+	const std::uint8_t best_grade = PUBLIC_HINT_BEST_GRADES[std::min<std::size_t>(public_hint_turn_, std::size(PUBLIC_HINT_BEST_GRADES) - 1)];
+	++public_hint_turn_;
+	next_public_hint_ms_ += PUBLIC_HINT_INTERVAL_MS;
+	std::vector<std::uint32_t> candidates;
+	for (std::uint32_t index = 0; index < hints_.size(); ++index) {
+		const std::uint8_t grade = hints_[index].grade;
+		if (grade >= best_grade && grade != static_cast<std::uint8_t>(HintGrade::S) && std::find(public_hints_.begin(), public_hints_.end(), index) == public_hints_.end()) candidates.push_back(index);
+	}
+	char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
+	int hint_size = 0;
+	if (!candidates.empty()) {
+		std::mt19937 random(CreateRandomSeed());
+		const std::uint32_t hint = candidates[std::uniform_int_distribution<std::size_t>(0, candidates.size() - 1)(random)];
+		public_hints_.push_back(hint);
+		hint_size = AppendHintPackets(hint_buffer, hint);
+	}
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+		if (hint_size > 0) {
+			room_player.AddHint(public_hints_.back());
+			session->SendPacket(hint_buffer, hint_size);
+		}
+		SendPublicHintTime(*session);
+	}
+}
+
+void GameRoom::SendPublicHintTime(Session& session) const
+{
+	S2C_PUBLIC_HINT_TIME_PACKET time_p;
+	time_p.header = { static_cast<std::uint16_t>(sizeof(time_p)), S2C_PUBLIC_HINT_TIME };
+	time_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, next_public_hint_ms_ - tick_time_ms_));
+	session.SendPacket(reinterpret_cast<char*>(&time_p), time_p.header.size);
+}
+
 // 게임이 시작된 뒤 아직 줍지 않은 떨어진 힌트만 줍는다. 주우면 플레이 중인 방 전체에 줍기를 보내고, 주운 사람에게는 줍기 뒤에 힌트를 이어 보낸다.
 // 이미 가진 힌트도 보내고, 가진 힌트 목록에는 다시 넣지 않는다.
 void GameRoom::ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p)
@@ -1219,9 +1272,15 @@ void GameRoom::ProcessGameStart()
 	}
 	if (tick_time_ms_ < game_start_ms_) return;
 	is_game_started_ = true;
+	next_public_hint_ms_ = tick_time_ms_ + PUBLIC_HINT_INTERVAL_MS;
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
-	send_to_playing(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+		session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
+		SendPublicHintTime(*session);
+	}
 }
 
 void GameRoom::FindNewHost()

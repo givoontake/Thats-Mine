@@ -111,6 +111,10 @@ private:
 	std::vector<BoxContent> box_contents_;
 	// 이번 게임에서 떨어진 힌트. 드랍 번호 순서이고, 주워도 지우지 않고 주웠다고만 표시한다.
 	std::vector<HintDrop> hint_drops_;
+	// 이번 게임에서 모두에게 공개한 힌트의 힌트 목록 번호, 지난 공개 차례 수, 다음 공개 시각
+	std::vector<std::uint32_t> public_hints_;
+	int public_hint_turn_ = 0;
+	long long next_public_hint_ms_ = 0;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -136,6 +140,8 @@ private:
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
 	int AppendHintPackets(char* buffer, std::uint32_t hint) const;
 	void DropHint(Player& target);
+	void ProcessPublicHint();
+	void SendPublicHintTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;
 	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;

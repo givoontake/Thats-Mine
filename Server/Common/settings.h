@@ -76,6 +76,10 @@ constexpr float HINT_BOX_SHOT_END_MARGIN = 50.0f; // 쏴서 열 때 막힘 검�
 // 떨어진 힌트. 기절하면 가진 힌트 중 하나를 그 자리에 떨어뜨리고, 게임이 끝날 때까지 남는다. 떨어뜨린 사람도 F키로 주울 수 있다.
 constexpr float HINT_DROP_PICKUP_DISTANCE = 150.0f; // F키로 주울 때 캡슐 중심에서 떨어진 위치까지 최대 수평 거리(cm)
 constexpr float HINT_DROP_PICKUP_HEIGHT = 100.0f; // 주울 때 캡슐 중심이 떨어진 위치보다 높아도 되는 거리이자, 그 아래 랜드스케이프에 선 높이보다 낮아도 되는 거리(cm)
+// 공개 힌트. 게임 시작부터 PUBLIC_HINT_INTERVAL_MS마다 힌트 목록에서 아직 공개하지 않은 힌트 하나를 골라 플레이 중인 전원에게 준다.
+// 차례마다 고를 수 있는 가장 높은 등급(HintGrade 값)이다. 차례가 목록보다 많으면 마지막 값을 쓰고, S는 고르지 않는다. 고를 힌트가 없으면 그 차례는 건너뛴다.
+constexpr int PUBLIC_HINT_INTERVAL_MS = 300000;
+constexpr std::uint8_t PUBLIC_HINT_BEST_GRADES[] = { 3, 3, 2, 2, 1 }; // C, C, B, B, A
 
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)

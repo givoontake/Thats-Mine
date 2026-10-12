@@ -278,6 +278,13 @@ struct S2C_HINT_PICKUP_PACKET {
 	std::uint16_t drop;
 };
 
+// 다음 공개 힌트까지 남은 시간. 게임 시작 때와 공개 차례가 지날 때마다 플레이 중인 방 전체에 보내고, 게임 도중 합류하면 그 사람에게 보낸다.
+// 공개 힌트는 차례가 되면 힌트 패킷으로 플레이 중인 전원에게 같은 힌트를 보낸다.
+struct S2C_PUBLIC_HINT_TIME_PACKET {
+	PACKET_HEADER header;
+	std::uint32_t remaining_ms;
+};
+
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.
 struct TOWER_ENTRY {
 	std::uint8_t kind;

@@ -57,4 +57,5 @@ constexpr std::uint8_t S2C_HINT_DROP = 85;
 constexpr std::uint8_t S2C_HINT_LOST = 86;
 constexpr std::uint8_t C2S_HINT_PICKUP = 87;
 constexpr std::uint8_t S2C_HINT_PICKUP = 88;
+constexpr std::uint8_t S2C_PUBLIC_HINT_TIME = 89;
 constexpr std::uint8_t S2C_INFO = 100;

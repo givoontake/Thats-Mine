@@ -9,11 +9,15 @@
 #include "Network/GameNetworkSubsystem.h"
 #include "Network/game_protocol.h"
 #include "Player/PlayerCharacter.h"
+#include "TimerManager.h"
+#include "UI/Hint/HintNoticeWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHint, Log, All);
 
 // 문장 파일. 패키징할 때 Content/Data 폴더를 함께 넣는다.
 static const TCHAR* HINT_TEXT_PATH = TEXT("Data/hint_texts.txt");
+// 공개 힌트 안내를 띄우는 남은 시간(초)
+static constexpr int32 PUBLIC_HINT_NOTICE_SECONDS[] = { 180, 60, 30, 10 };
 
 void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 {
@@ -29,7 +33,8 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
 	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
 		&& network->RegisterPacketHandler(S2C_HINT_EXCLUSION, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionPacket))
-		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket));
+		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket))
+		&& network->RegisterPacketHandler(S2C_PUBLIC_HINT_TIME, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandlePublicHintTimePacket));
 }
 
 void UHintSubsystem::Deinitialize()
@@ -43,6 +48,7 @@ void UHintSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_HINT);
 			network->UnregisterPacketHandler(S2C_HINT_EXCLUSION);
 			network->UnregisterPacketHandler(S2C_HINT_LOST);
+			network->UnregisterPacketHandler(S2C_PUBLIC_HINT_TIME);
 		}
 		is_active_ = false;
 	}
@@ -199,6 +205,52 @@ void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 		}
 	}
 	on_exclusion_mask_changed_.Broadcast();
+}
+
+// 다음 공개 힌트까지 남은 시간. 안내할 남은 시간마다 아직 지나지 않은 것에 타이머를 건다.
+void UHintSubsystem::HandlePublicHintTimePacket(const TArray<uint8>& payload)
+{
+	S2C_PUBLIC_HINT_TIME_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogHint, Warning, TEXT("Invalid public hint time packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	FTimerManager& timers = GetWorld()->GetTimerManager();
+	for (FTimerHandle& timer : notice_timers_)
+	{
+		timers.ClearTimer(timer);
+	}
+	notice_timers_.Reset();
+	const float remaining = packet.remaining_ms / 1000.0f;
+	for (const int32 seconds : PUBLIC_HINT_NOTICE_SECONDS)
+	{
+		if (remaining > seconds)
+		{
+			timers.SetTimer(notice_timers_.AddDefaulted_GetRef(), FTimerDelegate::CreateUObject(this, &UHintSubsystem::ShowPublicHintNotice, seconds), remaining - seconds, false);
+		}
+	}
+}
+
+void UHintSubsystem::ShowPublicHintNotice(int32 seconds)
+{
+	APlayerController* controller = GetWorld()->GetFirstPlayerController();
+	if (!notice_widget_ && controller && controller->IsLocalController())
+	{
+		notice_widget_ = CreateWidget<UHintNoticeWidget>(controller, UHintNoticeWidget::StaticClass());
+		if (notice_widget_)
+		{
+			notice_widget_->AddToViewport(10);
+		}
+	}
+	if (notice_widget_)
+	{
+		notice_widget_->ShowNotice(seconds >= 60
+			? FText::Format(NSLOCTEXT("Hint", "PublicHintMinutes", "{0}분 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds / 60))
+			: FText::Format(NSLOCTEXT("Hint", "PublicHintSeconds", "{0}초 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds)));
+	}
 }
 
 void UHintSubsystem::PaintExclusion(uint8 direction_value, float boundary)
