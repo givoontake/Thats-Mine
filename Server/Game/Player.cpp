@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cstring>
+#include <random>
 #include "Player.h"
+#include "random_seed.h"
 
 Player::Player()
 {
@@ -37,6 +39,7 @@ void Player::ClearPlayer()
 	ClearStun();
 	ammo_.clear();
 	ResetPickaxe();
+	ResetHints();
 }
 
 void Player::ResetGameData()
@@ -48,6 +51,7 @@ void Player::ResetGameData()
 	ClearStun();
 	ammo_.clear();
 	ResetPickaxe();
+	ResetHints();
 }
 
 void Player::ResetAmmo(std::size_t weapon_count)
@@ -91,6 +95,22 @@ void Player::AddSpareRounds(std::uint8_t weapon, int count, const WeaponInfo& in
 	if (weapon >= ammo_.size()) return;
 	UpdateReload(ammo_[weapon], info, time_ms);
 	ammo_[weapon].spare_rounds += count;
+}
+
+void Player::AddHint(std::uint32_t hint)
+{
+	if (std::find(hint_indices_.begin(), hint_indices_.end(), hint) != hint_indices_.end()) return;
+	hint_indices_.push_back(hint);
+}
+
+std::optional<std::uint32_t> Player::TakeRandomHint()
+{
+	if (hint_indices_.empty()) return std::nullopt;
+	std::mt19937 random(CreateRandomSeed());
+	const std::size_t index = std::uniform_int_distribution<std::size_t>(0, hint_indices_.size() - 1)(random);
+	const std::uint32_t hint = hint_indices_[index];
+	hint_indices_.erase(hint_indices_.begin() + index);
+	return hint;
 }
 
 void Player::ResetPickaxe()

@@ -20,6 +20,7 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Player/ControlSettingsSubsystem.h"
 #include "Interaction/BoxLayoutSubsystem.h"
+#include "Interaction/HintDropSubsystem.h"
 #include "Interaction/HintBox.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
@@ -241,8 +242,11 @@ void APlayerCharacter::Interact()
 		if (const AHintBox* box = Cast<AHintBox>(hit.GetActor()))
 		{
 			GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, false, 0);
+			return;
 		}
 	}
+	// 조준한 상자가 없으면 발밑 근처의 떨어진 두루마리를 줍는다.
+	GetWorld()->GetSubsystem<UHintDropSubsystem>()->RequestPickup(start);
 }
 
 void APlayerCharacter::Move(const FInputActionValue& value)
@@ -1104,8 +1108,21 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 
 void APlayerCharacter::AddHint(const FInventoryHint& hint)
 {
-	acquired_hints_.Add(hint);
-	on_hints_changed_.Broadcast();
+	if (!acquired_hints_.ContainsByPredicate([&hint](const FInventoryHint& acquired) { return acquired.text.EqualTo(hint.text); }))
+	{
+		acquired_hints_.Add(hint);
+		on_hints_changed_.Broadcast();
+	}
+}
+
+void APlayerCharacter::RemoveHint(const FText& text)
+{
+	const int32 index = acquired_hints_.IndexOfByPredicate([&text](const FInventoryHint& hint) { return hint.text.EqualTo(text); });
+	if (index != INDEX_NONE)
+	{
+		acquired_hints_.RemoveAt(index);
+		on_hints_changed_.Broadcast();
+	}
 }
 
 void APlayerCharacter::MarkHintsRead()

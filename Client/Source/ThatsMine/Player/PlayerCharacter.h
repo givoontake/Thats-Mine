@@ -74,8 +74,11 @@ public:
 	int32 GetPickaxeCharges() const { return pickaxe_charges_; }
 	const TArray<FInventoryHint>& GetAcquiredHints() const { return acquired_hints_; }
 
+	// 얻은 힌트를 인벤토리에 넣는다. 이미 가진 힌트는 다시 넣지 않는다.
 	UFUNCTION(BlueprintCallable, Category = "Player|Inventory")
 	void AddHint(const FInventoryHint& hint);
+	// 문장이 같은 힌트를 인벤토리에서 뺀다.
+	void RemoveHint(const FText& text);
 
 	void MarkHintsRead();
 	FOnEquipmentChanged on_equipment_changed_;

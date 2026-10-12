@@ -10,6 +10,7 @@
 #include "ConcurrentTaskQueue.h"
 #include "Player.h"
 #include "box_types.h"
+#include "hint_types.h"
 #include "platform_layout.h"
 #include "tower_types.h"
 #include "treasure_types.h"
@@ -108,6 +109,8 @@ private:
 	std::vector<HINT_ENTRY> hints_;
 	// 상자마다 넣은 내용물(힌트 또는 탄약). 상자 번호 순서다.
 	std::vector<BoxContent> box_contents_;
+	// 이번 게임에서 떨어진 힌트. 드랍 번호 순서이고, 주워도 지우지 않고 주웠다고만 표시한다.
+	std::vector<HintDrop> hint_drops_;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -131,6 +134,10 @@ private:
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
 	void ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
+	int AppendHintPackets(char* buffer, std::uint32_t hint) const;
+	void DropHint(Player& target);
+	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
+	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;
 	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;
 	void RollbackMove(Player& player, Session& session);
 	void StartGame(int requester_id);

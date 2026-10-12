@@ -250,6 +250,34 @@ struct S2C_HINT_EXCLUSION_PACKET {
 	float boundary;
 };
 
+// 기절한 플레이어가 힌트 하나를 떨어뜨렸다. 플레이 중인 방 전체에 보내고, 게임 도중 들어온 플레이어에게는 아직 줍지 않은 것만 보낸다.
+// 드랍 번호는 이번 게임에서 떨어뜨린 순서다. 위치는 떨어뜨린 플레이어의 캡슐 중심(cm)이고, 클라이언트가 그 아래 바닥에 놓는다.
+// 등급은 떨어진 힌트의 등급이며 누구나 두루마리 모습으로 알 수 있다.
+struct S2C_HINT_DROP_PACKET {
+	PACKET_HEADER header;
+	std::uint16_t drop;
+	float location[3];
+	std::uint8_t grade;
+};
+
+// 기절해서 떨어뜨린 힌트. 떨어뜨린 사람에게만 드랍 패킷 뒤에 이어 보낸다. 받은 클라이언트는 같은 힌트를 인벤토리와 지도 배제에서 뺀다.
+struct S2C_HINT_LOST_PACKET {
+	PACKET_HEADER header;
+	HINT_ENTRY hint;
+};
+
+// 떨어진 힌트를 주우려고 한다. 드랍 번호는 드랍 패킷의 번호다.
+struct C2S_HINT_PICKUP_PACKET {
+	PACKET_HEADER header;
+	std::uint16_t drop;
+};
+
+// 서버가 인정한 줍기. 플레이 중인 방 전체에 보낸다. 주운 사람에게는 이어서 힌트를 보낸다.
+struct S2C_HINT_PICKUP_PACKET {
+	PACKET_HEADER header;
+	std::uint16_t drop;
+};
+
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.
 struct TOWER_ENTRY {
 	std::uint8_t kind;

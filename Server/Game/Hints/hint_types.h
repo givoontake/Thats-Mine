@@ -40,3 +40,10 @@ struct ViewRegion {
 	std::uint8_t region;
 	std::vector<DirectX::XMFLOAT3> eyes;
 };
+
+// 기절한 플레이어가 떨어뜨린 힌트 하나. hint는 힌트 목록 번호, location은 떨어뜨린 플레이어의 캡슐 중심(cm)이다.
+struct HintDrop {
+	std::uint32_t hint;
+	DirectX::XMFLOAT3 location;
+	bool is_picked;
+};

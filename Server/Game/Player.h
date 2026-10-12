@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <optional>
 #include <string>
 #include <vector>
 #include "types.h"
@@ -38,6 +39,8 @@ class Player
 	// 곡괭이 사용 가능 횟수와, 최대치보다 적을 때 지금 1번이 차기 시작한 시각(ms). 다 차 있으면 0이다.
 	int pickaxe_charges_ = PICKAXE_MAX_CHARGES;
 	long long pickaxe_charge_start_ms_ = 0;
+	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
+	std::vector<std::uint32_t> hint_indices_;
 
 	void ClearStun();
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채운다.
@@ -63,11 +66,11 @@ public:
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
+	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
+	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + STUN_PROTECTION_MS; }
 	bool IsAwaitingMoveCorrection() const { return is_awaiting_move_correction_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
-	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
-	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + STUN_PROTECTION_MS; }
 	const CharacterPose& GetPose() const { return pose_; }
 	bool CanRelayMoveState(long long tick_time_ms) const { return has_new_move_state_ && (has_input_change_ || tick_time_ms - last_move_relay_ms_ >= MOVE_RELAY_INTERVAL_MS); }
 
@@ -84,6 +87,11 @@ public:
 	bool AddStunGauge(float amount, long long time_ms);
 	// 기절을 시작할 때 이동을 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
 	void StopMovement();
+	// 힌트를 가진다. 이미 가진 힌트면 그대로 둔다.
+	void AddHint(std::uint32_t hint);
+	// 가진 힌트 중 하나를 무작위로 골라 빼고 돌려준다. 가진 힌트가 없으면 비어 있다.
+	std::optional<std::uint32_t> TakeRandomHint();
+	void ResetHints() { hint_indices_.clear(); }
 	// 마지막으로 인정한 위치에 멈춘 상태로 되돌리고 새 되돌리기 번호를 돌려준다. 확인을 받을 때까지 이동 상태를 받지 않는다.
 	std::uint32_t StartMoveCorrection();
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.

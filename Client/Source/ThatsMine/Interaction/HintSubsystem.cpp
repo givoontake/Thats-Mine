@@ -28,7 +28,8 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 	LoadTexts();
 	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
 	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
-		&& network->RegisterPacketHandler(S2C_HINT_EXCLUSION, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionPacket));
+		&& network->RegisterPacketHandler(S2C_HINT_EXCLUSION, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionPacket))
+		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket));
 }
 
 void UHintSubsystem::Deinitialize()
@@ -41,6 +42,7 @@ void UHintSubsystem::Deinitialize()
 		{
 			network->UnregisterPacketHandler(S2C_HINT);
 			network->UnregisterPacketHandler(S2C_HINT_EXCLUSION);
+			network->UnregisterPacketHandler(S2C_HINT_LOST);
 		}
 		is_active_ = false;
 	}
@@ -105,7 +107,7 @@ FString UHintSubsystem::BuildSentence(const HINT_ENTRY& hint) const
 	}
 }
 
-// 내가 연 상자의 힌트. 상자 열림 패킷 뒤에 이어 온다.
+// 내가 연 상자나 주운 두루마리의 힌트. 상자 열림이나 줍기 패킷 뒤에 이어 온다.
 void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
 {
 	S2C_HINT_PACKET packet;
@@ -125,6 +127,12 @@ void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
 	hint.grade = static_cast<EHintGrade>(packet.hint.grade);
 	hint.text = FText::FromString(BuildSentence(packet.hint));
 	character->AddHint(hint);
+	// 서버는 이미 가진 힌트도 다시 보낸다. 받은 힌트 목록에는 한 번만 둔다.
+	exclusion_hint_index_ = received_hints_.IndexOfByPredicate([&packet](const FReceivedHint& received) { return FMemory::Memcmp(&received.hint, &packet.hint, sizeof(HINT_ENTRY)) == 0; });
+	if (exclusion_hint_index_ == INDEX_NONE)
+	{
+		exclusion_hint_index_ = received_hints_.Add({ packet.hint });
+	}
 }
 
 // 방향 힌트가 배제하는 영역. 칸 가운데가 경계선보다 배제 방위 쪽이면 그 칸을 배제한다. 북쪽은 x가 작은 쪽, 동쪽은 y가 작은 쪽이다.
@@ -138,11 +146,64 @@ void UHintSubsystem::HandleExclusionPacket(const TArray<uint8>& payload)
 		return;
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	const HintDirection direction = static_cast<HintDirection>(packet.direction);
 	if (packet.direction >= static_cast<uint8>(HintDirection::COUNT))
 	{
 		return;
 	}
+	// 배제는 바로 앞에 받은 힌트의 것이다.
+	if (received_hints_.IsValidIndex(exclusion_hint_index_))
+	{
+		FReceivedHint& received = received_hints_[exclusion_hint_index_];
+		received.has_exclusion = true;
+		received.direction = packet.direction;
+		received.boundary = packet.boundary;
+	}
+	PaintExclusion(packet.direction, packet.boundary);
+	on_exclusion_mask_changed_.Broadcast();
+}
+
+// 기절해서 떨어뜨린 힌트. 드랍 패킷 뒤에 이어 온다. 같은 힌트를 인벤토리에서 빼고, 배제가 있던 힌트면 남은 배제로 칸을 다시 칠한다.
+// 남은 배제가 없어도 칸은 비우지 않고 모두 0으로 두어 지도가 배제 표시를 지우게 한다.
+void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
+{
+	S2C_HINT_LOST_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogHint, Warning, TEXT("Invalid hint lost packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const int32 index = received_hints_.IndexOfByPredicate([&packet](const FReceivedHint& received) { return FMemory::Memcmp(&received.hint, &packet.hint, sizeof(HINT_ENTRY)) == 0; });
+	if (index == INDEX_NONE)
+	{
+		return;
+	}
+	const bool had_exclusion = received_hints_[index].has_exclusion;
+	received_hints_.RemoveAt(index);
+	exclusion_hint_index_ = INDEX_NONE;
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
+	{
+		character->RemoveHint(FText::FromString(BuildSentence(packet.hint)));
+	}
+	if (!had_exclusion)
+	{
+		return;
+	}
+	exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
+	for (const FReceivedHint& received : received_hints_)
+	{
+		if (received.has_exclusion)
+		{
+			PaintExclusion(received.direction, received.boundary);
+		}
+	}
+	on_exclusion_mask_changed_.Broadcast();
+}
+
+void UHintSubsystem::PaintExclusion(uint8 direction_value, float boundary)
+{
+	const HintDirection direction = static_cast<HintDirection>(direction_value);
 	if (exclusion_mask_.IsEmpty())
 	{
 		exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
@@ -153,15 +214,14 @@ void UHintSubsystem::HandleExclusionPacket(const TArray<uint8>& payload)
 		for (int32 column = 0; column < EXCLUSION_MASK_SIZE; ++column)
 		{
 			const double y = MAP_MAX[1] - (column + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[1] - MAP_MIN[1]);
-			const bool is_excluded = direction == HintDirection::NORTH ? x < packet.boundary
-				: direction == HintDirection::SOUTH ? x > packet.boundary
-				: direction == HintDirection::EAST ? y < packet.boundary
-				: y > packet.boundary;
+			const bool is_excluded = direction == HintDirection::NORTH ? x < boundary
+				: direction == HintDirection::SOUTH ? x > boundary
+				: direction == HintDirection::EAST ? y < boundary
+				: y > boundary;
 			if (is_excluded)
 			{
 				exclusion_mask_[row * EXCLUSION_MASK_SIZE + column] = 1;
 			}
 		}
 	}
-	on_exclusion_mask_changed_.Broadcast();
 }

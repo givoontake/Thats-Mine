@@ -307,6 +307,13 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		ProcessBoxOpen(*room_player, *reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet));
 		break;
 	}
+	case C2S_HINT_PICKUP: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
+		ProcessHintPickup(*room_player, *reinterpret_cast<C2S_HINT_PICKUP_PACKET*>(packet));
+		break;
+	}
 	case C2S_LOAD_COMPLETE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
@@ -597,6 +604,7 @@ void GameRoom::StartGame(int requester_id)
 		room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
 		room_player.ResetAmmo(server_->GetHitboxData().GetWeaponCount());
 		room_player.ResetPickaxe();
+		room_player.ResetHints();
 		++player_count;
 	}
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
@@ -631,6 +639,7 @@ void GameRoom::StartGame(int requester_id)
 	PlaceTreasure();
 	GenerateHints();
 	PlaceBoxes(player_count);
+	hint_drops_.clear();
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·시작 돔) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
@@ -800,8 +809,20 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	flush();
 }
 
+static S2C_HINT_DROP_PACKET MakeHintDropPacket(std::uint16_t drop, const HintDrop& hint_drop, std::uint8_t grade)
+{
+	S2C_HINT_DROP_PACKET drop_p;
+	drop_p.header = { static_cast<std::uint16_t>(sizeof(drop_p)), S2C_HINT_DROP };
+	drop_p.drop = drop;
+	drop_p.location[0] = hint_drop.location.x;
+	drop_p.location[1] = hint_drop.location.y;
+	drop_p.location[2] = hint_drop.location.z;
+	drop_p.grade = grade;
+	return drop_p;
+}
+
 // 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.
-// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다.
+// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다. 게임 도중 합류하면 아직 줍지 않은 떨어진 힌트도 보낸다.
 void GameRoom::ProcessLoadedPlayers()
 {
 	bool has_loaded_player = false;
@@ -847,6 +868,11 @@ void GameRoom::ProcessLoadedPlayers()
 			if (is_game_started_) {
 				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
 				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
+				for (std::size_t index = 0; index < hint_drops_.size(); ++index) {
+					if (hint_drops_[index].is_picked) continue;
+					const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(index), hint_drops_[index], hints_[hint_drops_[index].hint].grade);
+					session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
+				}
 			}
 			else {
 				session->SendLargePacket(box_layout_packet_.data(), static_cast<int>(box_layout_packet_.size()));
@@ -920,7 +946,7 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 }
 
 // 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
-// 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
+// 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
 void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
 {
 	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
@@ -934,6 +960,7 @@ void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
 			auto session = FindSession(room_player);
 			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&stun_p), stun_p.header.size);
 		}
+		DropHint(target);
 		return;
 	}
 	S2C_STUN_GAUGE_PACKET gauge_p;
@@ -986,7 +1013,7 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 }
 
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
-// 힌트 상자는 그 힌트를, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
+// 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
 void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p)
 {
 	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
@@ -1002,22 +1029,8 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	int opener_size = sizeof(open_p);
 	const BoxContent& content = box_contents_[request_p.box];
 	if (content.kind == BoxContentKind::HINT) {
-		S2C_HINT_PACKET hint_p;
-		hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_HINT };
-		hint_p.hint = hints_[content.value];
-		std::memcpy(opener_buffer + opener_size, &hint_p, sizeof(hint_p));
-		opener_size += sizeof(hint_p);
-		// 방향 힌트는 지도에서 배제할 영역을 이어 보낸다. "있다"면 반대 방위 쪽, "없다"면 그 방위 쪽이 배제된다.
-		const HINT_ENTRY& hint = hint_p.hint;
-		const std::optional<float> boundary = hint.kind == static_cast<std::uint8_t>(HintKind::DIRECTION) ? server_->GetDirectionHintData().FindBoundary(hint.target, static_cast<HintDirection>(hint.detail)) : std::nullopt;
-		if (boundary) {
-			S2C_HINT_EXCLUSION_PACKET exclusion_p;
-			exclusion_p.header = { static_cast<std::uint16_t>(sizeof(exclusion_p)), S2C_HINT_EXCLUSION };
-			exclusion_p.direction = static_cast<std::uint8_t>(hint.is_true ? (hint.detail + 2) % static_cast<int>(HintDirection::COUNT) : hint.detail);
-			exclusion_p.boundary = *boundary;
-			std::memcpy(opener_buffer + opener_size, &exclusion_p, sizeof(exclusion_p));
-			opener_size += sizeof(exclusion_p);
-		}
+		opener.AddHint(content.value);
+		opener_size += AppendHintPackets(opener_buffer + opener_size, content.value);
 	}
 	else {
 		const std::uint8_t weapon = static_cast<std::uint8_t>(content.value);
@@ -1061,6 +1074,89 @@ bool GameRoom::CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& req
 	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
 	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
 	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+}
+
+// 힌트 목록 번호의 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 방향 힌트는 지도에서 배제할 영역을 이어 쓴다.
+// buffer는 힌트 패킷과 배제 영역 패킷이 모두 들어갈 크기여야 한다.
+int GameRoom::AppendHintPackets(char* buffer, std::uint32_t hint) const
+{
+	S2C_HINT_PACKET hint_p;
+	hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_HINT };
+	hint_p.hint = hints_[hint];
+	std::memcpy(buffer, &hint_p, sizeof(hint_p));
+	int size = sizeof(hint_p);
+	// "있다"면 반대 방위 쪽, "없다"면 그 방위 쪽이 배제된다.
+	const HINT_ENTRY& entry = hint_p.hint;
+	const std::optional<float> boundary = entry.kind == static_cast<std::uint8_t>(HintKind::DIRECTION) ? server_->GetDirectionHintData().FindBoundary(entry.target, static_cast<HintDirection>(entry.detail)) : std::nullopt;
+	if (boundary) {
+		S2C_HINT_EXCLUSION_PACKET exclusion_p;
+		exclusion_p.header = { static_cast<std::uint16_t>(sizeof(exclusion_p)), S2C_HINT_EXCLUSION };
+		exclusion_p.direction = static_cast<std::uint8_t>(entry.is_true ? (entry.detail + 2) % static_cast<int>(HintDirection::COUNT) : entry.detail);
+		exclusion_p.boundary = *boundary;
+		std::memcpy(buffer + size, &exclusion_p, sizeof(exclusion_p));
+		size += sizeof(exclusion_p);
+	}
+	return size;
+}
+
+// 기절한 플레이어가 가진 힌트 중 하나를 서버가 마지막으로 인정한 위치에 떨어뜨린다. 가진 힌트가 없으면 아무것도 하지 않는다.
+// 플레이 중인 방 전체에 드랍을 보내고, 떨어뜨린 사람에게는 드랍 뒤에 잃은 힌트를 이어 보낸다.
+void GameRoom::DropHint(Player& target)
+{
+	if (!target.HasMoveState()) return;
+	const std::optional<std::uint32_t> hint = target.TakeRandomHint();
+	if (!hint) return;
+	const float* location = target.GetMoveState().location;
+	const HintDrop& hint_drop = hint_drops_.emplace_back(HintDrop{ *hint, { location[0], location[1], location[2] }, false });
+	const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(hint_drops_.size() - 1), hint_drop, hints_[*hint].grade);
+	S2C_HINT_LOST_PACKET lost_p;
+	lost_p.header = { static_cast<std::uint16_t>(sizeof(lost_p)), S2C_HINT_LOST };
+	lost_p.hint = hints_[*hint];
+	char target_buffer[sizeof(drop_p) + sizeof(lost_p)];
+	std::memcpy(target_buffer, &drop_p, sizeof(drop_p));
+	std::memcpy(target_buffer + sizeof(drop_p), &lost_p, sizeof(lost_p));
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+		if (&room_player == &target) session->SendPacket(target_buffer, sizeof(target_buffer));
+		else session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
+	}
+}
+
+// 게임이 시작된 뒤 아직 줍지 않은 떨어진 힌트만 줍는다. 주우면 플레이 중인 방 전체에 줍기를 보내고, 주운 사람에게는 줍기 뒤에 힌트를 이어 보낸다.
+// 이미 가진 힌트도 보내고, 가진 힌트 목록에는 다시 넣지 않는다.
+void GameRoom::ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p)
+{
+	if (!is_game_started_ || request_p.drop >= hint_drops_.size() || hint_drops_[request_p.drop].is_picked || !CheckHintPickup(picker, hint_drops_[request_p.drop])) return;
+	HintDrop& hint_drop = hint_drops_[request_p.drop];
+	hint_drop.is_picked = true;
+
+	S2C_HINT_PICKUP_PACKET pickup_p;
+	pickup_p.header = { static_cast<std::uint16_t>(sizeof(pickup_p)), S2C_HINT_PICKUP };
+	pickup_p.drop = request_p.drop;
+	char picker_buffer[sizeof(pickup_p) + sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
+	std::memcpy(picker_buffer, &pickup_p, sizeof(pickup_p));
+	int picker_size = sizeof(pickup_p);
+	picker.AddHint(hint_drop.hint);
+	picker_size += AppendHintPackets(picker_buffer + picker_size, hint_drop.hint);
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+		if (&room_player == &picker) session->SendPacket(picker_buffer, picker_size);
+		else session->SendPacket(reinterpret_cast<char*>(&pickup_p), pickup_p.header.size);
+	}
+}
+
+// 캡슐 중심에서 떨어진 위치까지 수평 거리가 HINT_DROP_PICKUP_DISTANCE 안이어야 한다.
+// 공중에서 떨어뜨린 힌트는 그 아래 바닥에 놓이므로, 높이는 떨어진 위치보다 많이 높지 않고 그 아래 랜드스케이프에 선 높이보다 많이 낮지 않으면 된다.
+bool GameRoom::CheckHintPickup(const Player& picker, const HintDrop& drop) const
+{
+	if (!picker.HasMoveState()) return false;
+	const float* location = picker.GetMoveState().location;
+	if (std::hypot(location[0] - drop.location.x, location[1] - drop.location.y) > HINT_DROP_PICKUP_DISTANCE) return false;
+	if (location[2] > drop.location.z + HINT_DROP_PICKUP_HEIGHT) return false;
+	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(drop.location.x, drop.location.y);
+	return !ground || location[2] >= *ground + CHARACTER_CAPSULE_HALF_HEIGHT - HINT_DROP_PICKUP_HEIGHT;
 }
 
 // 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,

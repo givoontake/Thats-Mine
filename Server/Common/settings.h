@@ -73,6 +73,9 @@ constexpr float HINT_BOX_OPEN_DISTANCE = 150.0f; // F키로 열 때 캡슐 중�
 constexpr float HINT_BOX_CENTER_HEIGHTS[] = { 45.5f, 53.1f }; // 상자 바닥 가운데에서 상자 중심까지 상자 위쪽 방향 거리(cm). BoxKind 순서(0.7배 나무 상자, 선물)
 constexpr float HINT_BOX_SHOT_TARGET_HEIGHT = 30.0f; // 쏴서 열 때 막힘을 검사할 상자 쪽 끝점을 상자 바닥 가운데에서 올리는 높이(cm)
 constexpr float HINT_BOX_SHOT_END_MARGIN = 50.0f; // 쏴서 열 때 막힘 검사 선분의 상자 쪽 끝에서 빼는 길이(cm). 상자를 받친 가지나 바닥을 막힘으로 보지 않는다.
+// 떨어진 힌트. 기절하면 가진 힌트 중 하나를 그 자리에 떨어뜨리고, 게임이 끝날 때까지 남는다. 떨어뜨린 사람도 F키로 주울 수 있다.
+constexpr float HINT_DROP_PICKUP_DISTANCE = 150.0f; // F키로 주울 때 캡슐 중심에서 떨어진 위치까지 최대 수평 거리(cm)
+constexpr float HINT_DROP_PICKUP_HEIGHT = 100.0f; // 주울 때 캡슐 중심이 떨어진 위치보다 높아도 되는 거리이자, 그 아래 랜드스케이프에 선 높이보다 낮아도 되는 거리(cm)
 
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
