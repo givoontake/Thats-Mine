@@ -15,12 +15,13 @@ struct BoxPlacement {
 };
 
 // 상자 내용물 종류
-enum class BoxContentKind : std::uint8_t { HINT, AMMO };
+enum class BoxContentKind : std::uint8_t { HINT, AMMO, ITEM };
 
-// 상자 하나에 넣은 내용물. value는 HINT면 힌트 목록 번호, AMMO면 무기 값이다.
+// 상자 하나에 넣은 내용물. value는 HINT면 힌트 목록 번호, AMMO면 무기 값, ITEM이면 ItemKind 값이다. grade는 ITEM일 때만 쓰는 HintGrade 값이다.
 struct BoxContent {
 	BoxContentKind kind;
 	std::uint32_t value;
+	std::uint8_t grade = 0;
 };
 
 // 자연 배치 기준(나무·바위) 하나. 선물 자리와 보물 방향을 함께 가지며, 한 판에 이 중 한 자리만 쓴다.

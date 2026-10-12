@@ -8,5 +8,6 @@ enum class EWeaponType : uint8
 {
 	PICKAXE UMETA(DisplayName = "Pickaxe"),
 	SNIPER UMETA(DisplayName = "Sniper"),
-	PISTOL UMETA(DisplayName = "Pistol")
+	PISTOL UMETA(DisplayName = "Pistol"),
+	MAGNIFIER UMETA(DisplayName = "Magnifier")
 };

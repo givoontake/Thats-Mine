@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <optional>
 #include <string>
@@ -41,18 +42,31 @@ class Player
 	long long pickaxe_charge_start_ms_ = 0;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
 	std::vector<std::uint32_t> hint_indices_;
+	// 이번 게임에서 얻은 아이템. 돋보기 앞 종류는 가진 가장 높은 등급이고 없으면 NO_ITEM_GRADE다. 돋보기는 등급마다 가진 개수다.
+	std::array<std::uint8_t, static_cast<std::size_t>(ItemKind::MAGNIFIER)> item_grades_;
+	std::array<int, std::size(MAGNIFIER_RADII)> magnifier_counts_{};
+	// 진행 중인 돋보기 탐색의 등급, 시작 위치(cm, x·y), 끝나는 시각. 끝나는 시각이 0이면 탐색 중이 아니다.
+	std::uint8_t search_grade_ = 0;
+	float search_location_[2] = {};
+	long long search_end_ms_ = 0;
 
 	void ClearStun();
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채운다.
 	void UpdateReload(WeaponAmmo& ammo, const WeaponInfo& info, long long time_ms);
 	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채운다.
 	void UpdatePickaxeCharges(long long time_ms);
+	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
+	int GetPickaxeChargeMs() const;
+	float GetStunGaugeDecayPerSecond() const;
+	int GetStunGaugeDecayDelayMs() const;
 
 	void ClearMoveState();
 
 
 
 public:
+	static constexpr std::uint8_t NO_ITEM_GRADE = 0xFF;
+
 	Player();
 	~Player();
 
@@ -67,7 +81,8 @@ public:
 	bool HasMoveState() const { return move_time_ms_ != 0; }
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
 	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
-	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + STUN_PROTECTION_MS; }
+	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + GetStunProtectionMs(); }
+	int GetStunProtectionMs() const;
 	bool IsAwaitingMoveCorrection() const { return is_awaiting_move_correction_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
@@ -114,4 +129,16 @@ public:
 	int GetPickaxeCharges() const { return pickaxe_charges_; }
 	// 다음 1번이 찰 때까지 남은 시간(ms). 다 차 있으면 0이다.
 	long long GetPickaxeChargeRemainingMs(long long time_ms) const;
+	// 아이템을 가진다. 돋보기는 개수를 늘리고, 다른 종류는 지금보다 높은 등급일 때만 바꾼다.
+	void AddItem(ItemKind kind, std::uint8_t grade);
+	// 아이템을 모두 잃고 진행 중인 탐색을 취소한다.
+	void ResetItems();
+	// 그 등급의 돋보기가 있고 탐색 중이 아니면 지금 위치에서 탐색을 시작한다.
+	bool StartSearch(std::uint8_t grade, long long time_ms);
+	void CancelSearch() { search_end_ms_ = 0; }
+	bool IsSearchDue(long long time_ms) const { return search_end_ms_ != 0 && time_ms >= search_end_ms_; }
+	std::uint8_t GetSearchGrade() const { return search_grade_; }
+	const float* GetSearchLocation() const { return search_location_; }
+	// 끝난 탐색을 마친다. 시작 위치에서 MAGNIFIER_MOVE_TOLERANCE 넘게 벗어나지 않았으면 돋보기 하나를 쓰고 true를 돌려준다.
+	bool FinishSearch();
 };

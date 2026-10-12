@@ -60,4 +60,7 @@ constexpr std::uint8_t S2C_HINT_PICKUP = 88;
 constexpr std::uint8_t S2C_PUBLIC_HINT_TIME = 89;
 constexpr std::uint8_t S2C_TREASURE_FOUND = 90;
 constexpr std::uint8_t S2C_RETURN_TO_ROOM = 91;
+constexpr std::uint8_t S2C_ITEM = 92;
+constexpr std::uint8_t C2S_SEARCH = 93;
+constexpr std::uint8_t S2C_SEARCH_RESULT = 94;
 constexpr std::uint8_t S2C_INFO = 100;

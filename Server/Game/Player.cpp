@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <random>
 #include "Player.h"
@@ -7,6 +8,7 @@
 Player::Player()
 {
 	room_player_state_.store(RoomPlayerState::WAIT);
+	ResetItems();
 }
 
 Player::~Player()
@@ -40,6 +42,7 @@ void Player::ClearPlayer()
 	ammo_.clear();
 	ResetPickaxe();
 	ResetHints();
+	ResetItems();
 }
 
 void Player::ResetGameData()
@@ -52,6 +55,7 @@ void Player::ResetGameData()
 	ammo_.clear();
 	ResetPickaxe();
 	ResetHints();
+	ResetItems();
 }
 
 void Player::ResetAmmo(std::size_t weapon_count)
@@ -122,10 +126,11 @@ void Player::ResetPickaxe()
 void Player::UpdatePickaxeCharges(long long time_ms)
 {
 	if (pickaxe_charge_start_ms_ == 0) return;
-	const long long gained = (time_ms - pickaxe_charge_start_ms_) / PICKAXE_CHARGE_MS;
+	const int charge_ms = GetPickaxeChargeMs();
+	const long long gained = (time_ms - pickaxe_charge_start_ms_) / charge_ms;
 	if (gained <= 0) return;
 	pickaxe_charges_ = static_cast<int>(std::min<long long>(PICKAXE_MAX_CHARGES, pickaxe_charges_ + gained));
-	pickaxe_charge_start_ms_ = pickaxe_charges_ == PICKAXE_MAX_CHARGES ? 0 : pickaxe_charge_start_ms_ + gained * PICKAXE_CHARGE_MS;
+	pickaxe_charge_start_ms_ = pickaxe_charges_ == PICKAXE_MAX_CHARGES ? 0 : pickaxe_charge_start_ms_ + gained * charge_ms;
 }
 
 bool Player::TryUsePickaxe(long long time_ms)
@@ -141,7 +146,70 @@ bool Player::TryUsePickaxe(long long time_ms)
 long long Player::GetPickaxeChargeRemainingMs(long long time_ms) const
 {
 	if (pickaxe_charge_start_ms_ == 0) return 0;
-	return PICKAXE_CHARGE_MS - (time_ms - pickaxe_charge_start_ms_) % PICKAXE_CHARGE_MS;
+	const int charge_ms = GetPickaxeChargeMs();
+	return charge_ms - (time_ms - pickaxe_charge_start_ms_) % charge_ms;
+}
+
+int Player::GetPickaxeChargeMs() const
+{
+	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::PICKAXE_CHARGE)];
+	return grade == NO_ITEM_GRADE ? PICKAXE_CHARGE_MS : PICKAXE_CHARGE_MS - ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[grade];
+}
+
+float Player::GetStunGaugeDecayPerSecond() const
+{
+	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::STUN_GAUGE_DECAY)];
+	return grade == NO_ITEM_GRADE ? STUN_GAUGE_DECAY_PER_SECOND : ITEM_STUN_GAUGE_DECAYS_PER_SECOND[grade];
+}
+
+int Player::GetStunGaugeDecayDelayMs() const
+{
+	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::STUN_GAUGE_DECAY_DELAY)];
+	return grade == NO_ITEM_GRADE ? STUN_GAUGE_DECAY_DELAY_MS : ITEM_STUN_GAUGE_DECAY_DELAYS_MS[grade];
+}
+
+int Player::GetStunProtectionMs() const
+{
+	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::STUN_PROTECTION)];
+	return grade == NO_ITEM_GRADE ? STUN_PROTECTION_MS : ITEM_STUN_PROTECTIONS_MS[grade];
+}
+
+void Player::AddItem(ItemKind kind, std::uint8_t grade)
+{
+	if (grade >= magnifier_counts_.size()) return;
+	if (kind == ItemKind::MAGNIFIER) {
+		++magnifier_counts_[grade];
+		return;
+	}
+	if (kind >= ItemKind::MAGNIFIER) return;
+	// 등급 값은 높은 등급일수록 작다.
+	std::uint8_t& current = item_grades_[static_cast<std::size_t>(kind)];
+	if (current == NO_ITEM_GRADE || grade < current) current = grade;
+}
+
+void Player::ResetItems()
+{
+	item_grades_.fill(NO_ITEM_GRADE);
+	magnifier_counts_.fill(0);
+	search_end_ms_ = 0;
+}
+
+bool Player::StartSearch(std::uint8_t grade, long long time_ms)
+{
+	if (grade >= magnifier_counts_.size() || magnifier_counts_[grade] <= 0 || search_end_ms_ != 0 || !HasMoveState()) return false;
+	search_grade_ = grade;
+	search_location_[0] = move_state_.location[0];
+	search_location_[1] = move_state_.location[1];
+	search_end_ms_ = time_ms + MAGNIFIER_SEARCH_MS;
+	return true;
+}
+
+bool Player::FinishSearch()
+{
+	search_end_ms_ = 0;
+	if (std::hypot(move_state_.location[0] - search_location_[0], move_state_.location[1] - search_location_[1]) > MAGNIFIER_MOVE_TOLERANCE) return false;
+	--magnifier_counts_[search_grade_];
+	return true;
 }
 
 bool Player::ClaimShot(std::uint8_t weapon)
@@ -176,7 +244,8 @@ void Player::ClearStun()
 float Player::GetStunGauge(long long time_ms) const
 {
 	if (IsStunned(time_ms)) return STUN_GAUGE_MAX;
-	return std::max(0.0f, stun_gauge_ - STUN_GAUGE_DECAY_PER_SECOND * (time_ms - stun_gauge_time_ms_) / 1000.0f);
+	const long long decay_ms = std::max(0LL, time_ms - stun_gauge_time_ms_ - GetStunGaugeDecayDelayMs());
+	return std::max(0.0f, stun_gauge_ - GetStunGaugeDecayPerSecond() * decay_ms / 1000.0f);
 }
 
 // 기절하면 끝나는 시각에 게이지가 0이 되도록 기록해 두어, 끝난 뒤부터 0에서 다시 계산한다.

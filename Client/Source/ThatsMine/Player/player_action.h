@@ -8,5 +8,6 @@ enum class EPlayerAction : uint8
 	FIRE,
 	MELEE,
 	RELOAD,
-	PICKUP
+	PICKUP,
+	SEARCH
 };

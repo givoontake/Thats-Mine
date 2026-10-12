@@ -14,10 +14,13 @@ enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 enum class TowerKind : std::uint8_t { TOWER_02, TOWER_04 };
 
 // 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다.
-enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
+enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP, SEARCH };
 
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
-enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL };
+enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
+
+// 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 돋보기 앞까지는 얻으면 계속 적용되는 아이템이다.
+enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUGE_DECAY_DELAY, STUN_PROTECTION, MAGNIFIER, COUNT };
 
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
 enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER };
@@ -150,11 +153,12 @@ struct S2C_STUN_GAUGE_PACKET {
 	float gauge;
 };
 
-// 플레이어가 기절했다. 방 전체에 보낸다. 끝나면 그 플레이어의 게이지는 0이다.
+// 플레이어가 기절했다. 방 전체에 보낸다. 끝나면 그 플레이어의 게이지는 0이고, 이어서 protection_ms 동안 보호된다.
 struct S2C_STUN_PACKET {
 	PACKET_HEADER header;
 	int player_id;
 	std::uint32_t duration_ms;
+	std::uint32_t protection_ms;
 };
 
 // 서버가 이동을 인정하지 않아 마지막으로 인정한 위치(캡슐 중심, cm)로 되돌린다. 받은 클라이언트는 그 위치로 바로 옮기고 같은 번호로 확인을 보낸다.
@@ -292,6 +296,28 @@ struct S2C_TREASURE_FOUND_PACKET {
 	int player_id;
 	float location[3];
 	float yaw;
+};
+
+// 연 상자에 든 아이템. 종류는 ItemKind, 등급은 HintGrade다. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다.
+struct S2C_ITEM_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t kind;
+	std::uint8_t grade;
+};
+
+// 그 등급의 돋보기로 탐색을 시작한다. 서버는 MAGNIFIER_SEARCH_MS 뒤에 결과를 보낸다.
+struct C2S_SEARCH_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t grade;
+};
+
+// 끝난 돋보기 탐색의 결과. 탐색한 사람에게만 보낸다. 위치는 서버가 탐색 시작을 받았을 때의 캡슐 중심(cm, x·y)이고,
+// is_found면 그 위치에서 등급의 반경 안에 보물이 있다. 돋보기는 이 결과를 보낼 때 하나 쓴다.
+struct S2C_SEARCH_RESULT_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t grade;
+	bool is_found;
+	float location[2];
 };
 
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.

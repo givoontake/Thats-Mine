@@ -9,15 +9,15 @@ class UBorder;
 class UHorizontalBox;
 class UTextBlock;
 
-// 힌트 획득 안내. 화면 오른쪽 아래 탄 표시 위에 "새 힌트 획득!" 문구를 띄우고, 그 아래로 등급과 문장을 담은 패널이 오른쪽에서 밀려 들어온다.
-// 받은 힌트는 줄을 세워 하나씩 DISPLAY_SECONDS 동안 보이고, 끝날 때 패널은 다시 오른쪽으로 밀려 나가고 문구는 흐려진 뒤 다음 힌트를 보인다.
+// 힌트·아이템 획득 안내. 화면 오른쪽 아래 탄 표시 위에 "새 힌트 획득!" 같은 제목을 띄우고, 그 아래로 등급과 문장을 담은 패널이 오른쪽에서 밀려 들어온다.
+// 받은 안내는 줄을 세워 하나씩 DISPLAY_SECONDS 동안 보이고, 끝날 때 패널은 다시 오른쪽으로 밀려 나가고 제목은 흐려진 뒤 다음 안내를 보인다.
 UCLASS()
 class THATSMINE_API UHintPopupWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
 public:
-	void Enqueue(const FInventoryHint& hint);
+	void Enqueue(const FInventoryHint& hint, const FText& title);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -42,7 +42,12 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UHorizontalBox> content_;
 
-	TArray<FInventoryHint> queue_;
+	struct FPopupEntry
+	{
+		FInventoryHint hint;
+		FText title;
+	};
+	TArray<FPopupEntry> queue_;
 	// 지금 안내를 보인 시간. 보이는 안내가 없으면 음수다.
 	float elapsed_ = -1.0f;
 	// 새 내용을 넣은 뒤 배치가 끝날 때까지 기다릴 남은 프레임 수. 줄바꿈 글자는 배치에 몇 프레임이 걸려 그동안 빈 패널이 보이지 않게 한다.

@@ -29,7 +29,6 @@ TSharedRef<SWidget> UHintPopupWidget::RebuildWidget()
 		box_slot->SetAutoSize(true);
 
 		title_ = WidgetTree->ConstructWidget<UTextBlock>();
-		title_->SetText(NSLOCTEXT("Hint", "NewHint", "새 힌트 획득!"));
 		// 밝은 바닥 위에서도 읽히게 진한 외곽선을 두른다.
 		FSlateFontInfo title_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24);
 		title_font.OutlineSettings.OutlineSize = 2;
@@ -59,9 +58,9 @@ TSharedRef<SWidget> UHintPopupWidget::RebuildWidget()
 	return Super::RebuildWidget();
 }
 
-void UHintPopupWidget::Enqueue(const FInventoryHint& hint)
+void UHintPopupWidget::Enqueue(const FInventoryHint& hint, const FText& title)
 {
-	queue_.Add(hint);
+	queue_.Add({ hint, title });
 	if (elapsed_ < 0.0f)
 	{
 		ShowNext();
@@ -75,7 +74,8 @@ void UHintPopupWidget::ShowNext()
 		elapsed_ = -1.0f;
 		return;
 	}
-	const FInventoryHint hint = queue_[0];
+	const FInventoryHint hint = queue_[0].hint;
+	title_->SetText(queue_[0].title);
 	queue_.RemoveAt(0);
 	content_->ClearChildren();
 	UHintGradeBadge* badge = WidgetTree->ConstructWidget<UHintGradeBadge>();

@@ -8,7 +8,9 @@
 #include "weapon_ammo_state.h"
 #include "equipment_display.h"
 #include "inventory_hint.h"
+#include "inventory_item.h"
 #include "player_action.h"
+#include "item_kind.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -18,6 +20,7 @@ class UInputAction;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UPhysicsAsset;
+class USearchGaugeWidget;
 class UStunGaugeWidget;
 class UHintPopupWidget;
 class UUserWidget;
@@ -28,6 +31,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnShotFired, const FShotResult&, sh
 
 DECLARE_MULTICAST_DELEGATE(FOnEquipmentChanged);
 DECLARE_MULTICAST_DELEGATE(FOnHintsChanged);
+DECLARE_MULTICAST_DELEGATE(FOnItemsChanged);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnActionStarted, EPlayerAction, EWeaponType);
 
 UCLASS()
@@ -54,8 +58,8 @@ public:
 	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다.
 	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
-	// 기절이 끝나면 보호 시간 동안 머리 위에 방패 이펙트를 켜고, 내 캐릭터면 게이지 아이콘을 방패로 바꿔 남은 초를 표시한다.
-	void StartStun(float duration_seconds);
+	// 기절이 끝나면 보호 시간 동안 머리 위에 방패 이펙트를 켜고, 내 캐릭터면 게이지 아이콘을 방패로 바꿔 남은 초를 표시한다. 진행 중인 탐색은 취소한다.
+	void StartStun(float duration_seconds, float protection_seconds);
 	virtual void Jump() override;
 
 	// 공격한 쪽 위치를 받아 화면 중앙 둘레에 피격 방향을 표시한다. 내가 조종하는 캐릭터에만 위젯이 있다.
@@ -84,6 +88,17 @@ public:
 	void MarkHintsRead();
 	FOnEquipmentChanged on_equipment_changed_;
 	FOnHintsChanged on_hints_changed_;
+
+	// 상자에서 얻은 아이템을 가지고 아이템 획득 안내를 띄운다. 돋보기는 개수를 늘리고, 다른 종류는 지금보다 높은 등급일 때만 바꾼다.
+	void AddItem(EItemKind kind, EHintGrade grade);
+	// 서버가 탐색을 마쳐 그 등급의 돋보기를 하나 쓴다. 들고 있는 등급이 다 떨어지면 남은 등급으로 바꾸고, 모두 떨어지면 곡괭이를 든다.
+	void ConsumeMagnifier(EHintGrade grade);
+	// 가진 아이템을 인벤토리에 보일 순서(돋보기 먼저, 그다음 종류 순)로 돌려준다.
+	TArray<FInventoryItem> GetInventoryItems() const;
+	int32 GetMagnifierCount(EHintGrade grade) const { return magnifier_counts_[static_cast<int32>(grade)]; }
+	// 돋보기로 탐색 중인지. 탐색 중에는 움직이지 않고 고개도 탐색 동작을 따른다.
+	bool IsSearching() const { return is_searching_; }
+	FOnItemsChanged on_items_changed_;
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Weapon")
 	void SelectWeapon(EWeaponType weapon);
@@ -219,6 +234,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UDamageDirectionWidget> damage_direction_widget_;
 
+	UPROPERTY(Transient)
+	TObjectPtr<USearchGaugeWidget> search_gauge_widget_;
+
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
 	// 곡괭이 사용 가능 횟수(pickaxe_charges_)가 최대치보다 적을 때 지금 1번이 차기 시작한 월드 시각(초)
 	double pickaxe_charge_start_ = 0.0;
@@ -243,9 +261,18 @@ private:
 	bool is_stunned_ = false;
 	FTimerHandle stun_timer_;
 	FTimerHandle stun_gauge_timer_;
-	// 기절이 끝난 뒤 보호가 끝나는 시각
+	// 기절이 끝난 뒤 보호 시간과, 보호가 끝나는 시각
+	float protection_seconds_ = 0.0f;
 	double protection_end_time_ = 0.0;
 	FTimerHandle protection_timer_;
+
+	// 돋보기 앞 아이템 종류마다 가진 가장 높은 등급. 없으면 비어 있다.
+	TOptional<EHintGrade> item_grades_[static_cast<int32>(EItemKind::MAGNIFIER)];
+	// 등급마다 가진 돋보기 개수와, 클릭하면 쓸 등급
+	int32 magnifier_counts_[static_cast<int32>(EHintGrade::A) + 1] = {};
+	EHintGrade magnifier_grade_ = EHintGrade::S;
+	bool is_searching_ = false;
+	FTimerHandle search_timer_;
 
 	void Move(const FInputActionValue& value);
 	void Look(const FInputActionValue& value);
@@ -269,4 +296,15 @@ private:
 	void EndProtection();
 	// 머리 위 상태 이펙트를 켜고 끈다.
 	void SetHeadEffectActive(const TSoftObjectPtr<UNiagaraSystem>& effect, TObjectPtr<UNiagaraComponent>& component, bool is_active);
+	// 들고 있는 등급의 돋보기로 탐색 동작을 시작하고 서버에 탐색을 요청한다.
+	void SearchWithMagnifier();
+	// 탐색 상태를 MAGNIFIER_SEARCH_MS 동안 둔다. 내 캐릭터면 화면 가운데에 탐색 게이지를 채운다.
+	void StartSearch();
+	void EndSearch();
+	// 힌트·아이템 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다.
+	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title);
+	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
+	double GetPickaxeChargeSeconds() const;
+	float GetStunGaugeDecayPerSecond() const;
+	float GetStunGaugeDecayDelay() const;
 };

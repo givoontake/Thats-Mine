@@ -204,6 +204,10 @@ void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 			PaintExclusion(received.direction, received.boundary);
 		}
 	}
+	for (const FSearchExclusion& search : search_exclusions_)
+	{
+		PaintSearchExclusion(search);
+	}
 	on_exclusion_mask_changed_.Broadcast();
 }
 
@@ -236,6 +240,13 @@ void UHintSubsystem::HandlePublicHintTimePacket(const TArray<uint8>& payload)
 
 void UHintSubsystem::ShowPublicHintNotice(int32 seconds)
 {
+	ShowNotice(seconds >= 60
+		? FText::Format(NSLOCTEXT("Hint", "PublicHintMinutes", "{0}분 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds / 60))
+		: FText::Format(NSLOCTEXT("Hint", "PublicHintSeconds", "{0}초 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds)));
+}
+
+void UHintSubsystem::ShowNotice(const FText& text)
+{
 	APlayerController* controller = GetWorld()->GetFirstPlayerController();
 	if (!notice_widget_ && controller && controller->IsLocalController())
 	{
@@ -247,9 +258,39 @@ void UHintSubsystem::ShowPublicHintNotice(int32 seconds)
 	}
 	if (notice_widget_)
 	{
-		notice_widget_->ShowNotice(seconds >= 60
-			? FText::Format(NSLOCTEXT("Hint", "PublicHintMinutes", "{0}분 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds / 60))
-			: FText::Format(NSLOCTEXT("Hint", "PublicHintSeconds", "{0}초 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds)));
+		notice_widget_->ShowNotice(text);
+	}
+}
+
+void UHintSubsystem::AddSearchResult(const FVector2D& center, float radius, bool is_found)
+{
+	const FSearchExclusion& search = search_exclusions_.Add_GetRef({ center, radius, is_found });
+	PaintSearchExclusion(search);
+	on_exclusion_mask_changed_.Broadcast();
+	ShowNotice(is_found
+		? FText::Format(NSLOCTEXT("Hint", "SearchFound", "{0}m 이내에 보물을 발견했습니다!"), FText::AsNumber(FMath::RoundToInt32(radius / 100.0f)))
+		: NSLOCTEXT("Hint", "SearchNotFound", "발견하지 못했습니다.."));
+}
+
+// 칸 가운데가 탐색 원 안인지로 칠한다. 보물을 찾았으면 원 밖, 못 찾았으면 원 안의 칸을 배제한다.
+void UHintSubsystem::PaintSearchExclusion(const FSearchExclusion& search)
+{
+	if (exclusion_mask_.IsEmpty())
+	{
+		exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
+	}
+	for (int32 row = 0; row < EXCLUSION_MASK_SIZE; ++row)
+	{
+		const double x = MAP_MIN[0] + (row + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[0] - MAP_MIN[0]);
+		for (int32 column = 0; column < EXCLUSION_MASK_SIZE; ++column)
+		{
+			const double y = MAP_MAX[1] - (column + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[1] - MAP_MIN[1]);
+			const bool is_inside = FVector2D::DistSquared(FVector2D(x, y), search.center) <= FMath::Square(static_cast<double>(search.radius));
+			if (is_inside != search.is_found)
+			{
+				exclusion_mask_[row * EXCLUSION_MASK_SIZE + column] = 1;
+			}
+		}
 	}
 }
 

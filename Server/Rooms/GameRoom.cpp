@@ -314,6 +314,13 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		ProcessHintPickup(*room_player, *reinterpret_cast<C2S_HINT_PICKUP_PACKET*>(packet));
 		break;
 	}
+	case C2S_SEARCH: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
+		ProcessSearchStart(*room_player, *reinterpret_cast<C2S_SEARCH_PACKET*>(packet));
+		break;
+	}
 	case C2S_LOAD_COMPLETE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
@@ -613,6 +620,7 @@ void GameRoom::StartGame(int requester_id)
 		room_player.ResetAmmo(server_->GetHitboxData().GetWeaponCount());
 		room_player.ResetPickaxe();
 		room_player.ResetHints();
+		room_player.ResetItems();
 		++player_count;
 	}
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
@@ -713,7 +721,8 @@ void GameRoom::GenerateHints()
 	}
 }
 
-// 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를 만들어 섞고, 그 수만큼 상자 자리를 골라 상자마다 하나씩 넣는다.
+// 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를 만들어 섞고,
+// 그 수만큼 상자 자리를 골라 상자마다 하나씩 넣는다.
 // 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다. 배치 패킷은 상자 수에 맞춘 크기로 만든다.
 void GameRoom::PlaceBoxes(int player_count)
 {
@@ -724,6 +733,11 @@ void GameRoom::PlaceBoxes(int player_count)
 	}
 	for (std::uint32_t weapon = 0; weapon < std::size(AMMO_BOX_ROUNDS); ++weapon) {
 		if (AMMO_BOX_ROUNDS[weapon] > 0) box_contents_.insert(box_contents_.end(), AMMO_BOX_COUNT * global_multiplier, BoxContent{ BoxContentKind::AMMO, weapon });
+	}
+	for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(ItemKind::COUNT); ++kind) {
+		for (std::uint8_t grade = 0; grade < std::size(ITEM_BOX_COUNTS); ++grade) {
+			box_contents_.insert(box_contents_.end(), ITEM_BOX_COUNTS[grade] * global_multiplier, BoxContent{ BoxContentKind::ITEM, kind, grade });
+		}
 	}
 	std::mt19937 random(CreateRandomSeed());
 	std::shuffle(box_contents_.begin(), box_contents_.end(), random);
@@ -778,6 +792,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	ProcessLoadedPlayers();
 	ProcessGameStart();
 	ProcessPublicHint();
+	ProcessSearches();
 	if (game_end_ms_ != 0 && tick_time_ms >= game_end_ms_) {
 		ClearGame();
 		return;
@@ -927,10 +942,11 @@ static S2C_AMMO_PACKET MakeAmmoPacket(std::uint8_t weapon, const WeaponAmmo& amm
 }
 
 // 총 발사와 재장전은 서버 탄약 상태로, 곡괭이 휘두르기는 사용 가능 횟수로 확인해 인정한다.
-// 인정하지 않으면 그 사람에게 서버 상태를 보내 클라이언트를 맞춘다. 그 밖의 동작은 그대로 인정한다.
+// 인정하지 않으면 그 사람에게 서버 상태를 보내 클라이언트를 맞춘다. 탐색은 탐색 시작 요청으로만 받고, 그 밖의 동작은 그대로 인정한다.
 bool GameRoom::AcceptAction(Player& player, Session& session, const C2S_ACTION_PACKET& request_p)
 {
 	const PlayerAction action = static_cast<PlayerAction>(request_p.action);
+	if (action == PlayerAction::SEARCH) return false;
 	if (action == PlayerAction::MELEE && request_p.weapon == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
 		if (player.TryUsePickaxe(tick_time_ms_)) {
 			DigTreasure(player);
@@ -975,16 +991,18 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 }
 
 // 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
-// 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
+// 최대치에 닿으면 진행 중인 탐색을 취소하고 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
 void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
 {
 	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
 	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
 		target.StopMovement();
+		target.CancelSearch();
 		S2C_STUN_PACKET stun_p;
 		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN };
 		stun_p.player_id = request_p.target_player_id;
 		stun_p.duration_ms = STUN_DURATION_MS;
+		stun_p.protection_ms = static_cast<std::uint32_t>(target.GetStunProtectionMs());
 		for (auto& room_player : room_players_) {
 			auto session = FindSession(room_player);
 			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&stun_p), stun_p.header.size);
@@ -1043,6 +1061,7 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
 // 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
+// 아이템 상자는 그 아이템을 가진 것으로 기록하고 보낸다.
 void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p)
 {
 	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
@@ -1053,13 +1072,22 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
 	open_p.box = request_p.box;
-	char opener_buffer[sizeof(open_p) + std::max(sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET), sizeof(S2C_AMMO_PACKET))];
+	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET) })];
 	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
 	int opener_size = sizeof(open_p);
 	const BoxContent& content = box_contents_[request_p.box];
 	if (content.kind == BoxContentKind::HINT) {
 		opener.AddHint(content.value);
 		opener_size += AppendHintPackets(opener_buffer + opener_size, content.value);
+	}
+	else if (content.kind == BoxContentKind::ITEM) {
+		opener.AddItem(static_cast<ItemKind>(content.value), content.grade);
+		S2C_ITEM_PACKET item_p;
+		item_p.header = { static_cast<std::uint16_t>(sizeof(item_p)), S2C_ITEM };
+		item_p.kind = static_cast<std::uint8_t>(content.value);
+		item_p.grade = content.grade;
+		std::memcpy(opener_buffer + opener_size, &item_p, sizeof(item_p));
+		opener_size += sizeof(item_p);
 	}
 	else {
 		const std::uint8_t weapon = static_cast<std::uint8_t>(content.value);
@@ -1181,6 +1209,37 @@ void GameRoom::ProcessPublicHint()
 			session->SendPacket(hint_buffer, hint_size);
 		}
 		SendPublicHintTime(*session);
+	}
+}
+
+// 게임이 시작된 뒤 그 등급의 돋보기가 있으면 탐색을 시작하고, 다른 플레이어에게 탐색 동작을 중계한다.
+void GameRoom::ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p)
+{
+	if (!is_game_started_ || pending_action_count_ >= pending_actions_.size() || !searcher.StartSearch(request_p.grade, tick_time_ms_)) return;
+	auto& action_p = pending_actions_[pending_action_count_++];
+	action_p.header = { sizeof(action_p), S2C_ACTION };
+	action_p.player_id = searcher.GetSessionKey().player_id;
+	action_p.server_time_ms = tick_time_ms_;
+	action_p.action = static_cast<std::uint8_t>(PlayerAction::SEARCH);
+	action_p.weapon = static_cast<std::uint8_t>(WeaponType::MAGNIFIER);
+	searcher.GetPose().StartAction(action_p.action, action_p.weapon, tick_time_ms_);
+}
+
+// 탐색 시간이 끝난 플레이어의 탐색을 마친다. 시작 위치에서 벗어나지 않았으면 돋보기 하나를 쓰고,
+// 시작 위치에서 보물까지 수평 거리가 그 등급의 반경 안인지 탐색한 사람에게만 보낸다.
+void GameRoom::ProcessSearches()
+{
+	for (auto& room_player : room_players_) {
+		if (!room_player.HasSession() || !room_player.IsSearchDue(tick_time_ms_) || !room_player.FinishSearch()) continue;
+		const std::uint8_t grade = room_player.GetSearchGrade();
+		const float* location = room_player.GetSearchLocation();
+		S2C_SEARCH_RESULT_PACKET result_p;
+		result_p.header = { static_cast<std::uint16_t>(sizeof(result_p)), S2C_SEARCH_RESULT };
+		result_p.grade = grade;
+		result_p.is_found = std::hypot(treasure_placement_.location.x - location[0], treasure_placement_.location.y - location[1]) <= MAGNIFIER_RADII[grade];
+		result_p.location[0] = location[0];
+		result_p.location[1] = location[1];
+		if (auto session = FindSession(room_player)) session->SendPacket(reinterpret_cast<char*>(&result_p), result_p.header.size);
 	}
 }
 

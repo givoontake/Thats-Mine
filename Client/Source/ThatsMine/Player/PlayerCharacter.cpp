@@ -22,9 +22,11 @@
 #include "Interaction/BoxLayoutSubsystem.h"
 #include "Interaction/HintDropSubsystem.h"
 #include "Interaction/HintBox.h"
+#include "Interaction/ItemSubsystem.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
 #include "UI/Effects/DamageDirectionWidget.h"
+#include "UI/Effects/SearchGaugeWidget.h"
 #include "UI/Effects/StunGaugeWidget.h"
 #include "UI/Hint/HintPopupWidget.h"
 #include "settings.h"
@@ -54,6 +56,8 @@ static constexpr float STUN_GAUGE_DISPLAY_INTERVAL = 0.05f;
 static constexpr float PROTECTION_DISPLAY_INTERVAL = 0.1f;
 // 곡괭이 충전 남은 시간 표시를 고치는 간격(초)
 static constexpr float PICKAXE_CHARGE_DISPLAY_INTERVAL = 0.25f;
+// 탐색 게이지를 화면 가운데에서 아래로 띄우는 거리
+static constexpr float SEARCH_GAUGE_CENTER_OFFSET = 90.0f;
 
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
@@ -102,6 +106,15 @@ APlayerCharacter::APlayerCharacter()
 	pistol.primary_action.play_rate = (14.0f / 30.0f) / 0.18f;
 	pistol.uses_pistol_pose = true;
 	weapon_settings_.Add(EWeaponType::PISTOL, pistol);
+
+	// 돋보기는 곡괭이 자리에 들고, 클릭하면 탐색 동작을 MAGNIFIER_SEARCH_MS 동안 재생한다.
+	FWeaponSettings magnifier;
+	magnifier.display_name = NSLOCTEXT("Equipment", "Magnifier", "MAGNIFIER");
+	magnifier.selection_key = EKeys::Four;
+	magnifier.mesh.ComponentProperty = TEXT("Magnifier");
+	magnifier.primary_action.play_rate = 1.0f;
+	magnifier.uses_pickaxe_pose = true;
+	weapon_settings_.Add(EWeaponType::MAGNIFIER, magnifier);
 
 	first_person_camera_reference_.ComponentProperty = TEXT("FirstPersonCamera");
 	third_person_camera_reference_.ComponentProperty = TEXT("ThirdPersonCamera");
@@ -154,10 +167,16 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
 	GetWorldTimerManager().ClearTimer(protection_timer_);
 	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
+	GetWorldTimerManager().ClearTimer(search_timer_);
 	if (equipment_widget_)
 	{
 		equipment_widget_->RemoveFromParent();
 		equipment_widget_ = nullptr;
+	}
+	if (search_gauge_widget_)
+	{
+		search_gauge_widget_->RemoveFromParent();
+		search_gauge_widget_ = nullptr;
 	}
 	if (stun_gauge_widget_)
 	{
@@ -257,7 +276,7 @@ void APlayerCharacter::Interact()
 
 void APlayerCharacter::Move(const FInputActionValue& value)
 {
-	if (is_stunned_)
+	if (is_stunned_ || is_searching_)
 	{
 		return;
 	}
@@ -327,17 +346,36 @@ void APlayerCharacter::OnMovementModeChanged(EMovementMode previous_movement_mod
 
 void APlayerCharacter::SelectWeaponFromKey(FKey key)
 {
-	if (is_stunned_)
+	if (is_stunned_ || is_searching_)
 	{
 		return;
 	}
 	for (const auto& [weapon, settings] : weapon_settings_)
 	{
-		if (settings.selection_key == key)
+		if (settings.selection_key != key)
 		{
-			SelectWeapon(weapon);
-			return;
+			continue;
 		}
+		// 돋보기는 가진 것이 있어야 든다. 들고 있을 때 다시 누르면 다른 등급도 있으면 쓸 등급을 바꾼다.
+		if (weapon == EWeaponType::MAGNIFIER)
+		{
+			const EHintGrade other_grade = magnifier_grade_ == EHintGrade::S ? EHintGrade::A : EHintGrade::S;
+			if (current_weapon_ == EWeaponType::MAGNIFIER)
+			{
+				if (GetMagnifierCount(other_grade) > 0)
+				{
+					magnifier_grade_ = other_grade;
+					UpdateEquipmentDisplay();
+				}
+				return;
+			}
+			if (GetMagnifierCount(magnifier_grade_) + GetMagnifierCount(other_grade) == 0)
+			{
+				return;
+			}
+		}
+		SelectWeapon(weapon);
+		return;
 	}
 }
 
@@ -507,6 +545,10 @@ void APlayerCharacter::PrimaryAction()
 		{
 			FireHitscan(settings->hitscan);
 		}
+		else if (current_weapon_ == EWeaponType::MAGNIFIER)
+		{
+			SearchWithMagnifier();
+		}
 		else
 		{
 			// 곡괭이는 사용 가능 횟수가 있어야 휘두르고, 최대치에서 쓰면 충전을 시작한다.
@@ -528,6 +570,62 @@ void APlayerCharacter::PrimaryAction()
 			}
 			on_action_started_.Broadcast(EPlayerAction::MELEE, current_weapon_);
 		}
+	}
+}
+
+void APlayerCharacter::SearchWithMagnifier()
+{
+	const FWeaponSettings* settings = GetCurrentWeaponSettings();
+	if (is_searching_ || GetMagnifierCount(magnifier_grade_) <= 0 || !settings || !PlayAction(settings->primary_action))
+	{
+		return;
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+	StartSearch();
+	GetWorld()->GetSubsystem<UItemSubsystem>()->RequestSearch(magnifier_grade_);
+}
+
+void APlayerCharacter::StartSearch()
+{
+	is_searching_ = true;
+	GetWorldTimerManager().SetTimer(search_timer_, this, &APlayerCharacter::EndSearch, MAGNIFIER_SEARCH_MS / 1000.0f, false);
+	APlayerController* controller = Cast<APlayerController>(GetController());
+	if (!controller || !controller->IsLocalController())
+	{
+		return;
+	}
+	if (!search_gauge_widget_)
+	{
+		search_gauge_widget_ = CreateWidget<USearchGaugeWidget>(controller, USearchGaugeWidget::StaticClass());
+		if (search_gauge_widget_)
+		{
+			// 화면 가운데 조금 아래에 둔다. 뷰포트의 크기·위치 설정 함수는 기준점을 왼쪽 위로 되돌리므로 한 번에 정해 붙인다.
+			FGameViewportWidgetSlot slot;
+			slot.Anchors = FAnchors(0.5f, 0.5f);
+			slot.Alignment = FVector2D(0.5, 0.5);
+			slot.Offsets = FMargin(0.0f, SEARCH_GAUGE_CENTER_OFFSET, UStunGaugeWidget::WIDGET_WIDTH, UStunGaugeWidget::WIDGET_HEIGHT);
+			slot.ZOrder = 10;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(search_gauge_widget_, controller->GetLocalPlayer(), slot);
+		}
+	}
+	if (search_gauge_widget_)
+	{
+		search_gauge_widget_->Start(MAGNIFIER_SEARCH_MS / 1000.0f);
+	}
+}
+
+void APlayerCharacter::EndSearch()
+{
+	is_searching_ = false;
+	GetWorldTimerManager().ClearTimer(search_timer_);
+	if (search_gauge_widget_)
+	{
+		search_gauge_widget_->Stop();
+	}
+	// 마지막 돋보기를 썼으면 곡괭이를 든다.
+	if (IsLocallyControlled() && current_weapon_ == EWeaponType::MAGNIFIER && GetMagnifierCount(EHintGrade::S) + GetMagnifierCount(EHintGrade::A) == 0)
+	{
+		SelectWeapon(EWeaponType::PICKAXE);
 	}
 }
 
@@ -837,7 +935,7 @@ void APlayerCharacter::PlayMuzzleEffect(const FHitscanSettings& settings)
 
 void APlayerCharacter::Jump()
 {
-	if (!is_stunned_)
+	if (!is_stunned_ && !is_searching_)
 	{
 		Super::Jump();
 	}
@@ -869,7 +967,7 @@ void APlayerCharacter::SetPickaxeCharges(int32 charges, int32 remaining_ms)
 	}
 	else
 	{
-		pickaxe_charge_start_ = GetWorld()->GetTimeSeconds() - (PICKAXE_CHARGE_MS - remaining_ms) / 1000.0;
+		pickaxe_charge_start_ = GetWorld()->GetTimeSeconds() - (GetPickaxeChargeSeconds() - remaining_ms / 1000.0);
 		GetWorldTimerManager().SetTimer(pickaxe_charge_timer_, this, &APlayerCharacter::UpdatePickaxeCharges, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
 	}
 	UpdateEquipmentDisplay();
@@ -879,7 +977,7 @@ void APlayerCharacter::UpdatePickaxeCharges()
 {
 	if (pickaxe_charges_ < PICKAXE_MAX_CHARGES)
 	{
-		const double charge_seconds = PICKAXE_CHARGE_MS / 1000.0;
+		const double charge_seconds = GetPickaxeChargeSeconds();
 		const int32 gained = FMath::FloorToInt32((GetWorld()->GetTimeSeconds() - pickaxe_charge_start_) / charge_seconds);
 		if (gained > 0)
 		{
@@ -909,7 +1007,9 @@ void APlayerCharacter::SetStunGauge(float gauge)
 
 void APlayerCharacter::UpdateStunGaugeDisplay()
 {
-	const float gauge = FMath::Max(0.0f, stun_gauge_ - STUN_GAUGE_DECAY_PER_SECOND * static_cast<float>(GetWorld()->GetTimeSeconds() - stun_gauge_time_));
+	// 마지막으로 오른 뒤 감소 대기 시간이 지나야 줄기 시작한다.
+	const double decay_time = FMath::Max(0.0, GetWorld()->GetTimeSeconds() - stun_gauge_time_ - GetStunGaugeDecayDelay());
+	const float gauge = FMath::Max(0.0f, stun_gauge_ - GetStunGaugeDecayPerSecond() * static_cast<float>(decay_time));
 	if (stun_gauge_widget_)
 	{
 		stun_gauge_widget_->SetStunProgress(gauge / STUN_GAUGE_MAX);
@@ -920,8 +1020,19 @@ void APlayerCharacter::UpdateStunGaugeDisplay()
 	}
 }
 
-void APlayerCharacter::StartStun(float duration_seconds)
+void APlayerCharacter::StartStun(float duration_seconds, float protection_seconds)
 {
+	if (is_searching_)
+	{
+		const FWeaponSettings* magnifier = weapon_settings_.Find(EWeaponType::MAGNIFIER);
+		UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+		if (magnifier && magnifier->primary_action.montage && anim_instance)
+		{
+			anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), magnifier->primary_action.montage);
+		}
+		EndSearch();
+	}
+	protection_seconds_ = protection_seconds;
 	EndProtection();
 	SetHeadEffectActive(stun_effect_, stun_effect_component_, true);
 	is_stunned_ = true;
@@ -949,7 +1060,7 @@ void APlayerCharacter::EndStun()
 		stun_gauge_widget_->SetStunProgress(0.0f);
 	}
 	SetHeadEffectActive(protection_effect_, protection_effect_component_, true);
-	protection_end_time_ = GetWorld()->GetTimeSeconds() + STUN_PROTECTION_MS / 1000.0;
+	protection_end_time_ = GetWorld()->GetTimeSeconds() + protection_seconds_;
 	UpdateProtection();
 	GetWorldTimerManager().SetTimer(protection_timer_, this, &APlayerCharacter::UpdateProtection, PROTECTION_DISPLAY_INTERVAL, true);
 }
@@ -1051,6 +1162,10 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 	{
 		anim_instance->Montage_Play(settings->primary_action.montage, settings->primary_action.play_rate, EMontagePlayReturnType::MontageLength, 0.0f, action == EPlayerAction::MELEE);
 	}
+	if (action == EPlayerAction::SEARCH)
+	{
+		StartSearch();
+	}
 }
 
 void APlayerCharacter::UnPossessed()
@@ -1074,6 +1189,11 @@ void APlayerCharacter::UnPossessed()
 	{
 		damage_direction_widget_->RemoveFromParent();
 		damage_direction_widget_ = nullptr;
+	}
+	if (search_gauge_widget_)
+	{
+		search_gauge_widget_->RemoveFromParent();
+		search_gauge_widget_ = nullptr;
 	}
 	Super::UnPossessed();
 }
@@ -1107,11 +1227,18 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 			display.rounds = pickaxe_charges_;
 			if (pickaxe_charges_ < PICKAXE_MAX_CHARGES)
 			{
-				const double charge_seconds = PICKAXE_CHARGE_MS / 1000.0;
+				const double charge_seconds = GetPickaxeChargeSeconds();
 				const double elapsed = FMath::Max(0.0, GetWorld()->GetTimeSeconds() - pickaxe_charge_start_);
 				const int32 remaining = FMath::CeilToInt32(charge_seconds - FMath::Fmod(elapsed, charge_seconds));
 				display.total_ammo = FText::AsCultureInvariant(FString::Printf(TEXT("%d:%02d"), remaining / 60, remaining % 60));
 			}
+		}
+		// 돋보기는 쓸 등급과 그 등급의 개수를 표시한다.
+		if (weapon == EWeaponType::MAGNIFIER)
+		{
+			display.name = FText::Format(NSLOCTEXT("Equipment", "MagnifierGrade", "{0} {1}"), settings->display_name, FText::AsCultureInvariant(magnifier_grade_ == EHintGrade::S ? TEXT("S") : TEXT("A")));
+			display.uses_ammo = true;
+			display.rounds = GetMagnifierCount(magnifier_grade_);
 		}
 	}
 	return display;
@@ -1124,6 +1251,11 @@ void APlayerCharacter::AddHint(const FInventoryHint& hint)
 		acquired_hints_.Add(hint);
 		on_hints_changed_.Broadcast();
 	}
+	ShowAcquirePopup(hint, NSLOCTEXT("Hint", "NewHint", "새 힌트 획득!"));
+}
+
+void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText& title)
+{
 	APlayerController* controller = Cast<APlayerController>(GetController());
 	if (!hint_popup_widget_ && controller && controller->IsLocalController())
 	{
@@ -1135,8 +1267,113 @@ void APlayerCharacter::AddHint(const FInventoryHint& hint)
 	}
 	if (hint_popup_widget_)
 	{
-		hint_popup_widget_->Enqueue(hint);
+		hint_popup_widget_->Enqueue(entry, title);
 	}
+}
+
+// 아이템 효과 문장. 수치는 쓰지 않는다. 패시브는 늘거나 주는 것만 쓰고 S 등급은 "대폭"을 붙이며, 돋보기는 S가 정밀, A가 넓은 탐색이다.
+static FText GetItemText(EItemKind kind, EHintGrade grade)
+{
+	const FText degree = grade == EHintGrade::S ? NSLOCTEXT("Item", "Large", "대폭 ") : FText::GetEmpty();
+	switch (kind)
+	{
+	case EItemKind::PICKAXE_CHARGE:
+		return FText::Format(NSLOCTEXT("Item", "PickaxeCharge", "곡괭이 충전 시간 {0}감소"), degree);
+	case EItemKind::STUN_GAUGE_DECAY:
+		return FText::Format(NSLOCTEXT("Item", "StunGaugeDecay", "기절 게이지 감소량 {0}증가"), degree);
+	case EItemKind::STUN_GAUGE_DECAY_DELAY:
+		return FText::Format(NSLOCTEXT("Item", "StunGaugeDecayDelay", "기절 게이지 감소 대기 {0}감소"), degree);
+	case EItemKind::STUN_PROTECTION:
+		return FText::Format(NSLOCTEXT("Item", "StunProtection", "기절 후 보호 시간 {0}증가"), degree);
+	case EItemKind::MAGNIFIER:
+		return grade == EHintGrade::S ? NSLOCTEXT("Item", "MagnifierPrecise", "돋보기 · 정밀 탐색") : NSLOCTEXT("Item", "MagnifierWide", "돋보기 · 넓은 탐색");
+	default:
+		return FText::GetEmpty();
+	}
+}
+
+void APlayerCharacter::AddItem(EItemKind kind, EHintGrade grade)
+{
+	if (kind == EItemKind::MAGNIFIER)
+	{
+		// 쓸 등급의 돋보기가 없으면 얻은 등급을 쓴다.
+		if (GetMagnifierCount(magnifier_grade_) == 0)
+		{
+			magnifier_grade_ = grade;
+		}
+		++magnifier_counts_[static_cast<int32>(grade)];
+	}
+	else
+	{
+		// 등급 값은 높은 등급일수록 작다.
+		TOptional<EHintGrade>& current = item_grades_[static_cast<int32>(kind)];
+		if (!current || grade < *current)
+		{
+			current = grade;
+		}
+	}
+	on_items_changed_.Broadcast();
+	UpdateEquipmentDisplay();
+	FInventoryHint entry;
+	entry.grade = grade;
+	entry.text = GetItemText(kind, grade);
+	ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewItem", "새 아이템 획득!"));
+}
+
+void APlayerCharacter::ConsumeMagnifier(EHintGrade grade)
+{
+	int32& count = magnifier_counts_[static_cast<int32>(grade)];
+	count = FMath::Max(0, count - 1);
+	const EHintGrade other_grade = magnifier_grade_ == EHintGrade::S ? EHintGrade::A : EHintGrade::S;
+	if (GetMagnifierCount(magnifier_grade_) == 0 && GetMagnifierCount(other_grade) > 0)
+	{
+		magnifier_grade_ = other_grade;
+	}
+	// 탐색이 끝나기 전이면 탐색이 끝날 때 곡괭이로 바꾼다.
+	if (!is_searching_ && current_weapon_ == EWeaponType::MAGNIFIER && GetMagnifierCount(magnifier_grade_) == 0)
+	{
+		SelectWeapon(EWeaponType::PICKAXE);
+	}
+	on_items_changed_.Broadcast();
+	UpdateEquipmentDisplay();
+}
+
+TArray<FInventoryItem> APlayerCharacter::GetInventoryItems() const
+{
+	TArray<FInventoryItem> items;
+	for (const EHintGrade grade : { EHintGrade::S, EHintGrade::A })
+	{
+		if (GetMagnifierCount(grade) > 0)
+		{
+			items.Add({ grade, FText::Format(NSLOCTEXT("Item", "MagnifierCount", "{0} × {1}"), GetItemText(EItemKind::MAGNIFIER, grade), FText::AsNumber(GetMagnifierCount(grade))) });
+		}
+	}
+	for (int32 kind = 0; kind < UE_ARRAY_COUNT(item_grades_); ++kind)
+	{
+		if (item_grades_[kind])
+		{
+			items.Add({ *item_grades_[kind], GetItemText(static_cast<EItemKind>(kind), *item_grades_[kind]) });
+		}
+	}
+	return items;
+}
+
+double APlayerCharacter::GetPickaxeChargeSeconds() const
+{
+	const TOptional<EHintGrade>& grade = item_grades_[static_cast<int32>(EItemKind::PICKAXE_CHARGE)];
+	return (grade ? PICKAXE_CHARGE_MS - ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[static_cast<int32>(*grade)] : PICKAXE_CHARGE_MS) / 1000.0;
+}
+
+float APlayerCharacter::GetStunGaugeDecayPerSecond() const
+{
+	const TOptional<EHintGrade>& grade = item_grades_[static_cast<int32>(EItemKind::STUN_GAUGE_DECAY)];
+	return grade ? ITEM_STUN_GAUGE_DECAYS_PER_SECOND[static_cast<int32>(*grade)] : STUN_GAUGE_DECAY_PER_SECOND;
+}
+
+float APlayerCharacter::GetStunGaugeDecayDelay() const
+{
+	const TOptional<EHintGrade>& grade = item_grades_[static_cast<int32>(EItemKind::STUN_GAUGE_DECAY_DELAY)];
+	return (grade ? ITEM_STUN_GAUGE_DECAY_DELAYS_MS[static_cast<int32>(*grade)] : STUN_GAUGE_DECAY_DELAY_MS) / 1000.0f;
 }
 
 void APlayerCharacter::RemoveHint(const FText& text)

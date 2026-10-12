@@ -144,6 +144,8 @@ private:
 	void DropHint(Player& target);
 	void ProcessPublicHint();
 	void DigTreasure(const Player& digger);
+	void ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p);
+	void ProcessSearches();
 	void SendPublicHintTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;

@@ -27,7 +27,7 @@ static int8 QuantizeInput(double value)
 
 static EWeaponType ToWeaponType(uint8 value)
 {
-	return value <= static_cast<uint8>(EWeaponType::PISTOL) ? static_cast<EWeaponType>(value) : EWeaponType::PICKAXE;
+	return value <= static_cast<uint8>(EWeaponType::MAGNIFIER) ? static_cast<EWeaponType>(value) : EWeaponType::PICKAXE;
 }
 
 static MOVE_STATE ToMoveState(const FRemoteMoveState& state)
@@ -358,7 +358,7 @@ void UMovementSyncSubsystem::HandlePickaxeChargesPacket(const TArray<uint8>& pay
 	}
 }
 
-// 나 또는 다른 플레이어가 기절했다.
+// 나 또는 다른 플레이어가 기절했다. 기절이 끝나면 받은 보호 시간 동안 보호된다.
 void UMovementSyncSubsystem::HandleStunPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_STUN_PACKET) - sizeof(PACKET_HEADER))
@@ -371,7 +371,7 @@ void UMovementSyncSubsystem::HandleStunPacket(const TArray<uint8>& payload)
 	const bool is_local = packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
 	if (APlayerCharacter* character = is_local ? local_character_.Get() : FindRemotePlayer(packet.player_id))
 	{
-		character->StartStun(packet.duration_ms / 1000.0f);
+		character->StartStun(packet.duration_ms / 1000.0f, packet.protection_ms / 1000.0f);
 	}
 }
 
@@ -444,7 +444,7 @@ void UMovementSyncSubsystem::HandleActionPacket(const TArray<uint8>& payload)
 	}
 	S2C_ACTION_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.action > static_cast<uint8>(EPlayerAction::PICKUP))
+	if (packet.action > static_cast<uint8>(EPlayerAction::SEARCH))
 	{
 		return;
 	}

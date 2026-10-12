@@ -105,10 +105,24 @@ constexpr long long AMMO_LATENCY_ALLOWANCE_MS = 150;
 constexpr int PICKAXE_MAX_CHARGES = 3;
 constexpr int PICKAXE_CHARGE_MS = 120000;
 
-// 기절 게이지. 명중당하면 무기별 증가량에 맞은 부위 배율을 곱해 올리고, 초당 감소량만큼 줄어든다. 최대치에 닿으면 기절한다.
+// 기절 게이지. 명중당하면 무기별 증가량에 맞은 부위 배율을 곱해 올리고, 마지막으로 오른 뒤 감소 대기 시간이 지나면 초당 감소량만큼 줄어든다. 최대치에 닿으면 기절한다.
 constexpr float STUN_GAUGE_MAX = 100.0f;
-constexpr float STUN_GAUGE_DECAY_PER_SECOND = 5.0f;
+constexpr float STUN_GAUGE_DECAY_PER_SECOND = 4.0f;
+constexpr int STUN_GAUGE_DECAY_DELAY_MS = 5000;
 constexpr float STUN_GAUGE_WEAPON_GAINS[] = { 0.0f, 50.0f, 20.0f }; // 무기 값 순서: 곡괭이, 저격총, 권총
 constexpr float STUN_GAUGE_PART_MULTIPLIERS[] = { 1.1f, 1.0f, 0.8f, 0.8f, 0.8f, 0.8f }; // 부위 값 순서: 머리, 몸통, 팔, 손, 다리, 발
 constexpr int STUN_DURATION_MS = 5000; // 기절 시간. 기절 동안 서버는 그 플레이어의 이동·동작·명중을 받지 않고, 끝나면 게이지는 0이다.
 constexpr int STUN_PROTECTION_MS = 30000; // 기절이 끝난 뒤 보호 시간. 보호 동안 명중당해도 기절 게이지가 오르지 않는다.
+
+// 아이템. 상자에서 얻는 S·A 등급 아이템이고, 등급별 값은 S, A 순서다.
+// 돋보기 외의 아이템은 얻은 뒤 그 게임 동안 계속 적용되고 기절해도 잃지 않는다. 같은 종류를 또 얻으면 가장 높은 등급만 적용한다.
+// 돋보기는 가진 개수만큼 한 번씩 쓴다. 상자는 종류마다 등급별 개수 × 글로벌 배수만큼 만든다.
+constexpr int ITEM_BOX_COUNTS[] = { 1, 2 };
+constexpr int ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[] = { 60000, 30000 }; // 곡괭이 1번이 차는 시간에서 빼는 시간
+constexpr float ITEM_STUN_GAUGE_DECAYS_PER_SECOND[] = { 6.0f, 5.0f }; // 기절 게이지 초당 감소량
+constexpr int ITEM_STUN_GAUGE_DECAY_DELAYS_MS[] = { 3000, 4000 }; // 기절 게이지 감소 대기 시간
+constexpr int ITEM_STUN_PROTECTIONS_MS[] = { 60000, 45000 }; // 기절이 끝난 뒤 보호 시간
+// 돋보기 탐색. 클릭하면 MAGNIFIER_SEARCH_MS 동안 움직이지 않고 탐색한 뒤, 탐색을 시작한 위치에서 보물까지 수평 거리가 반경 안인지 알려 준다.
+constexpr float MAGNIFIER_RADII[] = { 10000.0f, 30000.0f }; // 탐색 반경(cm)
+constexpr int MAGNIFIER_SEARCH_MS = 2000;
+constexpr float MAGNIFIER_MOVE_TOLERANCE = 100.0f; // 탐색이 끝날 때 시작 위치에서 벗어나도 되는 수평 거리(cm). 벗어나면 탐색을 취소하고 돋보기를 쓰지 않는다.
