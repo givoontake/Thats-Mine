@@ -77,6 +77,11 @@ struct S2C_MULTI_START_PACKET {
 	PACKET_HEADER header;
 };
 
+// 게임이 끝나 방이 게임 전 대기 상태로 돌아갔다. 방의 모든 플레이어에게 보내고, 모두 준비가 풀린 상태다.
+struct S2C_RETURN_TO_ROOM_PACKET {
+	PACKET_HEADER header;
+};
+
 struct C2S_KICK_PACKET {
 	PACKET_HEADER header;
 	int kick_player_id;

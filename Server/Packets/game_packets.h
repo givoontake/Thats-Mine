@@ -285,6 +285,12 @@ struct S2C_PUBLIC_HINT_TIME_PACKET {
 	std::uint32_t remaining_ms;
 };
 
+// 보물을 발견한 플레이어. 플레이 중인 방 전체에 보낸다. GAME_END_WAIT_MS 뒤 게임이 끝나고 방으로 돌아간다.
+struct S2C_TREASURE_FOUND_PACKET {
+	PACKET_HEADER header;
+	int player_id;
+};
+
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.
 struct TOWER_ENTRY {
 	std::uint8_t kind;

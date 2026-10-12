@@ -21,9 +21,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Match Timer")
 	void HideTimer();
 
-	// 빈 글씨를 넣으면 안내 글씨를 숨긴다.
+	static constexpr int32 MESSAGE_FONT_SIZE = 20;
+
+	// 빈 글씨를 넣으면 안내 글씨를 숨긴다. 글씨 크기 기본값은 MESSAGE_FONT_SIZE다(블루프린트 함수 기본값은 상수 이름을 쓸 수 없다).
 	UFUNCTION(BlueprintCallable, Category = "Match Timer")
-	void SetMessage(const FText& message);
+	void SetMessage(const FText& message, int32 font_size = 20);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

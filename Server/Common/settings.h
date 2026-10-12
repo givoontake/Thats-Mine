@@ -46,6 +46,9 @@ constexpr float MAP_MAX[2] = { 100650.0f, 100700.0f };
 constexpr float TREASURE_RADIUS = 85.0f; // 보물을 감싸는 수평 반경(cm). 이 사각형 안의 땅이 모두 있어야 하고, 이 반경의 구가 배치물과 겹치면 다시 뽑는다.
 constexpr float TREASURE_HALF_HEIGHT = 65.0f; // 보물 높이의 절반(cm)
 constexpr int TREASURE_PLACE_ATTEMPTS = 10000; // 조건에 맞는 위치를 찾을 때까지 다시 뽑는 최대 횟수
+// 보물 발견. 게임이 시작된 뒤 곡괭이를 휘두를 때 캡슐 중심이 보물 바닥 가운데에서 이 수평 거리(cm) 안이면 보물을 발견한다.
+constexpr float TREASURE_DIG_DISTANCE = 150.0f;
+constexpr int GAME_END_WAIT_MS = 10000; // 보물을 발견한 뒤 게임을 끝내고 방으로 돌아갈 때까지 기다리는 시간
 constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
 
 // 힌트 "보물에서 가까운 물체 종류" 순위에 담는 종류 수

@@ -115,6 +115,8 @@ private:
 	std::vector<std::uint32_t> public_hints_;
 	int public_hint_turn_ = 0;
 	long long next_public_hint_ms_ = 0;
+	// 보물을 발견해 게임이 끝나는 시각. 0이면 아직 발견하지 않았다.
+	long long game_end_ms_ = 0;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -141,6 +143,7 @@ private:
 	int AppendHintPackets(char* buffer, std::uint32_t hint) const;
 	void DropHint(Player& target);
 	void ProcessPublicHint();
+	void DigTreasure(const Player& digger);
 	void SendPublicHintTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;

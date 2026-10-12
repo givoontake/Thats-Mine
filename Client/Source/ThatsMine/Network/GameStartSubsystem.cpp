@@ -50,6 +50,7 @@ void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_PLAY_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandlePlayStartPacket));
 	network->RegisterPacketHandler(S2C_GAME_READY, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameReadyPacket));
 	network->RegisterPacketHandler(S2C_GAME_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameStartPacket));
+	network->RegisterPacketHandler(S2C_TREASURE_FOUND, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureFoundPacket));
 	prepare_start_time_ = world.GetRealTimeSeconds();
 	const AGameModeBase* game_mode = world.GetAuthGameMode();
 	const APlayerCharacter* character = game_mode && game_mode->DefaultPawnClass ? Cast<APlayerCharacter>(game_mode->DefaultPawnClass->GetDefaultObject()) : nullptr;
@@ -72,6 +73,7 @@ void UGameStartSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_PLAY_START);
 			network->UnregisterPacketHandler(S2C_GAME_READY);
 			network->UnregisterPacketHandler(S2C_GAME_START);
+			network->UnregisterPacketHandler(S2C_TREASURE_FOUND);
 		}
 		is_active_ = false;
 	}
@@ -238,6 +240,24 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 		{
 			dome->HideDome();
 		}
+	}
+}
+
+// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄운다.
+void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_TREASURE_FOUND_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_TREASURE_FOUND_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const UOnlineSessionSubsystem* session = GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>();
+	const FRoomMemberInfo* finder = session->GetMembers().FindByPredicate([&packet](const FRoomMemberInfo& member) { return member.player_key == packet.player_id; });
+	if (UMatchTimerWidget* timer = ShowTimerWidget())
+	{
+		timer->SetMessage(FText::Format(LOCTEXT("TreasureFound", "{0}님이 보물을 발견했습니다!"), finder ? FText::FromString(finder->nickname) : LOCTEXT("UnknownPlayer", "누군가")), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
 	}
 }
 

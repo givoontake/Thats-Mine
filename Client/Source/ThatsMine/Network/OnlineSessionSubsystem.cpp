@@ -12,7 +12,7 @@
 #include "game_protocol.h"
 
 #define LOCTEXT_NAMESPACE "OnlineSession"
-constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_INFO};
+constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_RETURN_TO_ROOM, S2C_INFO};
 
 template<typename T>
 static TOptional<T> ReadPacket(const TArray<uint8>& payload)
@@ -377,6 +377,16 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		room_.is_playing = true;
 		flow->ChangeState(EClientState::LOADING);
 		UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Demo_Landmass"));
+		break;
+	}
+	case S2C_RETURN_TO_ROOM: {
+		if (!ReadPacket<S2C_RETURN_TO_ROOM_PACKET>(payload)) { valid = false; break; }
+		if (state != EClientState::LOADING && state != EClientState::PLAYING) return;
+		// 게임이 끝나 게임 전 방으로 돌아간다. 서버가 모두의 준비를 풀었다. 방 상태로 로비 레벨을 열면 방 화면이 열린다.
+		room_.is_playing = false;
+		for (auto& member : members_) member.is_ready = false;
+		flow->ChangeState(EClientState::ROOM);
+		UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Lvl_Lobby"));
 		break;
 	}
 	case S2C_INFO: {

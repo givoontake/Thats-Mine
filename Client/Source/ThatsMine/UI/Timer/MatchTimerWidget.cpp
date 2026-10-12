@@ -28,7 +28,7 @@ TSharedRef<SWidget> UMatchTimerWidget::RebuildWidget()
 
 		// 안내 글씨를 위에, 남은 초를 그 아래에 둔다.
 		message_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MatchTimerMessage"));
-		message_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 20));
+		message_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), MESSAGE_FONT_SIZE));
 		message_text_->SetColorAndOpacity(FSlateColor(text_color_));
 		message_text_->SetShadowOffset(FVector2D(1.5, 1.5));
 		message_text_->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.75f));
@@ -78,10 +78,13 @@ void UMatchTimerWidget::HideTimer()
 	}
 }
 
-void UMatchTimerWidget::SetMessage(const FText& message)
+void UMatchTimerWidget::SetMessage(const FText& message, int32 font_size)
 {
 	if (message_text_)
 	{
+		FSlateFontInfo font = message_text_->GetFont();
+		font.Size = font_size;
+		message_text_->SetFont(font);
 		message_text_->SetText(message);
 		message_text_->SetVisibility(message.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	}

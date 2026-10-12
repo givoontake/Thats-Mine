@@ -431,14 +431,22 @@ void GameRoom::TryPostRoomDelete()
 	server_->EnqueueRoomLifecycleTask(std::make_unique<RoomLifecycleTask>(room_index_, GetRoomKey()));
 }
 
+// 게임이 끝나 방을 게임 전 대기 상태로 되돌린다. 플레이어마다 게임 데이터를 지워 준비를 풀고, 방의 모든 플레이어에게 방 복귀를 보낸다.
+// 그 사이 마지막 플레이어가 나가 방 삭제가 시작됐으면 아무것도 하지 않는다.
 void GameRoom::ClearGame()
 {
-	StoreRoomState(RoomState::WAIT);
-	auto& room_players = room_players_;
-	for (auto& room_player : room_players) {
+	if (!TryChangeRoomState(RoomState::PLAY, RoomState::WAIT)) return;
+	is_game_started_ = false;
+	game_start_ms_ = 0;
+	game_end_ms_ = 0;
+	pending_action_count_ = 0;
+	S2C_RETURN_TO_ROOM_PACKET return_p;
+	return_p.header = { static_cast<std::uint16_t>(sizeof(return_p)), S2C_RETURN_TO_ROOM };
+	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		room_player.ResetGameData();
+		session->SendPacket(reinterpret_cast<char*>(&return_p), return_p.header.size);
 	}
 }
 
@@ -643,6 +651,7 @@ void GameRoom::StartGame(int requester_id)
 	public_hints_.clear();
 	public_hint_turn_ = 0;
 	next_public_hint_ms_ = 0;
+	game_end_ms_ = 0;
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·시작 돔) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
@@ -769,6 +778,10 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	ProcessLoadedPlayers();
 	ProcessGameStart();
 	ProcessPublicHint();
+	if (game_end_ms_ != 0 && tick_time_ms >= game_end_ms_) {
+		ClearGame();
+		return;
+	}
 	// 플레이 중인 플레이어의 판정용 자세를 지난 틱 이후 시간만큼 진행한다.
 	const float pose_delta_seconds = last_pose_tick_ms_ != 0 ? (tick_time_ms - last_pose_tick_ms_) / 1000.0f : 0.0f;
 	last_pose_tick_ms_ = tick_time_ms;
@@ -919,7 +932,10 @@ bool GameRoom::AcceptAction(Player& player, Session& session, const C2S_ACTION_P
 {
 	const PlayerAction action = static_cast<PlayerAction>(request_p.action);
 	if (action == PlayerAction::MELEE && request_p.weapon == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
-		if (player.TryUsePickaxe(tick_time_ms_)) return true;
+		if (player.TryUsePickaxe(tick_time_ms_)) {
+			DigTreasure(player);
+			return true;
+		}
 		S2C_PICKAXE_CHARGES_PACKET charges_p;
 		charges_p.header = { static_cast<std::uint16_t>(sizeof(charges_p)), S2C_PICKAXE_CHARGES };
 		charges_p.charges = static_cast<std::uint8_t>(player.GetPickaxeCharges());
@@ -1140,7 +1156,7 @@ void GameRoom::DropHint(Player& target)
 // 고를 힌트가 없으면 그 차례는 건너뛴다. 차례가 지나면 다음 공개까지 남은 시간을 플레이 중인 전원에게 보낸다.
 void GameRoom::ProcessPublicHint()
 {
-	if (!is_game_started_ || tick_time_ms_ < next_public_hint_ms_) return;
+	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < next_public_hint_ms_) return;
 	const std::uint8_t best_grade = PUBLIC_HINT_BEST_GRADES[std::min<std::size_t>(public_hint_turn_, std::size(PUBLIC_HINT_BEST_GRADES) - 1)];
 	++public_hint_turn_;
 	next_public_hint_ms_ += PUBLIC_HINT_INTERVAL_MS;
@@ -1165,6 +1181,23 @@ void GameRoom::ProcessPublicHint()
 			session->SendPacket(hint_buffer, hint_size);
 		}
 		SendPublicHintTime(*session);
+	}
+}
+
+// 게임이 시작된 뒤 처음으로 보물 자리 가까이에서 곡괭이를 휘두르면 보물을 발견한다. 플레이 중인 방 전체에 알리고 게임이 끝날 시각을 정한다.
+// 발견한 뒤에도 게임이 끝날 때까지 플레이는 그대로 하지만 힌트 제공은 멈춘다.
+void GameRoom::DigTreasure(const Player& digger)
+{
+	if (!is_game_started_ || game_end_ms_ != 0 || !digger.HasMoveState()) return;
+	const float* location = digger.GetMoveState().location;
+	if (std::hypot(location[0] - treasure_placement_.location.x, location[1] - treasure_placement_.location.y) > TREASURE_DIG_DISTANCE) return;
+	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
+	S2C_TREASURE_FOUND_PACKET found_p;
+	found_p.header = { static_cast<std::uint16_t>(sizeof(found_p)), S2C_TREASURE_FOUND };
+	found_p.player_id = digger.GetSessionKey().player_id;
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&found_p), found_p.header.size);
 	}
 }
 
