@@ -66,7 +66,7 @@ bool UBoxLayoutSubsystem::DoesSupportWorldType(const EWorldType::Type world_type
 
 void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 {
-	// 상자 수 뒤에 상자 항목들이 이어 붙어 있다.
+	// 상자 수 뒤에 상자 항목들이 이어 붙어 있다. 상자가 많으면 이 패킷 여러 개로 나눠 오므로, 받은 순서대로 상자 번호를 이어 붙인다.
 	const int32 entry_offset = sizeof(S2C_BOX_LAYOUT_PACKET) - sizeof(PACKET_HEADER);
 	uint16 box_count = 0;
 	if (payload.Num() >= entry_offset)

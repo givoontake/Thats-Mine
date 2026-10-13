@@ -162,6 +162,7 @@ private:
 	void PlaceTreasure();
 	void GenerateHints();
 	void PlaceBoxes(int player_count);
+	// 상자 배치 패킷들을 이어 붙여 만든다. 패킷 하나가 패킷 크기 칸에 담을 수 있는 크기를 넘지 않게 상자를 나눠 담는다.
 	std::vector<char> BuildBoxLayoutPacket() const;
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환

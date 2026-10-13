@@ -203,7 +203,8 @@ struct BOX_ENTRY {
 	bool is_opened;
 };
 
-// 이번 게임의 상자 배치. 이 구조체 뒤에 box_count개의 BOX_ENTRY가 이어 붙고, 상자 번호는 항목 순서다.
+// 이번 게임의 상자 배치. 이 구조체 뒤에 box_count개의 BOX_ENTRY가 이어 붙는다.
+// 패킷 하나에 다 담지 못하면 이 패킷 여러 개로 나눠 이어 보내고, 상자 번호는 받은 패킷들의 항목을 순서대로 이은 순서다.
 // 상자 수에 따라 BUF_SIZE보다 커질 수 있어 상자 배치만 크기에 맞춘 버퍼로 만들어 보낸다.
 struct S2C_BOX_LAYOUT_PACKET {
 	PACKET_HEADER header;

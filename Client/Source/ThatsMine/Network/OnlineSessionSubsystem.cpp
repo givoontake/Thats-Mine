@@ -60,7 +60,7 @@ static FText ErrorMessage(int32 code)
 	case ROOM_IN_GAME: return LOCTEXT("Playing", "이미 게임이 시작된 방입니다.");
 	case NOT_FOUND_JOINABLE_ROOM: return LOCTEXT("NoMatch", "참가 가능한 공개 방이 없습니다.");
 	case ROOM_INVALID_PASSWORD: return LOCTEXT("RoomPassword", "방 비밀번호가 일치하지 않습니다.");
-	case ROOM_NOT_ENOUGH_PLAYERS: return LOCTEXT("TooFew", "게임 시작에는 최소 2명이 필요합니다.");
+	case ROOM_NOT_ENOUGH_PLAYERS: return FText::Format(LOCTEXT("TooFew", "게임 시작에는 최소 {0}명이 필요합니다."), FText::AsNumber(MIN_START_PLAYER_COUNT));
 	case ROOM_NOT_ALL_READY: return LOCTEXT("NotReady", "모든 참가자가 준비해야 합니다.");
 	case INVALID_REQUEST: return LOCTEXT("InvalidRequest", "현재 상태에서는 요청을 처리할 수 없습니다.");
 	case PLAYER_NOT_FOUND: return LOCTEXT("MissingPlayer", "해당 참가자가 방에 없습니다.");
@@ -222,7 +222,7 @@ void UOnlineSessionSubsystem::SetReady(bool is_ready)
 
 bool UOnlineSessionSubsystem::CanStart() const
 {
-	return host_key_ == player_key_ && members_.Num() >= 2 && !members_.ContainsByPredicate([](const auto& member) { return !member.is_host && !member.is_ready; });
+	return host_key_ == player_key_ && members_.Num() >= MIN_START_PLAYER_COUNT && !members_.ContainsByPredicate([](const auto& member) { return !member.is_host && !member.is_ready; });
 }
 
 void UOnlineSessionSubsystem::StartGame()

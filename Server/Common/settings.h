@@ -10,6 +10,7 @@ constexpr int SERVER_PORT = 12312;
 constexpr int MAX_PLAYER_COUNT = 10000;
 constexpr int MAX_ROOM_COUNT = 500;
 constexpr int MAX_ROOM_PLAYER_COUNT = 20;
+constexpr int MIN_START_PLAYER_COUNT = 1; // 게임을 시작할 수 있는 최소 인원. 당분간 혼자서도 시작할 수 있게 1로 둔다(원래 2).
 constexpr int MAX_ROOM_NAME_SIZE = 48; // 16자 * UTF-8 1문자 크기(3)
 constexpr int MAX_ROOM_PASSWORD_SIZE = 48;
 constexpr int MAX_ARRAY_SIZE = 127;
@@ -60,6 +61,8 @@ constexpr float HINT_OBJECT_COUNT_RADIUS = 3000.0f;
 constexpr float HINT_OBJECT_COUNT_GRID_STEP = 500.0f;
 // 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
 constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
+// 보임 힌트("~에서 보물이 묻힌 곳이 보인다")를 만들지. 당분간 끈다.
+constexpr bool HINT_VIEW_ENABLED = false;
 // 힌트의 "보물이 묻힌 자리가 보인다" 판정. 영역의 판정 위치(발밑 땅 + 3인칭 카메라 높이 140cm)에서 보물 자리 지면까지 그은 선이 하나라도 막히지 않으면 보인다.
 constexpr float PLACE_VIEW_END_MARGIN = 30.0f; // 선을 보물 자리 지면 이만큼(cm) 앞에서 멈춘다. 목표 지면 자체에 걸리지 않게 하고, 등진 경사면에 묻힌 자리는 땅 속을 지나 막히게 한다.
 // 힌트 등급. 판마다 힌트를 점수(배제 영역 × 가중치) 순으로 정렬해 위에서 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.

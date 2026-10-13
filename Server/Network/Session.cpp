@@ -67,7 +67,7 @@ bool Session::SendPacket(const char* packet, int packet_size)
 
 bool Session::SendLargePacket(const char* packet, int packet_size)
 {
-	if (!packet || packet_size <= 0 || packet_size > UINT16_MAX) return false;
+	if (!packet || packet_size <= 0) return false;
 	LargeSendBuffer* send_buffer = new LargeSendBuffer(packet, packet_size);
 
 	std::shared_lock<std::shared_mutex> socket_lock(socket_mutex_);

@@ -609,7 +609,7 @@ void GameRoom::StartGame(int requester_id)
 
 	int current_player_count = GetCurrentPlayerCount();
 	if (ready_player_count == current_player_count) {
-		if (current_player_count == 1) {
+		if (current_player_count < MIN_START_PLAYER_COUNT) {
 			result = ErrorCode::ROOM_NOT_ENOUGH_PLAYERS;
 		}
 		else {
@@ -708,7 +708,7 @@ void GameRoom::PlaceTreasure()
 	std::cerr << "Treasure place fail.. " << std::endl;
 }
 
-// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑, 물체 종류마다 개수 순서다.
+// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑, 물체 종류마다 개수 순서다. 보임은 HINT_VIEW_ENABLED일 때만 만든다.
 // 등급은 힌트마다 점수(배제 영역 × 가중치)를 매겨 높은 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
 // 끝에 발판 길마다 그 길을 보이게 하는 A 등급 힌트를 하나씩 더한다. 이 힌트는 보물 위치와 관계없어 점수를 매기지 않는다.
 void GameRoom::GenerateHints()
@@ -716,8 +716,10 @@ void GameRoom::GenerateHints()
 	const float x = treasure_placement_.location.x;
 	const float y = treasure_placement_.location.y;
 	hints_ = server_->GetDirectionHintData().JudgeDirections(x, y);
-	const std::vector<HINT_ENTRY> view_hints = server_->GetViewHintData().JudgeViews(server_->GetMapData(), x, y);
-	hints_.insert(hints_.end(), view_hints.begin(), view_hints.end());
+	if (HINT_VIEW_ENABLED) {
+		const std::vector<HINT_ENTRY> view_hints = server_->GetViewHintData().JudgeViews(server_->GetMapData(), x, y);
+		hints_.insert(hints_.end(), view_hints.begin(), view_hints.end());
+	}
 	const NearestHintKinds nearest_kinds = server_->GetHintObjectTree().FindNearestKinds(x, y);
 	for (std::size_t rank = 0; rank < nearest_kinds.count; ++rank) {
 		hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_OBJECT), static_cast<std::uint8_t>(nearest_kinds.kinds[rank].kind), static_cast<std::uint8_t>(rank), true, 0 });
@@ -779,9 +781,8 @@ void GameRoom::PlaceBoxes(int player_count)
 	}
 	std::mt19937 random(CreateRandomSeed());
 	std::shuffle(box_contents_.begin(), box_contents_.end(), random);
-	// 배치 패킷 크기는 패킷 헤더의 크기 칸에 담을 수 있는 만큼으로 제한한다.
-	constexpr std::size_t MAX_LAYOUT_BOX_COUNT = (UINT16_MAX - sizeof(S2C_BOX_LAYOUT_PACKET)) / sizeof(BOX_ENTRY);
-	box_contents_.resize(std::min(box_contents_.size(), MAX_LAYOUT_BOX_COUNT));
+	// 상자 번호는 16비트(상자 열기 패킷)라 그 범위까지만 만든다.
+	box_contents_.resize(std::min<std::size_t>(box_contents_.size(), UINT16_MAX));
 	const BoxCandidateData& box_candidates = server_->GetBoxCandidateData();
 	box_placement_indices_ = box_candidates.SelectPlacements(box_contents_.size());
 	// 상자 자리 후보가 모자라 덜 골랐으면 남는 내용물은 넣지 않는다.
@@ -813,20 +814,30 @@ void GameRoom::PlaceBoxes(int player_count)
 	box_layout_packet_ = BuildBoxLayoutPacket();
 }
 
-// 상자 배치 패킷을 지금 열림 상태로 만든다. 상자 수에 맞춘 크기라 BUF_SIZE보다 클 수 있다.
+// 상자 배치 패킷들을 지금 열림 상태로 만든다. 상자 수에 맞춘 크기라 BUF_SIZE보다 클 수 있다.
 std::vector<char> GameRoom::BuildBoxLayoutPacket() const
 {
+	// 패킷 하나에 담는 상자 수. 패킷 크기가 패킷 헤더의 크기 칸에 담을 수 있는 만큼을 넘지 않게 한다.
+	constexpr std::size_t MAX_PACKET_BOX_COUNT = (UINT16_MAX - sizeof(S2C_BOX_LAYOUT_PACKET)) / sizeof(BOX_ENTRY);
 	const BoxCandidateData& box_candidates = server_->GetBoxCandidateData();
-	const std::size_t packet_size = sizeof(S2C_BOX_LAYOUT_PACKET) + box_placement_indices_.size() * sizeof(BOX_ENTRY);
-	const S2C_BOX_LAYOUT_PACKET box_layout_p{ { static_cast<std::uint16_t>(packet_size), S2C_BOX_LAYOUT }, static_cast<std::uint16_t>(box_placement_indices_.size()) };
-	std::vector<char> packet(packet_size);
-	std::memcpy(packet.data(), &box_layout_p, sizeof(box_layout_p));
-	for (std::size_t index = 0; index < box_placement_indices_.size(); ++index) {
-		const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
-		const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, is_box_opened_[index] };
-		std::memcpy(packet.data() + sizeof(box_layout_p) + index * sizeof(BOX_ENTRY), &entry, sizeof(entry));
+	const std::size_t box_count = box_placement_indices_.size();
+	const std::size_t packet_count = std::max<std::size_t>(1, (box_count + MAX_PACKET_BOX_COUNT - 1) / MAX_PACKET_BOX_COUNT);
+	std::vector<char> packets(packet_count * sizeof(S2C_BOX_LAYOUT_PACKET) + box_count * sizeof(BOX_ENTRY));
+	char* write = packets.data();
+	for (std::size_t first = 0; first == 0 || first < box_count; first += MAX_PACKET_BOX_COUNT) {
+		const std::size_t count = std::min(MAX_PACKET_BOX_COUNT, box_count - first);
+		const std::size_t packet_size = sizeof(S2C_BOX_LAYOUT_PACKET) + count * sizeof(BOX_ENTRY);
+		const S2C_BOX_LAYOUT_PACKET box_layout_p{ { static_cast<std::uint16_t>(packet_size), S2C_BOX_LAYOUT }, static_cast<std::uint16_t>(count) };
+		std::memcpy(write, &box_layout_p, sizeof(box_layout_p));
+		write += sizeof(box_layout_p);
+		for (std::size_t index = first; index < first + count; ++index) {
+			const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
+			const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, is_box_opened_[index] };
+			std::memcpy(write, &entry, sizeof(entry));
+			write += sizeof(entry);
+		}
 	}
-	return packet;
+	return packets;
 }
 
 void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
