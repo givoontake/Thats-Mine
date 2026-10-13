@@ -5,7 +5,8 @@
 #include "HintObjectTree.h"
 #include "MapData.h"
 
-// 메시 이름과 힌트 종류. 눈 덮인 바위·가문비도 같은 모양이라 같은 종류로 묶는다.
+// 메시·폴리지 종류 이름과 힌트 종류. 눈 덮인 바위·가문비도 같은 모양이라 같은 종류로 묶는다.
+// 색 데이지·버섯은 같은 메시에 재질만 바꾼 폴리지 종류 이름으로 구분하고, 지형 풀로 자라는 데이지(SM_DaisyFlowers)는 흰 데이지다.
 struct HintMesh {
 	const char* name;
 	HintObjectKind kind;
@@ -31,8 +32,15 @@ static constexpr HintMesh HINT_MESHES[] = {
 	{ "SM_SS_PoplarTree_RVT", HintObjectKind::POPLAR },
 	{ "SM_tree_02", HintObjectKind::MAPLE },
 	{ "SM_bamboo_01", HintObjectKind::BAMBOO },
-	{ "SM_DaisyFlowers", HintObjectKind::DAISY },
-	{ "SM_Mushrooms", HintObjectKind::MUSHROOM },
+	{ "SM_DaisyFlowers", HintObjectKind::DAISY_WHITE },
+	{ "SM_DaisyFlowers_Red_FT", HintObjectKind::DAISY_RED },
+	{ "SM_DaisyFlowers_Magenta_FT", HintObjectKind::DAISY_MAGENTA },
+	{ "SM_DaisyFlowers_Blue_FT", HintObjectKind::DAISY_BLUE },
+	{ "SM_DaisyFlowers_Yellow_FT", HintObjectKind::DAISY_YELLOW },
+	{ "SM_DaisyFlowers_White_FT", HintObjectKind::DAISY_WHITE },
+	{ "SM_Mushrooms_Red_FT", HintObjectKind::MUSHROOM_RED },
+	{ "SM_Mushrooms_Purple_FT", HintObjectKind::MUSHROOM_PURPLE },
+	{ "SM_Mushrooms_Blue_FT", HintObjectKind::MUSHROOM_BLUE },
 };
 // 이 개수 이하의 구간은 더 나누지 않고 점을 직접 비교한다.
 constexpr std::size_t HINT_TREE_LEAF_SIZE = 8;
@@ -42,10 +50,11 @@ static bool IsInsideMap(float x, float y)
 	return x >= MAP_MIN[0] && x <= MAP_MAX[0] && y >= MAP_MIN[1] && y <= MAP_MAX[1];
 }
 
-// 점 하나(종류 kind, 거리 제곱 distance_sq)를 순위에 반영한다. 순위가 정해질 때까지 kinds의 distance에는 거리 제곱을 둔다.
+// 점 하나(종류 kind, 거리 제곱 distance_sq)를 순위에 반영한다. 색 데이지·버섯은 DAISY·MUSHROOM 종류로 반영한다. 순위가 정해질 때까지 kinds의 distance에는 거리 제곱을 둔다.
 // 이미 있는 종류면 더 가까울 때만 거리를 줄이고, 없는 종류면 순위가 덜 찼거나 마지막보다 가까울 때 마지막 자리에 넣는다. 그 뒤 가까운 순서로 올린다.
-static void ConsiderPoint(NearestHintKinds& result, HintObjectKind kind, float distance_sq)
+static void ConsiderPoint(NearestHintKinds& result, HintObjectKind point_kind, float distance_sq)
 {
+	const HintObjectKind kind = GetBaseHintObjectKind(point_kind);
 	std::size_t index = 0;
 	while (index < result.count && result.kinds[index].kind != kind) ++index;
 	if (index < result.count) {
@@ -142,4 +151,38 @@ NearestHintKinds HintObjectTree::FindNearestKinds(float x, float y) const
 	SearchRange(0, points_.size(), 0, x, y, result);
 	for (std::size_t index = 0; index < result.count; ++index) result.kinds[index].distance = std::sqrt(result.kinds[index].distance);
 	return result;
+}
+
+// 기준선인 가운데 점을 세고, 찾는 원이 기준선 양쪽에 걸치는 쪽 구간만 내려간다.
+void HintObjectTree::CountRange(std::size_t begin, std::size_t end, int depth, float x, float y, float radius_sq, HintKindCounts& counts) const
+{
+	const auto count_point = [&](const HintPoint& point)
+	{
+		const float dx = point.x - x;
+		const float dy = point.y - y;
+		if (dx * dx + dy * dy <= radius_sq) ++counts[static_cast<std::size_t>(point.kind)];
+	};
+	if (end - begin <= HINT_TREE_LEAF_SIZE) {
+		for (std::size_t index = begin; index < end; ++index) count_point(points_[index]);
+		return;
+	}
+	const std::size_t middle = begin + (end - begin) / 2;
+	const HintPoint& split = points_[middle];
+	count_point(split);
+	const bool is_x = depth % 2 == 0;
+	const float gap = is_x ? x - split.x : y - split.y;
+	if (gap < 0.0f || gap * gap <= radius_sq) CountRange(begin, middle, depth + 1, x, y, radius_sq, counts);
+	if (gap >= 0.0f || gap * gap <= radius_sq) CountRange(middle + 1, end, depth + 1, x, y, radius_sq, counts);
+}
+
+HintKindCounts HintObjectTree::CountKinds(float x, float y, float radius) const
+{
+	HintKindCounts counts{};
+	if (!is_loaded_ || points_.empty()) return counts;
+	CountRange(0, points_.size(), 0, x, y, radius * radius, counts);
+	for (std::size_t kind = 0; kind < counts.size(); ++kind) {
+		const HintObjectKind base = GetBaseHintObjectKind(static_cast<HintObjectKind>(kind));
+		if (base != static_cast<HintObjectKind>(kind)) counts[static_cast<std::size_t>(base)] += counts[kind];
+	}
+	return counts;
 }

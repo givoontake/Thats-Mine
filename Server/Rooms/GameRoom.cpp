@@ -708,7 +708,7 @@ void GameRoom::PlaceTreasure()
 	std::cerr << "Treasure place fail.. " << std::endl;
 }
 
-// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑 순서다.
+// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑, 물체 종류마다 개수 순서다.
 // 등급은 힌트마다 점수(배제 영역 × 가중치)를 매겨 높은 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
 // 끝에 발판 길마다 그 길을 보이게 하는 A 등급 힌트를 하나씩 더한다. 이 힌트는 보물 위치와 관계없어 점수를 매기지 않는다.
 void GameRoom::GenerateHints()
@@ -725,6 +725,10 @@ void GameRoom::GenerateHints()
 	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
 	const TowerPlacement* nearest_tower = FindNearestTower(tower_placements_, tower_candidates, x, y);
 	if (nearest_tower) hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_TOWER), static_cast<std::uint8_t>(nearest_tower->kind), 0, true, 0 });
+	const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, HINT_OBJECT_COUNT_RADIUS);
+	for (std::size_t kind = 0; kind < object_counts.size(); ++kind) {
+		hints_.push_back({ static_cast<std::uint8_t>(HintKind::OBJECT_COUNT), static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)), true, 0 });
+	}
 
 	const HintExclusionData& exclusion_data = server_->GetHintExclusionData();
 	std::vector<std::pair<float, std::size_t>> scores; // 점수, 힌트 번호

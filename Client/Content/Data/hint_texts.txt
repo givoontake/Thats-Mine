@@ -13,6 +13,9 @@ NEAREST_OBJECT = 보물에서 {0} 가까운 물체는 {1}이다.
 NEAREST_TOWER = 보물에서 가장 가까운 탑은 {0}이다.
 # {0}(발판 길) 발판 길이 보인다. 이 힌트를 얻으면 그 길의 발판이 보인다
 PLATFORM_PATH = {0} 발판 길이 보인다.
+# 보물 {0}(반경 m) 안에 {1}(물체)이 {2}개 있다. 0개면 아래 문장을 쓰고 {2}는 이/가다
+OBJECT_COUNT = 보물 {0}m 안에 {1} {2}개가 있다.
+OBJECT_COUNT_ZERO = 보물 {0}m 안에 {1}{2} 없다.
 
 RANK_0 = 가장
 RANK_1 = 두 번째로
@@ -50,6 +53,14 @@ OBJECT_6 = 단풍나무
 OBJECT_7 = 대나무
 OBJECT_8 = 데이지
 OBJECT_9 = 버섯
+OBJECT_10 = 빨간 데이지
+OBJECT_11 = 적보라 데이지
+OBJECT_12 = 파란 데이지
+OBJECT_13 = 노란 데이지
+OBJECT_14 = 흰 데이지
+OBJECT_15 = 빨간 버섯
+OBJECT_16 = 보라 버섯
+OBJECT_17 = 파란 버섯
 
 TOWER_0 = 주황 탑
 TOWER_1 = 베이지 탑

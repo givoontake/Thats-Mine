@@ -114,6 +114,19 @@ FString UHintSubsystem::BuildSentence(const HINT_ENTRY& hint) const
 		return FString::Format(*FindText(TEXT("NEAREST_TOWER")), { FindText(TEXT("TOWER_") + target) });
 	case HintKind::PLATFORM_PATH:
 		return FString::Format(*FindText(TEXT("PLATFORM_PATH")), { FindText(TEXT("PLATFORM_PATH_") + target) });
+	case HintKind::OBJECT_COUNT:
+	{
+		const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADIUS / 100.0f));
+		const FString name = FindText(TEXT("OBJECT_") + target);
+		if (hint.detail > 0)
+		{
+			return FString::Format(*FindText(TEXT("OBJECT_COUNT")), { radius, name, detail });
+		}
+		// 0개 문장의 조사는 이름 마지막 글자에 받침이 있으면 "이", 없으면 "가"다.
+		const TCHAR last = name.IsEmpty() ? 0 : name[name.Len() - 1];
+		const bool has_final = last >= 0xAC00 && last <= 0xD7A3 && (last - 0xAC00) % 28 != 0;
+		return FString::Format(*FindText(TEXT("OBJECT_COUNT_ZERO")), { radius, name, has_final ? TEXT("이") : TEXT("가") });
+	}
 	default:
 		return FString();
 	}

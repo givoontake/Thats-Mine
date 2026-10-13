@@ -54,6 +54,10 @@ constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm
 
 // 힌트 "보물에서 가까운 물체 종류" 순위에 담는 종류 수
 constexpr int HINT_NEAREST_KIND_COUNT = 3;
+// 개수 힌트. 판마다 물체 종류마다 하나씩, 보물에서 이 수평 거리(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
+// 배제 영역은 다른 힌트보다 촘촘한 HINT_OBJECT_COUNT_GRID_STEP 간격 격자 지점으로 센다.
+constexpr float HINT_OBJECT_COUNT_RADIUS = 3000.0f;
+constexpr float HINT_OBJECT_COUNT_GRID_STEP = 500.0f;
 // 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
 constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
 // 힌트의 "보물이 묻힌 자리가 보인다" 판정. 영역의 판정 위치(발밑 땅 + 3인칭 카메라 높이 140cm)에서 보물 자리 지면까지 그은 선이 하나라도 막히지 않으면 보인다.

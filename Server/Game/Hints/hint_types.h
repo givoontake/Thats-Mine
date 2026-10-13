@@ -14,6 +14,17 @@ struct HintPoint {
 	HintObjectKind kind;
 };
 
+// 물체 종류마다 어떤 범위 안에 있는 물체 수. DAISY·MUSHROOM 칸은 모든 색을 합친 수다.
+using HintKindCounts = std::array<std::uint32_t, static_cast<std::size_t>(HintObjectKind::COUNT)>;
+
+// 색 데이지·버섯을 DAISY·MUSHROOM으로 바꾼 종류. 나머지는 그대로다.
+constexpr HintObjectKind GetBaseHintObjectKind(HintObjectKind kind)
+{
+	if (kind >= HintObjectKind::DAISY_RED && kind <= HintObjectKind::DAISY_WHITE) return HintObjectKind::DAISY;
+	if (kind >= HintObjectKind::MUSHROOM_RED && kind <= HintObjectKind::MUSHROOM_BLUE) return HintObjectKind::MUSHROOM;
+	return kind;
+}
+
 // 가까운 종류 하나와 그 종류 물체 중 가장 가까운 것까지의 수평 거리(cm)
 struct HintKindDistance {
 	HintObjectKind kind;

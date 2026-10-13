@@ -26,9 +26,10 @@ enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUG
 constexpr std::uint8_t BASIC_MAGNIFIER_GRADE = 0xFF;
 
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
-enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, PLATFORM_PATH };
+enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, PLATFORM_PATH, OBJECT_COUNT };
 
-// "보물에서 가까운 물체" 힌트가 말하는 물체 종류. 메시 여러 개를 한 종류로 묶는다.
+// 힌트가 말하는 물체 종류. 메시 여러 개를 한 종류로 묶는다.
+// "보물에서 가까운 물체" 힌트는 MUSHROOM까지만 쓰고, 색 데이지·버섯은 DAISY·MUSHROOM으로 본다. 개수 힌트는 모든 종류를 쓰고, DAISY·MUSHROOM은 모든 색을 합친 수다.
 enum class HintObjectKind : std::uint8_t {
 	LARGE_ROCK,
 	SMALL_ROCK,
@@ -40,6 +41,14 @@ enum class HintObjectKind : std::uint8_t {
 	BAMBOO,
 	DAISY,
 	MUSHROOM,
+	DAISY_RED,
+	DAISY_MAGENTA,
+	DAISY_BLUE,
+	DAISY_YELLOW,
+	DAISY_WHITE,
+	MUSHROOM_RED,
+	MUSHROOM_PURPLE,
+	MUSHROOM_BLUE,
 	COUNT,
 };
 
@@ -207,6 +216,7 @@ struct S2C_BOX_LAYOUT_PACKET {
 // NEAREST_OBJECT: target은 HintObjectKind, detail은 순위(0이 가장 가깝다), is_true는 항상 참이다.
 // NEAREST_TOWER: target은 TowerKind, is_true는 항상 참이다.
 // PLATFORM_PATH: target은 발판 길 번호이고, 이 힌트를 얻은 사람에게는 그 길의 발판이 보인다. is_true는 항상 참이다.
+// OBJECT_COUNT: target은 HintObjectKind, detail은 보물에서 수평 HINT_OBJECT_COUNT_RADIUS 안에 있는 그 종류 물체 수(최대 255)다. is_true는 항상 참이다.
 // grade는 HintGrade다.
 struct HINT_ENTRY {
 	std::uint8_t kind;
