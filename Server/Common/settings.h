@@ -26,6 +26,7 @@ constexpr int MOVE_RELAY_INTERVAL_MS = 40; // 서버가 한 플레이어의 위�
 constexpr int MAX_ROOM_ACTIONS_PER_TICK = 80; // 서버가 한 방에서 한 틱에 중계하는 동작 수
 constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 완료를 기다리는 최대 시간. 지나면 남은 플레이어를 기다리지 않고 시작 대기에 들어간다.
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
+constexpr int GAME_TIME_LIMIT_MS = 7200000; // 게임이 시작된 뒤 보물을 찾지 못해도 게임을 끝내는 시간. 끝나면 보물 위치를 알리고 GAME_END_WAIT_MS 뒤 방으로 돌아간다.
 constexpr double PLATFORM_SPAWN_PROBABILITY = 0.6; // 반드시 놓는 자리가 아닌 발판을 놓을 확률
 
 // 상자 배치. 게임 시작 때 힌트 상자 수만큼 유적 상자를 먼저 고르고, 나머지 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
@@ -67,6 +68,9 @@ constexpr int HINT_GRADE_B_PERCENT = 30;
 constexpr float HINT_EXCLUSION_GRID_STEP = 5000.0f; // 배제 영역을 셀 격자 간격(cm)
 // 힌트 상자. 힌트마다 등급 배수 × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.
 constexpr int HINT_BOX_COPIES[] = { 1, 1, 2, 2 }; // 등급별 배수(S, A, B, C 순서)
+// 발판 길 힌트. 발판 길마다 그 길을 보이게 하는 A 등급 힌트를 하나 두고, PLATFORM_HINT_BOX_COUNT × 글로벌 배수만큼 상자에 넣는다.
+// 발판 길 꼭대기 상자(유적 상자 Top 그룹)에는 S·A 등급 힌트만 넣는다.
+constexpr int PLATFORM_HINT_BOX_COUNT = 2;
 constexpr int HINT_BOX_PLAYERS_PER_MULTIPLIER = 5;
 // 탄약 상자. 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 만들고, 한 상자에는 한 무기의 탄만 든다. 열면 그 무기의 소지 탄이 늘어난다.
 constexpr int AMMO_BOX_COUNT = 50;
@@ -115,14 +119,19 @@ constexpr int STUN_DURATION_MS = 5000; // 기절 시간. 기절 동안 서버는
 constexpr int STUN_PROTECTION_MS = 30000; // 기절이 끝난 뒤 보호 시간. 보호 동안 명중당해도 기절 게이지가 오르지 않는다.
 
 // 아이템. 상자에서 얻는 S·A 등급 아이템이고, 등급별 값은 S, A 순서다.
-// 돋보기 외의 아이템은 얻은 뒤 그 게임 동안 계속 적용되고 기절해도 잃지 않는다. 같은 종류를 또 얻으면 가장 높은 등급만 적용한다.
-// 돋보기는 가진 개수만큼 한 번씩 쓴다. 상자는 종류마다 등급별 개수 × 글로벌 배수만큼 만든다.
+// 넓은 탐지 돋보기 외의 아이템은 얻은 뒤 그 게임 동안 계속 적용되고 기절해도 잃지 않는다. 같은 종류를 또 얻으면 가장 높은 등급만 적용한다.
+// 넓은 탐지 돋보기는 가진 개수만큼 한 번씩 쓴다. 상자는 종류마다 등급별 개수 × 글로벌 배수만큼 만든다.
 constexpr int ITEM_BOX_COUNTS[] = { 1, 2 };
 constexpr int ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[] = { 60000, 30000 }; // 곡괭이 1번이 차는 시간에서 빼는 시간
 constexpr float ITEM_STUN_GAUGE_DECAYS_PER_SECOND[] = { 6.0f, 5.0f }; // 기절 게이지 초당 감소량
 constexpr int ITEM_STUN_GAUGE_DECAY_DELAYS_MS[] = { 3000, 4000 }; // 기절 게이지 감소 대기 시간
 constexpr int ITEM_STUN_PROTECTIONS_MS[] = { 60000, 45000 }; // 기절이 끝난 뒤 보호 시간
+constexpr float ITEM_MAGNIFIER_RADII[] = { 5000.0f, 4500.0f }; // 기본 돋보기 탐색 반경(cm)
+constexpr int ITEM_MAGNIFIER_COOLDOWNS_MS[] = { 120000, 150000 }; // 기본 돋보기 재사용 대기시간
 // 돋보기 탐색. 클릭하면 MAGNIFIER_SEARCH_MS 동안 움직이지 않고 탐색한 뒤, 탐색을 시작한 위치에서 보물까지 수평 거리가 반경 안인지 알려 준다.
-constexpr float MAGNIFIER_RADII[] = { 10000.0f, 30000.0f }; // 탐색 반경(cm)
+// 기본 돋보기는 모두 처음부터 가지고 횟수 제한 없이 쓰지만, 탐색을 마칠 때마다 재사용 대기시간이 지나야 다시 쓸 수 있다. 넓은 탐지 돋보기는 1회용이다.
+constexpr float MAGNIFIER_RADIUS = 4000.0f; // 기본 돋보기 탐색 반경(cm)
+constexpr int MAGNIFIER_COOLDOWN_MS = 180000; // 기본 돋보기 재사용 대기시간
+constexpr float WIDE_MAGNIFIER_RADII[] = { 20000.0f, 10000.0f }; // 넓은 탐지 돋보기 탐색 반경(cm)
 constexpr int MAGNIFIER_SEARCH_MS = 2000;
-constexpr float MAGNIFIER_MOVE_TOLERANCE = 100.0f; // 탐색이 끝날 때 시작 위치에서 벗어나도 되는 수평 거리(cm). 벗어나면 탐색을 취소하고 돋보기를 쓰지 않는다.
+constexpr float MAGNIFIER_MOVE_TOLERANCE = 100.0f; // 탐색이 끝날 때 시작 위치에서 벗어나도 되는 수평 거리(cm). 벗어나면 탐색을 취소하고 돋보기를 쓰지 않은 것으로 본다.

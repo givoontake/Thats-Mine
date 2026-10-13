@@ -47,14 +47,14 @@ bool UItemSubsystem::DoesSupportWorldType(const EWorldType::Type world_type) con
 	return world_type == EWorldType::Game || world_type == EWorldType::PIE;
 }
 
-void UItemSubsystem::RequestSearch(EHintGrade grade) const
+void UItemSubsystem::RequestSearch(TOptional<EHintGrade> grade) const
 {
 	if (!is_active_)
 	{
 		return;
 	}
 	C2S_SEARCH_PACKET packet{};
-	packet.grade = static_cast<uint8>(grade);
+	packet.grade = grade ? static_cast<uint8>(*grade) : BASIC_MAGNIFIER_GRADE;
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_SEARCH, payload);
@@ -78,7 +78,7 @@ void UItemSubsystem::HandleItemPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 내 돋보기 탐색 결과. 서버가 돋보기를 하나 쓴 것이다.
+// 내 돋보기 탐색 결과. 서버가 기본 돋보기의 재사용 대기시간을 시작했거나 넓은 탐지 돋보기를 하나 쓴 것이다.
 void UItemSubsystem::HandleSearchResultPacket(const TArray<uint8>& payload)
 {
 	S2C_SEARCH_RESULT_PACKET packet;
@@ -89,13 +89,13 @@ void UItemSubsystem::HandleSearchResultPacket(const TArray<uint8>& payload)
 		return;
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.grade > static_cast<uint8>(EHintGrade::A))
+	if (packet.grade != BASIC_MAGNIFIER_GRADE && packet.grade > static_cast<uint8>(EHintGrade::A))
 	{
 		return;
 	}
 	if (APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
 	{
-		character->ConsumeMagnifier(static_cast<EHintGrade>(packet.grade));
+		character->ConsumeMagnifier(packet.grade == BASIC_MAGNIFIER_GRADE ? TOptional<EHintGrade>() : TOptional<EHintGrade>(static_cast<EHintGrade>(packet.grade)));
 	}
-	GetWorld()->GetSubsystem<UHintSubsystem>()->AddSearchResult(FVector2D(packet.location[0], packet.location[1]), MAGNIFIER_RADII[packet.grade], packet.is_found);
+	GetWorld()->GetSubsystem<UHintSubsystem>()->AddSearchResult(FVector2D(packet.location[0], packet.location[1]), packet.radius, packet.is_found);
 }

@@ -1,6 +1,14 @@
 #include "SettingsWidget.h"
 
+#include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/ButtonSlot.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/ScrollBoxSlot.h"
+#include "Components/SizeBox.h"
 #include "Components/EditableText.h"
 #include "Components/ScrollBox.h"
 #include "Components/Slider.h"
@@ -11,6 +19,7 @@
 #include "CycleOptionRow.h"
 #include "Settings/FrameRateSettingsSubsystem.h"
 #include "Player/ControlSettingsSubsystem.h"
+#include "Settings/KeyBindingSubsystem.h"
 
 static constexpr float SENSITIVITY_STEP = 0.1f;
 static constexpr float VOLUME_STEP = 0.01f;
@@ -46,6 +55,11 @@ static constexpr int32 ENGINE_QUALITY_OFFSET = 1;
 static constexpr int32 DEFAULT_QUALITY_LEVEL = QUALITY_LEVEL_COUNT - 1;
 static constexpr int32 DEFAULT_RESOLUTION_LEVEL = QUALITY_LEVEL_COUNT - 1;
 static const TCHAR* DESCRIPTION_HINT = TEXT("항목에 마우스를 올리면 설명이 표시됩니다.");
+// 조작 탭에서 감도 칸이 차지하는 높이와 키 줄 크기
+static constexpr float SENSITIVITY_AREA_HEIGHT = 190.0f;
+static constexpr float KEY_LABEL_WIDTH = 320.0f;
+static constexpr float KEY_BUTTON_WIDTH = 220.0f;
+static constexpr float KEY_BUTTON_HEIGHT = 46.0f;
 
 void USettingsWidget::NativeOnInitialized()
 {
@@ -115,7 +129,77 @@ void USettingsWidget::NativeOnInitialized()
 		slider->SetStepSize(SENSITIVITY_STEP);
 		slider->OnValueChanged.AddDynamic(this, &USettingsWidget::UpdateSensitivityLabels);
 	}
+	BuildKeyRows();
 	SelectGraphicsTab();
+}
+
+void USettingsWidget::BuildKeyRows()
+{
+	UCanvasPanel* page = Cast<UCanvasPanel>(mouse_sensitivity_->GetParent());
+	if (!page)
+	{
+		return;
+	}
+	UScrollBox* scroll = WidgetTree->ConstructWidget<UScrollBox>();
+	scroll->SetConsumeMouseWheel(EConsumeMouseWheel::Always);
+	scroll->SetScrollbarThickness(FVector2D(8.0, 8.0));
+	UCanvasPanel* sensitivity_area = WidgetTree->ConstructWidget<UCanvasPanel>();
+	USizeBox* sensitivity_size = WidgetTree->ConstructWidget<USizeBox>();
+	sensitivity_size->SetHeightOverride(SENSITIVITY_AREA_HEIGHT);
+	sensitivity_size->AddChild(sensitivity_area);
+	// 감도 줄은 배치를 그대로 지닌 채 스크롤 상자 맨 위 칸으로 옮긴다.
+	for (UWidget* child : page->GetAllChildren())
+	{
+		const FAnchorData layout = CastChecked<UCanvasPanelSlot>(child->Slot)->GetLayout();
+		child->RemoveFromParent();
+		sensitivity_area->AddChildToCanvas(child)->SetLayout(layout);
+	}
+	UCanvasPanelSlot* scroll_slot = page->AddChildToCanvas(scroll);
+	scroll_slot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+	scroll_slot->SetOffsets(FMargin(0.0f));
+	scroll->AddChild(sensitivity_size);
+	for (int32 action = 0; action < static_cast<int32>(EKeyAction::COUNT); ++action)
+	{
+		UHorizontalBox* row = WidgetTree->ConstructWidget<UHorizontalBox>();
+		UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
+		label->SetText(UKeyBindingSubsystem::GetActionName(static_cast<EKeyAction>(action)));
+		label->SetFont(option_label_font_);
+		USizeBox* label_size = WidgetTree->ConstructWidget<USizeBox>();
+		label_size->SetWidthOverride(KEY_LABEL_WIDTH);
+		label_size->AddChild(label);
+		row->AddChildToHorizontalBox(label_size)->SetVerticalAlignment(VAlign_Center);
+		UButton* button = WidgetTree->ConstructWidget<UButton>();
+		button->SetStyle(tab_button_style_);
+		button->OnClicked.AddDynamic(this, &USettingsWidget::StartKeyCapture);
+		UTextBlock* key = WidgetTree->ConstructWidget<UTextBlock>();
+		key->SetFont(option_level_font_);
+		key->SetColorAndOpacity(FSlateColor::UseForeground());
+		key->SetJustification(ETextJustify::Center);
+		Cast<UButtonSlot>(button->AddChild(key))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
+		USizeBox* button_size = WidgetTree->ConstructWidget<USizeBox>();
+		button_size->SetWidthOverride(KEY_BUTTON_WIDTH);
+		button_size->SetHeightOverride(KEY_BUTTON_HEIGHT);
+		button_size->AddChild(button);
+		row->AddChildToHorizontalBox(button_size)->SetVerticalAlignment(VAlign_Center);
+		Cast<UScrollBoxSlot>(scroll->AddChild(row))->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 4.0f));
+		key_buttons_.Add(button);
+		key_texts_.Add(key);
+	}
+}
+
+void USettingsWidget::StartKeyCapture()
+{
+	capturing_action_ = key_buttons_.IndexOfByPredicate([](const UButton* button) { return button->IsHovered(); });
+	option_description_->SetText(capturing_action_ == INDEX_NONE ? FText::GetEmpty() : NSLOCTEXT("Settings", "KeyCapture", "바꿀 키를 누르세요. ESC를 누르면 취소합니다."));
+	UpdateKeyTexts();
+}
+
+void USettingsWidget::UpdateKeyTexts()
+{
+	for (int32 action = 0; action < key_texts_.Num() && action < pending_keys_.Num(); ++action)
+	{
+		key_texts_[action]->SetText(action == capturing_action_ ? NSLOCTEXT("Settings", "PressKey", "키 입력") : pending_keys_[action].GetDisplayName());
+	}
 }
 
 void USettingsWidget::NativeConstruct()
@@ -126,6 +210,14 @@ void USettingsWidget::NativeConstruct()
 
 void USettingsWidget::LoadSavedSettings()
 {
+	pending_keys_.Reset();
+	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	for (int32 action = 0; action < static_cast<int32>(EKeyAction::COUNT); ++action)
+	{
+		pending_keys_.Add(bindings->GetKey(static_cast<EKeyAction>(action)));
+	}
+	capturing_action_ = INDEX_NONE;
+	UpdateKeyTexts();
 	if (const UControlSettingsSubsystem* settings = GetGameInstance() ? GetGameInstance()->GetSubsystem<UControlSettingsSubsystem>() : nullptr)
 	{
 		mouse_sensitivity_->SetValue(settings->GetMouseSensitivity());
@@ -137,6 +229,28 @@ void USettingsWidget::LoadSavedSettings()
 
 FReply USettingsWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const FKeyEvent& event)
 {
+	// 바꿀 키를 기다리는 중이면 키보드 키 하나를 받는다. ESC는 취소이고, 다른 동작이 쓰던 키면 두 동작의 키를 맞바꾼다.
+	if (capturing_action_ != INDEX_NONE)
+	{
+		const FKey key = event.GetKey();
+		if (key != EKeys::Escape && (key.IsMouseButton() || key.IsGamepadKey()))
+		{
+			return FReply::Handled();
+		}
+		if (key != EKeys::Escape)
+		{
+			const int32 other = pending_keys_.IndexOfByKey(key);
+			if (other != INDEX_NONE)
+			{
+				pending_keys_[other] = pending_keys_[capturing_action_];
+			}
+			pending_keys_[capturing_action_] = key;
+		}
+		capturing_action_ = INDEX_NONE;
+		option_description_->SetText(FText::GetEmpty());
+		UpdateKeyTexts();
+		return FReply::Handled();
+	}
 	if (event.GetKey() == EKeys::Escape && on_close_requested_.IsBound())
 	{
 		if (!event.IsRepeat()) { on_close_requested_.Execute(); }
@@ -349,6 +463,9 @@ void USettingsWidget::ApplySettings()
 		control->SetZoomSensitivity(zoom_sensitivity_->GetValue());
 		control->SaveConfig();
 	}
+	capturing_action_ = INDEX_NONE;
+	GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>()->SetKeys(pending_keys_);
+	UpdateKeyTexts();
 	UGameUserSettings* settings = UGameUserSettings::GetGameUserSettings();
 	for (int32 option = 0; option < GRAPHICS_QUALITY_OPTION_COUNT; ++option)
 	{
@@ -370,6 +487,12 @@ void USettingsWidget::ResetToDefaults()
 {
 	mouse_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
 	zoom_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
+	for (int32 action = 0; action < pending_keys_.Num(); ++action)
+	{
+		pending_keys_[action] = UKeyBindingSubsystem::GetDefaultKey(static_cast<EKeyAction>(action));
+	}
+	capturing_action_ = INDEX_NONE;
+	UpdateKeyTexts();
 	lobby_frame_row_->SetOption(UFrameRateSettingsSubsystem::DEFAULT_LOBBY_OPTION);
 	game_frame_row_->SetOption(UFrameRateSettingsSubsystem::DEFAULT_GAME_OPTION);
 	resolution_row_->SetOption(DEFAULT_RESOLUTION_LEVEL);

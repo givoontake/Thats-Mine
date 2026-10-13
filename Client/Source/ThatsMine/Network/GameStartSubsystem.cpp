@@ -19,6 +19,7 @@
 #include "ShaderPipelineCache.h"
 #include "ThatsMineGameMode.h"
 #include "UI/Loading/LoadingScreenSubsystem.h"
+#include "UI/Timer/GameTimeWidget.h"
 #include "UI/Timer/MatchTimerWidget.h"
 #include "UObject/UObjectGlobals.h"
 #include "game_protocol.h"
@@ -52,6 +53,7 @@ void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_GAME_READY, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameReadyPacket));
 	network->RegisterPacketHandler(S2C_GAME_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameStartPacket));
 	network->RegisterPacketHandler(S2C_TREASURE_FOUND, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureFoundPacket));
+	network->RegisterPacketHandler(S2C_TIME_OVER, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTimeOverPacket));
 	prepare_start_time_ = world.GetRealTimeSeconds();
 	const AGameModeBase* game_mode = world.GetAuthGameMode();
 	const APlayerCharacter* character = game_mode && game_mode->DefaultPawnClass ? Cast<APlayerCharacter>(game_mode->DefaultPawnClass->GetDefaultObject()) : nullptr;
@@ -75,6 +77,7 @@ void UGameStartSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_GAME_READY);
 			network->UnregisterPacketHandler(S2C_GAME_START);
 			network->UnregisterPacketHandler(S2C_TREASURE_FOUND);
+			network->UnregisterPacketHandler(S2C_TIME_OVER);
 		}
 		is_active_ = false;
 	}
@@ -82,6 +85,11 @@ void UGameStartSubsystem::Deinitialize()
 	{
 		timer_widget_->RemoveFromParent();
 		timer_widget_ = nullptr;
+	}
+	if (game_time_widget_)
+	{
+		game_time_widget_->RemoveFromParent();
+		game_time_widget_ = nullptr;
 	}
 	preload_handle_.Reset();
 	Super::Deinitialize();
@@ -220,15 +228,30 @@ void UGameStartSubsystem::HandleGameReadyPacket(const TArray<uint8>& payload)
 
 void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 {
-	if (!payload.IsEmpty())
+	if (payload.Num() != sizeof(S2C_GAME_START_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
+	std::uint32_t remaining_ms = 0;
+	FMemory::Memcpy(&remaining_ms, payload.GetData(), sizeof(remaining_ms));
 	if (timer_widget_)
 	{
 		timer_widget_->RemoveFromParent();
 		timer_widget_ = nullptr;
+	}
+	APlayerController* controller = GetWorld()->GetFirstPlayerController();
+	if (!game_time_widget_ && controller && controller->IsLocalController())
+	{
+		game_time_widget_ = CreateWidget<UGameTimeWidget>(controller);
+		if (game_time_widget_)
+		{
+			game_time_widget_->AddToViewport(10);
+		}
+	}
+	if (game_time_widget_)
+	{
+		game_time_widget_->StartCountdown(remaining_ms / 1000.0f);
 	}
 	// 시작 돔을 위에서부터 벗겨 낸다. 게임이 시작된 뒤 합류했으면 연출 없이 바로 숨긴다.
 	for (TActorIterator<AStartDome> dome(GetWorld()); dome; ++dome)
@@ -244,7 +267,7 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고, 보물 자리에 보물 상자를 놓고, 지도가 보물 위치를 표시하도록 알린다.
+// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고 보물 위치를 공개한다.
 void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_TREASURE_FOUND_PACKET) - sizeof(PACKET_HEADER))
@@ -260,8 +283,34 @@ void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload
 	{
 		timer->SetMessage(FText::Format(LOCTEXT("TreasureFound", "{0}님이 보물을 발견했습니다!"), finder ? FText::FromString(finder->nickname) : LOCTEXT("UnknownPlayer", "누군가")), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
 	}
-	treasure_location_ = FVector(packet.location[0], packet.location[1], packet.location[2]);
-	GetWorld()->SpawnActor<ATreasureChest>(*treasure_location_, FRotator(0.0, packet.yaw, 0.0));
+	RevealTreasure(packet.location, packet.yaw);
+}
+
+// 아무도 보물을 찾지 못한 채 게임 제한시간이 끝났다. 방으로 돌아갈 때까지 화면 상단에 안내를 띄우고 보물 위치를 공개한다.
+void UGameStartSubsystem::HandleTimeOverPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_TIME_OVER_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_TIME_OVER_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (UMatchTimerWidget* timer = ShowTimerWidget())
+	{
+		timer->SetMessage(LOCTEXT("TimeOver", "시간이 끝났습니다! 보물 위치를 공개합니다."), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
+	}
+	RevealTreasure(packet.location, packet.yaw);
+}
+
+void UGameStartSubsystem::RevealTreasure(const float location[3], float yaw)
+{
+	if (game_time_widget_)
+	{
+		game_time_widget_->StopCountdown();
+	}
+	treasure_location_ = FVector(location[0], location[1], location[2]);
+	GetWorld()->SpawnActor<ATreasureChest>(*treasure_location_, FRotator(0.0, yaw, 0.0));
 	on_treasure_found_.Broadcast();
 }
 

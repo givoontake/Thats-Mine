@@ -23,6 +23,7 @@ DECLARE_DELEGATE(FOnSettingsCloseRequested);
 // 그래픽 탭은 위에서부터 로비·게임 프레임 제한, 렌더 해상도(50·75·100%), 전체 품질, 품질 묶음 10개(엔진의 중간·높음·최고)이고 모두 좌우 화살표로 고른다.
 // 전체 품질은 품질 묶음 10개를 한 번에 바꾸고, 10개가 서로 다르면 사용자 지정으로 보인다.
 // 마우스를 올린 그래픽 항목의 설명을 창 아래 설명 칸에 보인다.
+// 조작 탭은 감도 아래에 동작마다 키 버튼을 두고, 버튼을 누른 뒤 누른 키로 바꾼다. 이미 다른 동작이 쓰는 키면 두 동작의 키를 맞바꾼다.
 UCLASS(Abstract)
 class THATSMINE_API USettingsWidget : public UUserWidget
 {
@@ -124,6 +125,12 @@ private:
 	void UpdateGraphicsRows();
 	// 품질 묶음 10개가 모두 같으면 그 단계, 다르면 사용자 지정으로 전체 품질을 보인다.
 	void UpdateOverallQualityRow();
+	// 조작 탭 감도 칸을 스크롤 상자 맨 위로 옮기고, 그 아래에 동작마다 키 줄을 만든다.
+	void BuildKeyRows();
+	// 마우스가 올라간 키 버튼의 동작을 바꿀 키를 기다린다.
+	UFUNCTION()
+	void StartKeyCapture();
+	void UpdateKeyTexts();
 	// 줄의 화살표가 알린 방향(-1, +1)으로 값을 옮긴다.
 	void StepLobbyFrame(int32 step);
 	void StepGameFrame(int32 step);
@@ -146,4 +153,13 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCycleOptionRow> overall_quality_row_;
+
+	// 동작 순서의 키 버튼과 그 글자, 창에 보이는 키. 적용을 누르면 키 설정에 넣는다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UButton>> key_buttons_;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> key_texts_;
+	TArray<FKey> pending_keys_;
+	// 바꿀 키를 기다리는 동작 번호. 기다리지 않으면 INDEX_NONE이다.
+	int32 capturing_action_ = INDEX_NONE;
 };

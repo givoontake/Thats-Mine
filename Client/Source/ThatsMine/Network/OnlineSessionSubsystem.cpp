@@ -203,9 +203,10 @@ void UOnlineSessionSubsystem::QuickJoin()
 	else ShowStatus(LOCTEXT("SendFailed", "요청을 전송하지 못했습니다."));
 }
 
+// 방 화면과 게임 중에 방을 나간다. 서버가 방에서 내보내면 로비로 돌아간다.
 void UOnlineSessionSubsystem::LeaveRoom()
 {
-	if (!CanRequest(EClientState::ROOM)) return;
+	if (!CanRequest(EClientState::ROOM) && !CanRequest(EClientState::PLAYING)) return;
 	if (SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_REMOVE_PLAYER, C2S_REMOVE_PLAYER_PACKET{})) BeginRequest(OnlineRequest::LEAVE);
 	else ShowStatus(LOCTEXT("SendFailed", "요청을 전송하지 못했습니다."));
 }

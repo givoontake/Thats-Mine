@@ -16,6 +16,13 @@
 #include "UI/Map/WorldMapWidget.h"
 #include "UI/Inventory/InventoryWidget.h"
 #include "UI/Settings/SettingsWidget.h"
+#include "UI/Menu/PauseMenuWidget.h"
+#include "UI/Help/HelpWidget.h"
+#include "Settings/KeyBindingSubsystem.h"
+#include "Player/PlayerCharacter.h"
+#include "Flow/ClientStateSubsystem.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Network/OnlineSessionSubsystem.h"
 #include "Blueprint/GameViewportSubsystem.h"
 #include "Components/ScaleBox.h"
 #include "Components/SizeBox.h"
@@ -34,7 +41,8 @@ AThatsMinePlayerController::AThatsMinePlayerController()
 void AThatsMinePlayerController::FlushPressedKeys()
 {
 	const UUserWidget* screen = map_widget_ && map_widget_->IsInViewport() ? static_cast<UUserWidget*>(map_widget_)
-		: inventory_widget_ && inventory_widget_->IsInViewport() ? static_cast<UUserWidget*>(inventory_widget_) : nullptr;
+		: inventory_widget_ && inventory_widget_->IsInViewport() ? static_cast<UUserWidget*>(inventory_widget_)
+		: help_widget_ && help_widget_->IsInViewport() ? static_cast<UUserWidget*>(help_widget_) : nullptr;
 	if (screen && FSlateApplication::IsInitialized() && FSlateApplication::Get().IsActive())
 	{
 		const UGameViewportClient* viewport = GetWorld()->GetGameViewport();
@@ -80,29 +88,116 @@ void AThatsMinePlayerController::SetupInputComponent()
 	// only add IMCs for local player controllers
 	if (IsLocalPlayerController())
 	{
-		InputComponent->BindKey(EKeys::M, IE_Pressed, this, &AThatsMinePlayerController::ToggleMap);
-		InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AThatsMinePlayerController::ToggleInventory);
-		InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AThatsMinePlayerController::ToggleSettings);
-
-		// Add Input Mapping Context
-		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+		ApplyKeyBindings();
+		if (!key_bindings_changed_handle_.IsValid())
 		{
-			for (UInputMappingContext* CurrentContext : DefaultMappingContexts)
-			{
-				Subsystem->AddMappingContext(CurrentContext, 0);
-			}
+			key_bindings_changed_handle_ = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>()->on_keys_changed_.AddUObject(this, &AThatsMinePlayerController::ApplyKeyBindings);
+		}
+	}
 
-			// only add these IMCs if we're not using mobile touch input
-			if (!ShouldUseTouchControls())
+}
+
+void AThatsMinePlayerController::ApplyKeyBindings()
+{
+	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	InputComponent->KeyBindings.Reset();
+	InputComponent->BindKey(bindings->GetKey(EKeyAction::MAP), IE_Pressed, this, &AThatsMinePlayerController::ToggleMap);
+	InputComponent->BindKey(bindings->GetKey(EKeyAction::INVENTORY), IE_Pressed, this, &AThatsMinePlayerController::ToggleInventory);
+	InputComponent->BindKey(bindings->GetKey(EKeyAction::HELP), IE_Pressed, this, &AThatsMinePlayerController::ToggleHelp);
+	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AThatsMinePlayerController::TogglePauseMenu);
+	ApplyMappingContexts();
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->RebindKeys();
+	}
+}
+
+// 입력 매핑의 기본 이동 키(W·S·A·D)를 키 설정의 이동 키로 바꾼 사본을 만들어 넣는다. 원본 입력 매핑 에셋은 바꾸지 않는다.
+void AThatsMinePlayerController::ApplyMappingContexts()
+{
+	UEnhancedInputLocalPlayerSubsystem* input = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+	if (!input)
+	{
+		return;
+	}
+	for (UInputMappingContext* context : applied_mapping_contexts_)
+	{
+		input->RemoveMappingContext(context);
+	}
+	applied_mapping_contexts_.Reset();
+	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	const EKeyAction move_actions[] = { EKeyAction::MOVE_FORWARD, EKeyAction::MOVE_BACKWARD, EKeyAction::MOVE_LEFT, EKeyAction::MOVE_RIGHT };
+	TArray<UInputMappingContext*> sources(DefaultMappingContexts);
+	// only add these IMCs if we're not using mobile touch input
+	if (!ShouldUseTouchControls())
+	{
+		sources.Append(MobileExcludedMappingContexts);
+	}
+	for (UInputMappingContext* source : sources)
+	{
+		if (!source)
+		{
+			continue;
+		}
+		UInputMappingContext* context = DuplicateObject<UInputMappingContext>(source, this);
+		for (int32 index = 0; index < context->GetMappings().Num(); ++index)
+		{
+			FEnhancedActionKeyMapping& mapping = context->GetMapping(index);
+			for (const EKeyAction action : move_actions)
 			{
-				for (UInputMappingContext* CurrentContext : MobileExcludedMappingContexts)
+				if (mapping.Key == UKeyBindingSubsystem::GetDefaultKey(action))
 				{
-					Subsystem->AddMappingContext(CurrentContext, 0);
+					mapping.Key = bindings->GetKey(action);
+					break;
 				}
 			}
 		}
+		input->AddMappingContext(context, 0);
+		applied_mapping_contexts_.Add(context);
 	}
-	
+}
+
+void AThatsMinePlayerController::ToggleHelp()
+{
+	if (help_widget_ && help_widget_->IsInViewport())
+	{
+		CloseHelp();
+		return;
+	}
+	if (!IsLocalController() || !GetPawn())
+	{
+		return;
+	}
+	if ((map_widget_ && map_widget_->IsInViewport()) || (inventory_widget_ && inventory_widget_->IsInViewport()) || (pause_menu_widget_ && pause_menu_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport()))
+	{
+		return;
+	}
+	if (!help_widget_)
+	{
+		help_widget_ = CreateWidget<UHelpWidget>(this, UHelpWidget::StaticClass());
+		help_widget_->on_close_requested_.BindUObject(this, &AThatsMinePlayerController::CloseHelp);
+	}
+	was_mouse_cursor_visible_ = bShowMouseCursor;
+	SetIgnoreLookInput(true);
+	help_widget_->AddToPlayerScreen(200);
+	bShowMouseCursor = true;
+	FInputModeGameAndUI input_mode;
+	input_mode.SetWidgetToFocus(help_widget_->TakeWidget());
+	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	input_mode.SetHideCursorDuringCapture(false);
+	SetInputMode(input_mode);
+}
+
+void AThatsMinePlayerController::CloseHelp()
+{
+	if (!help_widget_ || !help_widget_->IsInViewport())
+	{
+		return;
+	}
+	help_widget_->RemoveFromParent();
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = was_mouse_cursor_visible_;
+	SetInputMode(FInputModeGameOnly());
 }
 
 bool AThatsMinePlayerController::ShouldUseTouchControls() const
@@ -115,9 +210,18 @@ void AThatsMinePlayerController::EndPlay(const EEndPlayReason::Type end_play_rea
 {
 	CloseMap();
 	CloseInventory();
+	CloseHelp();
+	ClosePauseMenu();
 	CloseSettings();
+	if (key_bindings_changed_handle_.IsValid())
+	{
+		GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>()->on_keys_changed_.Remove(key_bindings_changed_handle_);
+		key_bindings_changed_handle_.Reset();
+	}
 	map_widget_ = nullptr;
 	inventory_widget_ = nullptr;
+	help_widget_ = nullptr;
+	pause_menu_widget_ = nullptr;
 	settings_widget_ = nullptr;
 	settings_frame_ = nullptr;
 	Super::EndPlay(end_play_reason);
@@ -232,7 +336,12 @@ void AThatsMinePlayerController::ToggleSettings()
 	if (!settings_widget_)
 	{
 		settings_widget_ = CreateWidget<USettingsWidget>(this, settings_widget_class_);
-		settings_widget_->on_close_requested_.BindUObject(this, &AThatsMinePlayerController::CloseSettings);
+		// 설정 창에서 ESC를 누르면 ESC 메뉴로 돌아간다.
+		settings_widget_->on_close_requested_.BindWeakLambda(this, [this]()
+		{
+			CloseSettings();
+			TogglePauseMenu();
+		});
 		// 로비처럼 배치 단계에서 키워 글자를 키운 크기로 다시 그린다. 그림 배율로 키우면 글자가 흐려진다.
 		USizeBox* size_box = NewObject<USizeBox>(this);
 		size_box->SetWidthOverride(885.0f);
@@ -260,6 +369,69 @@ void AThatsMinePlayerController::ToggleSettings()
 	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	input_mode.SetHideCursorDuringCapture(false);
 	SetInputMode(input_mode);
+}
+
+void AThatsMinePlayerController::TogglePauseMenu()
+{
+	if (pause_menu_widget_ && pause_menu_widget_->IsInViewport())
+	{
+		ClosePauseMenu();
+		return;
+	}
+	if (!IsLocalController() || !GetPawn())
+	{
+		return;
+	}
+	if ((map_widget_ && map_widget_->IsInViewport()) || (inventory_widget_ && inventory_widget_->IsInViewport()) || (help_widget_ && help_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport()))
+	{
+		return;
+	}
+	if (!pause_menu_widget_)
+	{
+		pause_menu_widget_ = CreateWidget<UPauseMenuWidget>(this, UPauseMenuWidget::StaticClass());
+		pause_menu_widget_->on_resume_requested_.BindUObject(this, &AThatsMinePlayerController::ClosePauseMenu);
+		pause_menu_widget_->on_settings_requested_.BindWeakLambda(this, [this]()
+		{
+			ClosePauseMenu();
+			ToggleSettings();
+		});
+		pause_menu_widget_->on_leave_requested_.BindUObject(this, &AThatsMinePlayerController::LeaveToLobby);
+		pause_menu_widget_->on_quit_requested_.BindUObject(this, &AThatsMinePlayerController::QuitGame);
+	}
+	pause_menu_widget_->SetCanLeaveToLobby(!GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode());
+	was_mouse_cursor_visible_ = bShowMouseCursor;
+	SetIgnoreLookInput(true);
+	pause_menu_widget_->AddToPlayerScreen(200);
+	bShowMouseCursor = true;
+	FInputModeGameAndUI input_mode;
+	input_mode.SetWidgetToFocus(pause_menu_widget_->TakeWidget());
+	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	input_mode.SetHideCursorDuringCapture(false);
+	SetInputMode(input_mode);
+}
+
+void AThatsMinePlayerController::ClosePauseMenu()
+{
+	if (!pause_menu_widget_ || !pause_menu_widget_->IsInViewport())
+	{
+		return;
+	}
+	pause_menu_widget_->RemoveFromParent();
+	SetIgnoreLookInput(false);
+	bShowMouseCursor = was_mouse_cursor_visible_;
+	SetInputMode(FInputModeGameOnly());
+}
+
+// 서버가 방에서 내보내면 로비 레벨로 옮겨 간다. 그동안 메뉴는 닫아 둔다.
+void AThatsMinePlayerController::LeaveToLobby()
+{
+	ClosePauseMenu();
+	GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->LeaveRoom();
+}
+
+void AThatsMinePlayerController::QuitGame()
+{
+	UKismetSystemLibrary::QuitGame(this, this, EQuitPreference::Quit, false);
 }
 
 void AThatsMinePlayerController::CloseSettings()

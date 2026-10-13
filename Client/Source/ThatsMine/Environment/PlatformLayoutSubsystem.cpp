@@ -1,6 +1,7 @@
 #include "PlatformLayoutSubsystem.h"
 
 #include "random_seed.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Flow/ClientStateSubsystem.h"
@@ -8,6 +9,9 @@
 #include "Network/game_protocol.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPlatformLayout, Log, All);
+
+// 발판 길 힌트로 보이게 한 발판의 재질
+static constexpr TCHAR REVEALED_PLATFORM_MATERIAL_PATH[] = TEXT("/Game/Thats_Mine/Materials/M_PlatformRainbow.M_PlatformRainbow");
 
 void UPlatformLayoutSubsystem::OnWorldBeginPlay(UWorld& world)
 {
@@ -90,14 +94,41 @@ void UPlatformLayoutSubsystem::SpawnPlatforms(const PlatformLayout& layout)
 	// 블루프린트 기본값에도 크기가 들어 있고 생성할 때 넘긴 크기가 그 값에 곱해지므로, 기본 크기로 나눠서 넘긴다.
 	const FVector default_scale = platform_class->GetDefaultObject<AActor>()->GetRootComponent()->GetRelativeScale3D();
 	const FVector scale = FVector(PLATFORM_SIZE / 100.0f, PLATFORM_SIZE / 100.0f, PLATFORM_THICKNESS / 100.0f) / default_scale;
+	// 발판 길은 시작 발판마다 바뀐다.
+	int32 path = INDEX_NONE;
 	for (int32 index = 0; index < PLATFORM_COORDINATE_COUNT; ++index)
 	{
+		const PlatformCoordinate& coordinate = PLATFORM_COORDINATES[index];
+		if (coordinate.type == PlatformType::START)
+		{
+			++path;
+		}
 		if (!layout[index])
 		{
 			continue;
 		}
-		const PlatformCoordinate& coordinate = PLATFORM_COORDINATES[index];
 		const FTransform transform(FRotator(0.0, coordinate.yaw, 0.0), FVector(coordinate.x, coordinate.y, coordinate.z), scale);
-		GetWorld()->SpawnActor<AActor>(platform_class, transform);
+		if (AActor* platform = GetWorld()->SpawnActor<AActor>(platform_class, transform))
+		{
+			platforms_.Add(platform);
+			platform_paths_.Add(path);
+		}
+	}
+}
+
+void UPlatformLayoutSubsystem::RevealPath(int32 path)
+{
+	UMaterialInterface* material = LoadObject<UMaterialInterface>(nullptr, REVEALED_PLATFORM_MATERIAL_PATH);
+	for (int32 index = 0; index < platforms_.Num(); ++index)
+	{
+		if (platform_paths_[index] != path || !platforms_[index])
+		{
+			continue;
+		}
+		TInlineComponentArray<UStaticMeshComponent*> meshes(platforms_[index]);
+		for (UStaticMeshComponent* mesh : meshes)
+		{
+			mesh->SetMaterial(0, material);
+		}
 	}
 }

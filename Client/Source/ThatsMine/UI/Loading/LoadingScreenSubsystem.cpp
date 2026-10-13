@@ -6,12 +6,25 @@
 #include "Flow/ClientStateSubsystem.h"
 #include "LoadingScreenWidget.h"
 #include "Misc/CoreDelegates.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "MoviePlayer.h"
 #include "UObject/UObjectGlobals.h"
 
 #define LOCTEXT_NAMESPACE "LoadingScreen"
 
 static const TCHAR* LOADING_BACKGROUND_PATH = TEXT("/Game/Thats_Mine/UI/Loading/T_LoadingPyramid.T_LoadingPyramid");
+// 로딩 화면 팁 파일. 한 줄에 팁 하나이고, #으로 시작하는 줄과 빈 줄은 건너뛴다.
+static const TCHAR* LOADING_TIPS_PATH = TEXT("Data/loading_tips.txt");
+
+// 팁 파일에서 팁 하나를 무작위로 고른다. 파일이 없거나 팁이 없으면 빈 글이다.
+static FText PickLoadingTip()
+{
+	TArray<FString> lines;
+	FFileHelper::LoadFileToStringArray(lines, *(FPaths::ProjectContentDir() / LOADING_TIPS_PATH));
+	lines.RemoveAll([](const FString& line) { return line.TrimStartAndEnd().IsEmpty() || line.StartsWith(TEXT("#")); });
+	return lines.IsEmpty() ? FText::GetEmpty() : FText::FromString(lines[FMath::RandRange(0, lines.Num() - 1)].TrimStartAndEnd());
+}
 static const TCHAR* GAME_MAP_PACKAGE = TEXT("/Game/Thats_Mine/Levels/Demo_Landmass");
 // 맵 패키지 불러오기가 차지하는 게이지 구간. 나머지는 맵이 열린 뒤 준비 단계가 채운다.
 static constexpr float MAP_LOAD_PROGRESS = 0.8f;
@@ -98,7 +111,8 @@ void ULoadingScreenSubsystem::Show()
 	widget_ = SNew(SLoadingScreenWidget)
 		.background(background_)
 		.progress_Lambda([this]() { return progress_.load(); })
-		.status_Lambda([this]() { return status_; });
+		.status_Lambda([this]() { return status_; })
+		.tip(PickLoadingTip());
 	is_shown_ = true;
 	// 맵 열기는 다음 프레임에 시작되므로, 그 전에 한 번 그려진 로딩 화면이 맵을 여는 동안 멈춘 화면으로 남는다.
 	if (!CanUseMoviePlayer())

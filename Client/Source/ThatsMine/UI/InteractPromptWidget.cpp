@@ -7,6 +7,8 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/TextBlock.h"
+#include "Engine/GameInstance.h"
+#include "Settings/KeyBindingSubsystem.h"
 #include "Styling/CoreStyle.h"
 
 TSharedRef<SWidget> UInteractPromptWidget::RebuildWidget()
@@ -20,14 +22,13 @@ TSharedRef<SWidget> UInteractPromptWidget::RebuildWidget()
 		font.OutlineSettings.OutlineSize = 2;
 		font.OutlineSettings.OutlineColor = FLinearColor(0.03f, 0.02f, 0.01f, 0.9f);
 
-		UTextBlock* key_text = WidgetTree->ConstructWidget<UTextBlock>();
-		key_text->SetFont(font);
-		key_text->SetText(FText::FromString(TEXT("F")));
-		key_text->SetJustification(ETextJustify::Center);
+		key_text_ = WidgetTree->ConstructWidget<UTextBlock>();
+		key_text_->SetFont(font);
+		key_text_->SetJustification(ETextJustify::Center);
 		UBorder* key_box = WidgetTree->ConstructWidget<UBorder>();
 		key_box->SetBrushColor(FLinearColor(0.03f, 0.02f, 0.01f, 0.75f));
 		key_box->SetPadding(FMargin(12.0f, 2.0f));
-		key_box->SetContent(key_text);
+		key_box->SetContent(key_text_);
 
 		UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 		label->SetFont(font);
@@ -46,4 +47,10 @@ TSharedRef<SWidget> UInteractPromptWidget::RebuildWidget()
 		row_slot->SetAutoSize(true);
 	}
 	return Super::RebuildWidget();
+}
+
+void UInteractPromptWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	key_text_->SetText(GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>()->GetKey(EKeyAction::INTERACT).GetDisplayName());
 }

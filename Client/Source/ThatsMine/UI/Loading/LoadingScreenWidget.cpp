@@ -26,6 +26,7 @@ void SLoadingScreenWidget::Construct(const FArguments& args)
 		.SetMarqueeImage(FSlateRoundedBoxBrush(FLinearColor(1.0f, 0.72f, 0.25f, 1.0f), 5.0f));
 	const FSlateFontInfo status_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 22);
 	const FSlateFontInfo percent_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 26);
+	const FSlateFontInfo tip_font = FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 20);
 
 	ChildSlot
 	[
@@ -47,6 +48,18 @@ void SLoadingScreenWidget::Construct(const FArguments& args)
 			.Padding(FMargin(80.0f, 24.0f, 80.0f, 40.0f))
 			[
 				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 0.0f, 0.0f, 16.0f)
+				[
+					SNew(STextBlock)
+					.Text(FText::Format(NSLOCTEXT("LoadingScreen", "Tip", "TIP  {0}"), args._tip))
+					.Visibility(args._tip.IsEmpty() ? EVisibility::Collapsed : EVisibility::HitTestInvisible)
+					.Font(tip_font)
+					.ColorAndOpacity(FLinearColor(1.0f, 0.85f, 0.55f, 1.0f))
+					.ShadowOffset(FVector2D(1.0, 1.0))
+					.AutoWrapText(true)
+				]
 				+ SVerticalBox::Slot()
 				.AutoHeight()
 				.Padding(0.0f, 0.0f, 0.0f, 12.0f)

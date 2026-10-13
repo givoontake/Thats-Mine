@@ -19,11 +19,14 @@ enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP, SEARCH };
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
 enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
 
-// 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 돋보기 앞까지는 얻으면 계속 적용되는 아이템이다.
-enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUGE_DECAY_DELAY, STUN_PROTECTION, MAGNIFIER, COUNT };
+// 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 넓은 탐지 돋보기 앞까지는 얻으면 계속 적용되는 아이템이다.
+enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUGE_DECAY_DELAY, STUN_PROTECTION, MAGNIFIER_RADIUS, MAGNIFIER_COOLDOWN, WIDE_MAGNIFIER, COUNT };
+
+// 탐색 요청과 결과에서 기본 돋보기를 뜻하는 등급 값. 넓은 탐지 돋보기는 HintGrade 값을 쓴다.
+constexpr std::uint8_t BASIC_MAGNIFIER_GRADE = 0xFF;
 
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
-enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER };
+enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, PLATFORM_PATH };
 
 // "보물에서 가까운 물체" 힌트가 말하는 물체 종류. 메시 여러 개를 한 종류로 묶는다.
 enum class HintObjectKind : std::uint8_t {
@@ -123,9 +126,10 @@ struct S2C_GAME_READY_PACKET {
 	std::uint32_t remaining_ms;
 };
 
-// 시작 대기가 끝나 게임을 시작한다.
+// 시작 대기가 끝나 게임을 시작한다. remaining_ms는 게임 제한시간이 끝날 때까지 남은 시간이다.
 struct S2C_GAME_START_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t remaining_ms;
 };
 
 // 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 시작점(cm)·단위 방향·맞은 곳까지의 거리(cm)이고, 부위는 클라이언트가 판정한 값이다.
@@ -202,6 +206,7 @@ struct S2C_BOX_LAYOUT_PACKET {
 // VIEW: target은 영역 번호, is_true면 그 영역에서 보물이 묻힌 자리가 보인다.
 // NEAREST_OBJECT: target은 HintObjectKind, detail은 순위(0이 가장 가깝다), is_true는 항상 참이다.
 // NEAREST_TOWER: target은 TowerKind, is_true는 항상 참이다.
+// PLATFORM_PATH: target은 발판 길 번호이고, 이 힌트를 얻은 사람에게는 그 길의 발판이 보인다. is_true는 항상 참이다.
 // grade는 HintGrade다.
 struct HINT_ENTRY {
 	std::uint8_t kind;
@@ -305,19 +310,27 @@ struct S2C_ITEM_PACKET {
 	std::uint8_t grade;
 };
 
-// 그 등급의 돋보기로 탐색을 시작한다. 서버는 MAGNIFIER_SEARCH_MS 뒤에 결과를 보낸다.
+// 돋보기로 탐색을 시작한다. grade는 기본 돋보기면 BASIC_MAGNIFIER_GRADE, 넓은 탐지 돋보기면 그 등급이다. 서버는 MAGNIFIER_SEARCH_MS 뒤에 결과를 보낸다.
 struct C2S_SEARCH_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t grade;
 };
 
-// 끝난 돋보기 탐색의 결과. 탐색한 사람에게만 보낸다. 위치는 서버가 탐색 시작을 받았을 때의 캡슐 중심(cm, x·y)이고,
-// is_found면 그 위치에서 등급의 반경 안에 보물이 있다. 돋보기는 이 결과를 보낼 때 하나 쓴다.
+// 끝난 돋보기 탐색의 결과. 탐색한 사람에게만 보낸다. grade는 탐색 요청과 같은 값이고, 위치는 서버가 탐색 시작을 받았을 때의 캡슐 중심(cm, x·y)이다.
+// is_found면 그 위치에서 반경(cm) 안에 보물이 있다. 이 결과를 보낼 때 넓은 탐지 돋보기는 하나 쓰고, 기본 돋보기는 재사용 대기시간을 시작한다.
 struct S2C_SEARCH_RESULT_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t grade;
 	bool is_found;
 	float location[2];
+	float radius;
+};
+
+// 아무도 보물을 찾지 못한 채 게임 제한시간이 끝났다. 보물 바닥 가운데 위치(cm)와 보물 방향(도)을 플레이 중인 방 전체에 보내고, GAME_END_WAIT_MS 뒤 방으로 돌아간다.
+struct S2C_TIME_OVER_PACKET {
+	PACKET_HEADER header;
+	float location[3];
+	float yaw;
 };
 
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.

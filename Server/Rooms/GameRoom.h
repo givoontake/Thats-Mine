@@ -144,6 +144,8 @@ private:
 	void DropHint(Player& target);
 	void ProcessPublicHint();
 	void DigTreasure(const Player& digger);
+	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
+	void ProcessTimeLimit();
 	void ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p);
 	void ProcessSearches();
 	void SendPublicHintTime(Session& session) const;

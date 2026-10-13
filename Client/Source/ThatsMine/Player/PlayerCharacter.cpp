@@ -20,6 +20,7 @@
 #include "NiagaraSystem.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Player/ControlSettingsSubsystem.h"
+#include "Settings/KeyBindingSubsystem.h"
 #include "Interaction/BoxLayoutSubsystem.h"
 #include "Interaction/HintDropSubsystem.h"
 #include "Interaction/HintBox.h"
@@ -174,6 +175,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 	GetWorldTimerManager().ClearTimer(protection_timer_);
 	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
 	GetWorldTimerManager().ClearTimer(search_timer_);
+	GetWorldTimerManager().ClearTimer(magnifier_cooldown_timer_);
 	GetWorldTimerManager().ClearTimer(interact_prompt_timer_);
 	if (equipment_widget_)
 	{
@@ -229,20 +231,38 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* player_input_c
 		}
 	}
 
-	for (const auto& [weapon, settings] : weapon_settings_)
+	BindGameKeys(player_input_component);
+}
+
+void APlayerCharacter::BindGameKeys(UInputComponent* input)
+{
+	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	// 무기 선택 키는 무기 설정에 넣어 두고, 눌린 키로 무기를 찾는다.
+	const TPair<EWeaponType, EKeyAction> weapon_actions[] = { { EWeaponType::SNIPER, EKeyAction::WEAPON_SNIPER }, { EWeaponType::PISTOL, EKeyAction::WEAPON_PISTOL }, { EWeaponType::PICKAXE, EKeyAction::WEAPON_PICKAXE }, { EWeaponType::MAGNIFIER, EKeyAction::WEAPON_MAGNIFIER } };
+	for (const auto& [weapon, action] : weapon_actions)
 	{
-		if (settings.selection_key.IsValid())
+		if (FWeaponSettings* settings = weapon_settings_.Find(weapon))
 		{
-			player_input_component->BindKey(settings.selection_key, IE_Pressed, this, &APlayerCharacter::SelectWeaponFromKey);
+			settings->selection_key = bindings->GetKey(action);
+			input->BindKey(settings->selection_key, IE_Pressed, this, &APlayerCharacter::SelectWeaponFromKey);
 		}
 	}
-	player_input_component->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &APlayerCharacter::PrimaryAction);
-	player_input_component->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &APlayerCharacter::ToggleAim);
-	player_input_component->BindKey(EKeys::R, IE_Pressed, this, &APlayerCharacter::Reload);
-	player_input_component->BindKey(EKeys::E, IE_Pressed, this, &APlayerCharacter::PickUp);
-	player_input_component->BindKey(EKeys::F, IE_Pressed, this, &APlayerCharacter::Interact);
-	player_input_component->BindKey(EKeys::SpaceBar, IE_Pressed, this, &APlayerCharacter::Jump);
-	player_input_component->BindKey(EKeys::SpaceBar, IE_Released, this, &APlayerCharacter::StopJumping);
+	input->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &APlayerCharacter::PrimaryAction);
+	input->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &APlayerCharacter::ToggleAim);
+	input->BindKey(bindings->GetKey(EKeyAction::RELOAD), IE_Pressed, this, &APlayerCharacter::Reload);
+	input->BindKey(bindings->GetKey(EKeyAction::PICKUP), IE_Pressed, this, &APlayerCharacter::PickUp);
+	input->BindKey(bindings->GetKey(EKeyAction::INTERACT), IE_Pressed, this, &APlayerCharacter::Interact);
+	input->BindKey(bindings->GetKey(EKeyAction::JUMP), IE_Pressed, this, &APlayerCharacter::Jump);
+	input->BindKey(bindings->GetKey(EKeyAction::JUMP), IE_Released, this, &APlayerCharacter::StopJumping);
+}
+
+void APlayerCharacter::RebindKeys()
+{
+	if (InputComponent)
+	{
+		InputComponent->KeyBindings.Reset();
+		BindGameKeys(InputComponent);
+	}
 }
 
 void APlayerCharacter::Interact()
@@ -396,23 +416,30 @@ void APlayerCharacter::SelectWeaponFromKey(FKey key)
 		{
 			continue;
 		}
-		// 돋보기는 가진 것이 있어야 든다. 들고 있을 때 다시 누르면 다른 등급도 있으면 쓸 등급을 바꾼다.
+		// 돋보기는 기본 돋보기로 든다. 들고 있을 때 다시 누르면 기본 → 넓은 탐지 A → 넓은 탐지 S 순으로 가진 것만 돌아가며 바꾼다.
 		if (weapon == EWeaponType::MAGNIFIER)
 		{
-			const EHintGrade other_grade = magnifier_grade_ == EHintGrade::S ? EHintGrade::A : EHintGrade::S;
 			if (current_weapon_ == EWeaponType::MAGNIFIER)
 			{
-				if (GetMagnifierCount(other_grade) > 0)
+				const TOptional<EHintGrade> order[] = { TOptional<EHintGrade>(), EHintGrade::A, EHintGrade::S };
+				int32 index = 0;
+				while (order[index] != magnifier_grade_)
 				{
-					magnifier_grade_ = other_grade;
-					UpdateEquipmentDisplay();
+					++index;
 				}
+				for (int32 step = 1; step < UE_ARRAY_COUNT(order); ++step)
+				{
+					const TOptional<EHintGrade>& next = order[(index + step) % UE_ARRAY_COUNT(order)];
+					if (!next || GetWideMagnifierCount(*next) > 0)
+					{
+						magnifier_grade_ = next;
+						break;
+					}
+				}
+				UpdateEquipmentDisplay();
 				return;
 			}
-			if (GetMagnifierCount(magnifier_grade_) + GetMagnifierCount(other_grade) == 0)
-			{
-				return;
-			}
+			magnifier_grade_.Reset();
 		}
 		SelectWeapon(weapon);
 		return;
@@ -616,7 +643,8 @@ void APlayerCharacter::PrimaryAction()
 void APlayerCharacter::SearchWithMagnifier()
 {
 	const FWeaponSettings* settings = GetCurrentWeaponSettings();
-	if (is_searching_ || GetMagnifierCount(magnifier_grade_) <= 0 || !settings || !PlayAction(settings->primary_action))
+	const bool can_use = magnifier_grade_ ? GetWideMagnifierCount(*magnifier_grade_) > 0 : GetWorld()->GetTimeSeconds() >= magnifier_ready_time_;
+	if (is_searching_ || !can_use || !settings || !PlayAction(settings->primary_action))
 	{
 		return;
 	}
@@ -661,11 +689,6 @@ void APlayerCharacter::EndSearch()
 	if (search_gauge_widget_)
 	{
 		search_gauge_widget_->Stop();
-	}
-	// 마지막 돋보기를 썼으면 곡괭이를 든다.
-	if (IsLocallyControlled() && current_weapon_ == EWeaponType::MAGNIFIER && GetMagnifierCount(EHintGrade::S) + GetMagnifierCount(EHintGrade::A) == 0)
-	{
-		SelectWeapon(EWeaponType::PICKAXE);
 	}
 }
 
@@ -1299,12 +1322,24 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 				display.total_ammo = FText::AsCultureInvariant(FString::Printf(TEXT("%d:%02d"), remaining / 60, remaining % 60));
 			}
 		}
-		// 돋보기는 쓸 등급과 그 등급의 개수를 표시한다.
+		// 넓은 탐지 돋보기는 등급과 그 등급의 개수를, 기본 돋보기는 쓸 수 있으면 1, 아니면 0과 남은 재사용 대기시간(분:초, 초 올림)을 표시한다.
 		if (weapon == EWeaponType::MAGNIFIER)
 		{
-			display.name = FText::Format(NSLOCTEXT("Equipment", "MagnifierGrade", "{0} {1}"), settings->display_name, FText::AsCultureInvariant(magnifier_grade_ == EHintGrade::S ? TEXT("S") : TEXT("A")));
 			display.uses_ammo = true;
-			display.rounds = GetMagnifierCount(magnifier_grade_);
+			if (magnifier_grade_)
+			{
+				display.name = FText::Format(NSLOCTEXT("Equipment", "WideMagnifierGrade", "WIDE {0} {1}"), settings->display_name, FText::AsCultureInvariant(*magnifier_grade_ == EHintGrade::S ? TEXT("S") : TEXT("A")));
+				display.rounds = GetWideMagnifierCount(*magnifier_grade_);
+			}
+			else
+			{
+				const int32 remaining = FMath::CeilToInt32(magnifier_ready_time_ - GetWorld()->GetTimeSeconds());
+				display.rounds = remaining > 0 ? 0 : 1;
+				if (remaining > 0)
+				{
+					display.total_ammo = FText::AsCultureInvariant(FString::Printf(TEXT("%d:%02d"), remaining / 60, remaining % 60));
+				}
+			}
 		}
 	}
 	return display;
@@ -1337,7 +1372,7 @@ void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText
 	}
 }
 
-// 아이템 효과 문장. 수치는 쓰지 않는다. 패시브는 늘거나 주는 것만 쓰고 S 등급은 "대폭"을 붙이며, 돋보기는 S가 정밀, A가 넓은 탐색이다.
+// 아이템 효과 문장. 수치는 쓰지 않는다. 패시브는 늘거나 주는 것만 쓰고 S 등급은 "대폭"을 붙이며, 넓은 탐지 돋보기는 S에 "대폭 넓은 범위"를 붙인다.
 static FText GetItemText(EItemKind kind, EHintGrade grade)
 {
 	const FText degree = grade == EHintGrade::S ? NSLOCTEXT("Item", "Large", "대폭 ") : FText::GetEmpty();
@@ -1351,8 +1386,12 @@ static FText GetItemText(EItemKind kind, EHintGrade grade)
 		return FText::Format(NSLOCTEXT("Item", "StunGaugeDecayDelay", "기절 게이지 감소 대기 {0}감소"), degree);
 	case EItemKind::STUN_PROTECTION:
 		return FText::Format(NSLOCTEXT("Item", "StunProtection", "기절 후 보호 시간 {0}증가"), degree);
-	case EItemKind::MAGNIFIER:
-		return grade == EHintGrade::S ? NSLOCTEXT("Item", "MagnifierPrecise", "돋보기 · 정밀 탐색") : NSLOCTEXT("Item", "MagnifierWide", "돋보기 · 넓은 탐색");
+	case EItemKind::MAGNIFIER_RADIUS:
+		return FText::Format(NSLOCTEXT("Item", "MagnifierRadius", "돋보기 탐색 범위 {0}증가"), degree);
+	case EItemKind::MAGNIFIER_COOLDOWN:
+		return FText::Format(NSLOCTEXT("Item", "MagnifierCooldown", "돋보기 재사용 대기시간 {0}감소"), degree);
+	case EItemKind::WIDE_MAGNIFIER:
+		return grade == EHintGrade::S ? NSLOCTEXT("Item", "WideMagnifierLarge", "넓은 탐지 돋보기 · 대폭 넓은 범위") : NSLOCTEXT("Item", "WideMagnifier", "넓은 탐지 돋보기");
 	default:
 		return FText::GetEmpty();
 	}
@@ -1360,14 +1399,9 @@ static FText GetItemText(EItemKind kind, EHintGrade grade)
 
 void APlayerCharacter::AddItem(EItemKind kind, EHintGrade grade)
 {
-	if (kind == EItemKind::MAGNIFIER)
+	if (kind == EItemKind::WIDE_MAGNIFIER)
 	{
-		// 쓸 등급의 돋보기가 없으면 얻은 등급을 쓴다.
-		if (GetMagnifierCount(magnifier_grade_) == 0)
-		{
-			magnifier_grade_ = grade;
-		}
-		++magnifier_counts_[static_cast<int32>(grade)];
+		++wide_magnifier_counts_[static_cast<int32>(grade)];
 	}
 	else
 	{
@@ -1386,21 +1420,32 @@ void APlayerCharacter::AddItem(EItemKind kind, EHintGrade grade)
 	ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewItem", "새 아이템 획득!"), true);
 }
 
-void APlayerCharacter::ConsumeMagnifier(EHintGrade grade)
+void APlayerCharacter::ConsumeMagnifier(TOptional<EHintGrade> grade)
 {
-	int32& count = magnifier_counts_[static_cast<int32>(grade)];
-	count = FMath::Max(0, count - 1);
-	const EHintGrade other_grade = magnifier_grade_ == EHintGrade::S ? EHintGrade::A : EHintGrade::S;
-	if (GetMagnifierCount(magnifier_grade_) == 0 && GetMagnifierCount(other_grade) > 0)
+	if (!grade)
 	{
-		magnifier_grade_ = other_grade;
+		magnifier_ready_time_ = GetWorld()->GetTimeSeconds() + GetMagnifierCooldownSeconds();
+		GetWorldTimerManager().SetTimer(magnifier_cooldown_timer_, this, &APlayerCharacter::UpdateMagnifierCooldown, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
 	}
-	// 탐색이 끝나기 전이면 탐색이 끝날 때 곡괭이로 바꾼다.
-	if (!is_searching_ && current_weapon_ == EWeaponType::MAGNIFIER && GetMagnifierCount(magnifier_grade_) == 0)
+	else
 	{
-		SelectWeapon(EWeaponType::PICKAXE);
+		int32& count = wide_magnifier_counts_[static_cast<int32>(*grade)];
+		count = FMath::Max(0, count - 1);
+		if (magnifier_grade_ == grade && count == 0)
+		{
+			magnifier_grade_.Reset();
+		}
+		on_items_changed_.Broadcast();
 	}
-	on_items_changed_.Broadcast();
+	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::UpdateMagnifierCooldown()
+{
+	if (GetWorld()->GetTimeSeconds() >= magnifier_ready_time_)
+	{
+		GetWorldTimerManager().ClearTimer(magnifier_cooldown_timer_);
+	}
 	UpdateEquipmentDisplay();
 }
 
@@ -1409,9 +1454,9 @@ TArray<FInventoryItem> APlayerCharacter::GetInventoryItems() const
 	TArray<FInventoryItem> items;
 	for (const EHintGrade grade : { EHintGrade::S, EHintGrade::A })
 	{
-		if (GetMagnifierCount(grade) > 0)
+		if (GetWideMagnifierCount(grade) > 0)
 		{
-			items.Add({ grade, FText::Format(NSLOCTEXT("Item", "MagnifierCount", "{0} × {1}"), GetItemText(EItemKind::MAGNIFIER, grade), FText::AsNumber(GetMagnifierCount(grade))) });
+			items.Add({ grade, FText::Format(NSLOCTEXT("Item", "WideMagnifierCount", "{0} × {1}"), GetItemText(EItemKind::WIDE_MAGNIFIER, grade), FText::AsNumber(GetWideMagnifierCount(grade))) });
 		}
 	}
 	for (int32 kind = 0; kind < UE_ARRAY_COUNT(item_grades_); ++kind)
@@ -1434,6 +1479,12 @@ float APlayerCharacter::GetStunGaugeDecayPerSecond() const
 {
 	const TOptional<EHintGrade>& grade = item_grades_[static_cast<int32>(EItemKind::STUN_GAUGE_DECAY)];
 	return grade ? ITEM_STUN_GAUGE_DECAYS_PER_SECOND[static_cast<int32>(*grade)] : STUN_GAUGE_DECAY_PER_SECOND;
+}
+
+double APlayerCharacter::GetMagnifierCooldownSeconds() const
+{
+	const TOptional<EHintGrade>& grade = item_grades_[static_cast<int32>(EItemKind::MAGNIFIER_COOLDOWN)];
+	return (grade ? ITEM_MAGNIFIER_COOLDOWNS_MS[static_cast<int32>(*grade)] : MAGNIFIER_COOLDOWN_MS) / 1000.0;
 }
 
 float APlayerCharacter::GetStunGaugeDecayDelay() const

@@ -1,5 +1,7 @@
 #include "WorldMapWidget.h"
 #include "MapPlayerMarkerWidget.h"
+#include "Engine/GameInstance.h"
+#include "Settings/KeyBindingSubsystem.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
@@ -261,11 +263,12 @@ void UWorldMapWidget::Close()
 
 FReply UWorldMapWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const FKeyEvent& event)
 {
-	if (event.GetKey() == EKeys::Tab)
+	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	if (event.GetKey() == bindings->GetKey(EKeyAction::INVENTORY) || event.GetKey() == bindings->GetKey(EKeyAction::HELP))
 	{
 		return FReply::Handled();
 	}
-	if (event.GetKey() == EKeys::M || event.GetKey() == EKeys::Escape)
+	if (event.GetKey() == bindings->GetKey(EKeyAction::MAP) || event.GetKey() == EKeys::Escape)
 	{
 		if (!event.IsRepeat()) { Close(); }
 		return FReply::Handled();
@@ -275,9 +278,16 @@ FReply UWorldMapWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const 
 
 FReply UWorldMapWidget::NativeOnKeyDown(const FGeometry& geometry, const FKeyEvent& event)
 {
-	const FKey key = event.GetKey();
 	// 이동과 점프는 게임 입력으로 전달하고, 나머지 동작은 지도에서 소비한다.
-	return key == EKeys::W || key == EKeys::A || key == EKeys::S || key == EKeys::D || key == EKeys::SpaceBar ? FReply::Unhandled() : FReply::Handled();
+	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	for (const EKeyAction action : { EKeyAction::MOVE_FORWARD, EKeyAction::MOVE_BACKWARD, EKeyAction::MOVE_LEFT, EKeyAction::MOVE_RIGHT, EKeyAction::JUMP })
+	{
+		if (event.GetKey() == bindings->GetKey(action))
+		{
+			return FReply::Unhandled();
+		}
+	}
+	return FReply::Handled();
 }
 
 FReply UWorldMapWidget::NativeOnMouseWheel(const FGeometry& geometry, const FPointerEvent& event)

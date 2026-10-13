@@ -25,6 +25,9 @@
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
+// 발판 길 꼭대기 상자의 유적 상자 그룹 이름(building_boxes.txt)
+static constexpr char TOP_BOX_GROUP[] = "Top";
+
 GameRoom::~GameRoom()
 {
 }
@@ -685,6 +688,7 @@ void GameRoom::PlaceTreasure()
 
 // 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑 순서다.
 // 등급은 힌트마다 점수(배제 영역 × 가중치)를 매겨 높은 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
+// 끝에 발판 길마다 그 길을 보이게 하는 A 등급 힌트를 하나씩 더한다. 이 힌트는 보물 위치와 관계없어 점수를 매기지 않는다.
 void GameRoom::GenerateHints()
 {
 	const float x = treasure_placement_.location.x;
@@ -719,6 +723,9 @@ void GameRoom::GenerateHints()
 		const HintGrade grade = order < s_end ? HintGrade::S : order < a_end ? HintGrade::A : order < b_end ? HintGrade::B : HintGrade::C;
 		hints_[scores[order].second].grade = static_cast<std::uint8_t>(grade);
 	}
+	for (int path = 0; path < PLATFORM_PATH_COUNT; ++path) {
+		hints_.push_back({ static_cast<std::uint8_t>(HintKind::PLATFORM_PATH), static_cast<std::uint8_t>(path), 0, true, static_cast<std::uint8_t>(HintGrade::A) });
+	}
 }
 
 // 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를 만들어 섞고,
@@ -729,7 +736,8 @@ void GameRoom::PlaceBoxes(int player_count)
 	const int global_multiplier = std::max(1, (player_count + HINT_BOX_PLAYERS_PER_MULTIPLIER - 1) / HINT_BOX_PLAYERS_PER_MULTIPLIER);
 	box_contents_.clear();
 	for (std::uint32_t index = 0; index < hints_.size(); ++index) {
-		box_contents_.insert(box_contents_.end(), HINT_BOX_COPIES[hints_[index].grade] * global_multiplier, BoxContent{ BoxContentKind::HINT, index });
+		const int copies = hints_[index].kind == static_cast<std::uint8_t>(HintKind::PLATFORM_PATH) ? PLATFORM_HINT_BOX_COUNT : HINT_BOX_COPIES[hints_[index].grade];
+		box_contents_.insert(box_contents_.end(), copies * global_multiplier, BoxContent{ BoxContentKind::HINT, index });
 	}
 	for (std::uint32_t weapon = 0; weapon < std::size(AMMO_BOX_ROUNDS); ++weapon) {
 		if (AMMO_BOX_ROUNDS[weapon] > 0) box_contents_.insert(box_contents_.end(), AMMO_BOX_COUNT * global_multiplier, BoxContent{ BoxContentKind::AMMO, weapon });
@@ -748,6 +756,29 @@ void GameRoom::PlaceBoxes(int player_count)
 	box_placement_indices_ = box_candidates.SelectPlacements(box_contents_.size());
 	// 상자 자리 후보가 모자라 덜 골랐으면 남는 내용물은 넣지 않는다.
 	box_contents_.resize(box_placement_indices_.size());
+	// 발판 길 꼭대기 상자에 S·A 등급 힌트가 아닌 것이 들었으면, 다른 상자에 든 S·A 등급 힌트와 무작위로 맞바꾼다.
+	const auto is_high_hint = [this](const BoxContent& content) {
+		if (content.kind != BoxContentKind::HINT) return false;
+		const HINT_ENTRY& hint = hints_[content.value];
+		return hint.kind != static_cast<std::uint8_t>(HintKind::PLATFORM_PATH) && hint.grade <= static_cast<std::uint8_t>(HintGrade::A);
+	};
+	const auto& groups = box_candidates.GetGroups();
+	const auto top_group = std::find_if(groups.begin(), groups.end(), [](const BoxGroup& group) { return group.name == TOP_BOX_GROUP; });
+	if (top_group != groups.end()) {
+		std::vector<std::size_t> top_boxes;
+		std::vector<std::size_t> high_hint_boxes;
+		for (std::size_t box = 0; box < box_placement_indices_.size(); ++box) {
+			const bool is_top = std::find(top_group->placement_indices.begin(), top_group->placement_indices.end(), box_placement_indices_[box]) != top_group->placement_indices.end();
+			if (is_top) top_boxes.push_back(box);
+			else if (is_high_hint(box_contents_[box])) high_hint_boxes.push_back(box);
+		}
+		std::shuffle(high_hint_boxes.begin(), high_hint_boxes.end(), random);
+		for (const std::size_t box : top_boxes) {
+			if (is_high_hint(box_contents_[box]) || high_hint_boxes.empty()) continue;
+			std::swap(box_contents_[box], box_contents_[high_hint_boxes.back()]);
+			high_hint_boxes.pop_back();
+		}
+	}
 	is_box_opened_.assign(box_placement_indices_.size(), false);
 	box_layout_packet_ = BuildBoxLayoutPacket();
 }
@@ -793,6 +824,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	ProcessGameStart();
 	ProcessPublicHint();
 	ProcessSearches();
+	ProcessTimeLimit();
 	if (game_end_ms_ != 0 && tick_time_ms >= game_end_ms_) {
 		ClearGame();
 		return;
@@ -888,6 +920,7 @@ void GameRoom::ProcessLoadedPlayers()
 	ready_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, game_start_ms_ - tick_time_ms_));
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
+	game_start_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, game_start_ms_ + GAME_TIME_LIMIT_MS - tick_time_ms_));
 
 	// 합류하는 플레이어는 발판·탑·상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
@@ -1181,7 +1214,7 @@ void GameRoom::DropHint(Player& target)
 }
 
 // 공개 차례가 되면 그 차례에 고를 수 있는 등급의 아직 공개하지 않은 힌트 중 하나를 무작위로 골라 플레이 중인 전원이 가진 것으로 기록하고 보낸다.
-// 고를 힌트가 없으면 그 차례는 건너뛴다. 차례가 지나면 다음 공개까지 남은 시간을 플레이 중인 전원에게 보낸다.
+// 발판 길 힌트는 고르지 않는다. 고를 힌트가 없으면 그 차례는 건너뛴다. 차례가 지나면 다음 공개까지 남은 시간을 플레이 중인 전원에게 보낸다.
 void GameRoom::ProcessPublicHint()
 {
 	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < next_public_hint_ms_) return;
@@ -1191,7 +1224,8 @@ void GameRoom::ProcessPublicHint()
 	std::vector<std::uint32_t> candidates;
 	for (std::uint32_t index = 0; index < hints_.size(); ++index) {
 		const std::uint8_t grade = hints_[index].grade;
-		if (grade >= best_grade && grade != static_cast<std::uint8_t>(HintGrade::S) && std::find(public_hints_.begin(), public_hints_.end(), index) == public_hints_.end()) candidates.push_back(index);
+		const bool is_platform = hints_[index].kind == static_cast<std::uint8_t>(HintKind::PLATFORM_PATH);
+		if (!is_platform && grade >= best_grade && grade != static_cast<std::uint8_t>(HintGrade::S) && std::find(public_hints_.begin(), public_hints_.end(), index) == public_hints_.end()) candidates.push_back(index);
 	}
 	char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
 	int hint_size = 0;
@@ -1212,7 +1246,7 @@ void GameRoom::ProcessPublicHint()
 	}
 }
 
-// 게임이 시작된 뒤 그 등급의 돋보기가 있으면 탐색을 시작하고, 다른 플레이어에게 탐색 동작을 중계한다.
+// 게임이 시작된 뒤 그 돋보기를 쓸 수 있으면 탐색을 시작하고, 다른 플레이어에게 탐색 동작을 중계한다.
 void GameRoom::ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p)
 {
 	if (!is_game_started_ || pending_action_count_ >= pending_actions_.size() || !searcher.StartSearch(request_p.grade, tick_time_ms_)) return;
@@ -1225,18 +1259,18 @@ void GameRoom::ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& req
 	searcher.GetPose().StartAction(action_p.action, action_p.weapon, tick_time_ms_);
 }
 
-// 탐색 시간이 끝난 플레이어의 탐색을 마친다. 시작 위치에서 벗어나지 않았으면 돋보기 하나를 쓰고,
-// 시작 위치에서 보물까지 수평 거리가 그 등급의 반경 안인지 탐색한 사람에게만 보낸다.
+// 탐색 시간이 끝난 플레이어의 탐색을 마친다. 시작 위치에서 벗어나지 않았으면 돋보기를 쓰고,
+// 시작 위치에서 보물까지 수평 거리가 탐색 반경 안인지 탐색한 사람에게만 보낸다.
 void GameRoom::ProcessSearches()
 {
 	for (auto& room_player : room_players_) {
-		if (!room_player.HasSession() || !room_player.IsSearchDue(tick_time_ms_) || !room_player.FinishSearch()) continue;
-		const std::uint8_t grade = room_player.GetSearchGrade();
+		if (!room_player.HasSession() || !room_player.IsSearchDue(tick_time_ms_) || !room_player.FinishSearch(tick_time_ms_)) continue;
 		const float* location = room_player.GetSearchLocation();
 		S2C_SEARCH_RESULT_PACKET result_p;
 		result_p.header = { static_cast<std::uint16_t>(sizeof(result_p)), S2C_SEARCH_RESULT };
-		result_p.grade = grade;
-		result_p.is_found = std::hypot(treasure_placement_.location.x - location[0], treasure_placement_.location.y - location[1]) <= MAGNIFIER_RADII[grade];
+		result_p.grade = room_player.GetSearchGrade();
+		result_p.radius = room_player.GetSearchRadius();
+		result_p.is_found = std::hypot(treasure_placement_.location.x - location[0], treasure_placement_.location.y - location[1]) <= result_p.radius;
 		result_p.location[0] = location[0];
 		result_p.location[1] = location[1];
 		if (auto session = FindSession(room_player)) session->SendPacket(reinterpret_cast<char*>(&result_p), result_p.header.size);
@@ -1261,6 +1295,22 @@ void GameRoom::DigTreasure(const Player& digger)
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&found_p), found_p.header.size);
+	}
+}
+
+void GameRoom::ProcessTimeLimit()
+{
+	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < game_start_ms_ + GAME_TIME_LIMIT_MS) return;
+	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
+	S2C_TIME_OVER_PACKET over_p;
+	over_p.header = { static_cast<std::uint16_t>(sizeof(over_p)), S2C_TIME_OVER };
+	over_p.location[0] = treasure_placement_.location.x;
+	over_p.location[1] = treasure_placement_.location.y;
+	over_p.location[2] = treasure_placement_.location.z;
+	over_p.yaw = treasure_placement_.yaw;
+	for (auto& room_player : room_players_) {
+		auto session = FindSession(room_player);
+		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&over_p), over_p.header.size);
 	}
 }
 
@@ -1371,6 +1421,7 @@ void GameRoom::ProcessGameStart()
 	next_public_hint_ms_ = tick_time_ms_ + PUBLIC_HINT_INTERVAL_MS;
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
+	game_start_p.remaining_ms = GAME_TIME_LIMIT_MS;
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;

@@ -2,6 +2,7 @@
 
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "Environment/PlatformLayoutSubsystem.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
@@ -108,6 +109,8 @@ FString UHintSubsystem::BuildSentence(const HINT_ENTRY& hint) const
 		return FString::Format(*FindText(TEXT("NEAREST_OBJECT")), { FindText(TEXT("RANK_") + detail), FindText(TEXT("OBJECT_") + target) });
 	case HintKind::NEAREST_TOWER:
 		return FString::Format(*FindText(TEXT("NEAREST_TOWER")), { FindText(TEXT("TOWER_") + target) });
+	case HintKind::PLATFORM_PATH:
+		return FString::Format(*FindText(TEXT("PLATFORM_PATH")), { FindText(TEXT("PLATFORM_PATH_") + target) });
 	default:
 		return FString();
 	}
@@ -133,6 +136,11 @@ void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
 	hint.grade = static_cast<EHintGrade>(packet.hint.grade);
 	hint.text = FText::FromString(BuildSentence(packet.hint));
 	character->AddHint(hint);
+	// 발판 길 힌트는 그 길의 발판을 보이게 한다. 나중에 떨어뜨려도 계속 보인다.
+	if (packet.hint.kind == static_cast<uint8>(HintKind::PLATFORM_PATH))
+	{
+		GetWorld()->GetSubsystem<UPlatformLayoutSubsystem>()->RevealPath(packet.hint.target);
+	}
 	// 서버는 이미 가진 힌트도 다시 보낸다. 받은 힌트 목록에는 한 번만 둔다.
 	exclusion_hint_index_ = received_hints_.IndexOfByPredicate([&packet](const FReceivedHint& received) { return FMemory::Memcmp(&received.hint, &packet.hint, sizeof(HINT_ENTRY)) == 0; });
 	if (exclusion_hint_index_ == INDEX_NONE)

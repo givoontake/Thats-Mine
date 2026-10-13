@@ -63,4 +63,5 @@ constexpr std::uint8_t S2C_RETURN_TO_ROOM = 91;
 constexpr std::uint8_t S2C_ITEM = 92;
 constexpr std::uint8_t C2S_SEARCH = 93;
 constexpr std::uint8_t S2C_SEARCH_RESULT = 94;
+constexpr std::uint8_t S2C_TIME_OVER = 95;
 constexpr std::uint8_t S2C_INFO = 100;

@@ -542,3 +542,11 @@ inline constexpr PlatformCoordinate PLATFORM_COORDINATES[] = {
 };
 
 inline constexpr int PLATFORM_COORDINATE_COUNT = static_cast<int>(std::size(PLATFORM_COORDINATES));
+// 발판 길 수. 길마다 시작 발판이 하나다. 발판 길 번호는 표에서 길이 나오는 순서다.
+inline constexpr int PLATFORM_PATH_COUNT = [] {
+	int count = 0;
+	for (const PlatformCoordinate& coordinate : PLATFORM_COORDINATES) {
+		if (coordinate.type == PlatformType::START) ++count;
+	}
+	return count;
+}();
