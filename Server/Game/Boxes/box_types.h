@@ -15,9 +15,9 @@ struct BoxPlacement {
 };
 
 // 상자 내용물 종류
-enum class BoxContentKind : std::uint8_t { HINT, AMMO, ITEM };
+enum class BoxContentKind : std::uint8_t { HINT, AMMO, ITEM, BLOCK };
 
-// 상자 하나에 넣은 내용물. value는 HINT면 힌트 목록 번호, AMMO면 무기 값, ITEM이면 ItemKind 값이다. grade는 ITEM일 때만 쓰는 HintGrade 값이다.
+// 상자 하나에 넣은 내용물. value는 HINT면 힌트 목록 번호, AMMO면 무기 값, ITEM이면 ItemKind 값, BLOCK이면 BLOCK_PIECES 번호다. grade는 ITEM일 때만 쓰는 HintGrade 값이다.
 struct BoxContent {
 	BoxContentKind kind;
 	std::uint32_t value;

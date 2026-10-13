@@ -43,6 +43,7 @@ void Player::ClearPlayer()
 	ResetPickaxe();
 	ResetHints();
 	ResetItems();
+	ResetBlocks();
 }
 
 void Player::ResetGameData()
@@ -56,6 +57,7 @@ void Player::ResetGameData()
 	ResetPickaxe();
 	ResetHints();
 	ResetItems();
+	ResetBlocks();
 }
 
 void Player::ResetAmmo(std::size_t weapon_count)
@@ -205,6 +207,20 @@ void Player::ResetItems()
 	wide_magnifier_counts_.fill(0);
 	magnifier_ready_ms_ = 0;
 	search_end_ms_ = 0;
+}
+
+void Player::UseBlock(std::uint8_t piece, std::uint64_t excluded_cells)
+{
+	used_blocks_ |= 1u << piece;
+	kept_excluded_cells_ |= excluded_cells;
+}
+
+void Player::ResetBlocks()
+{
+	owned_blocks_ = 0;
+	used_blocks_ = 0;
+	kept_excluded_cells_ = 0;
+	sent_exclusion_board_ = 0;
 }
 
 bool Player::StartSearch(std::uint8_t grade, long long time_ms)

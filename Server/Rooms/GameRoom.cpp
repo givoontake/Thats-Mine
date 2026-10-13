@@ -28,6 +28,21 @@
 // 발판 길 꼭대기 상자의 유적 상자 그룹 이름(building_boxes.txt)
 static constexpr char TOP_BOX_GROUP[] = "Top";
 
+// 배제 판의 칸마다 x·y 범위(cm)를 is_covered(x0, x1, y0, y1)에 넘겨 참인 칸을 모은다.
+template <typename CoverCheck>
+static std::uint64_t CollectCoveredCells(const CoverCheck& is_covered)
+{
+	std::uint64_t cells = 0;
+	for (int row = 0; row < BLOCK_GRID_SIZE; ++row) {
+		const float x0 = MAP_MIN[0] + row * BLOCK_CELL_SIZE_X;
+		for (int column = 0; column < BLOCK_GRID_SIZE; ++column) {
+			const float y1 = MAP_MAX[1] - column * BLOCK_CELL_SIZE_Y;
+			if (is_covered(x0, x0 + BLOCK_CELL_SIZE_X, y1 - BLOCK_CELL_SIZE_Y, y1)) cells |= 1ULL << (row * BLOCK_GRID_SIZE + column);
+		}
+	}
+	return cells;
+}
+
 GameRoom::~GameRoom()
 {
 }
@@ -322,6 +337,13 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
 		ProcessSearchStart(*room_player, *reinterpret_cast<C2S_SEARCH_PACKET*>(packet));
+		break;
+	}
+	case C2S_BLOCK_USE: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		ProcessBlockUse(*room_player, *reinterpret_cast<C2S_BLOCK_USE_PACKET*>(packet));
 		break;
 	}
 	case C2S_LOAD_COMPLETE: {
@@ -728,7 +750,8 @@ void GameRoom::GenerateHints()
 	}
 }
 
-// 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를 만들어 섞고,
+// 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를,
+// 블록마다 BLOCK_BOX_COUNT × 글로벌 배수만큼 블록 상자를 만들어 섞고,
 // 그 수만큼 상자 자리를 골라 상자마다 하나씩 넣는다.
 // 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다. 배치 패킷은 상자 수에 맞춘 크기로 만든다.
 void GameRoom::PlaceBoxes(int player_count)
@@ -746,6 +769,9 @@ void GameRoom::PlaceBoxes(int player_count)
 		for (std::uint8_t grade = 0; grade < std::size(ITEM_BOX_COUNTS); ++grade) {
 			box_contents_.insert(box_contents_.end(), ITEM_BOX_COUNTS[grade] * global_multiplier, BoxContent{ BoxContentKind::ITEM, kind, grade });
 		}
+	}
+	for (std::uint32_t piece = 0; piece < BLOCK_PIECE_COUNT; ++piece) {
+		box_contents_.insert(box_contents_.end(), BLOCK_BOX_COUNT * global_multiplier, BoxContent{ BoxContentKind::BLOCK, piece });
 	}
 	std::mt19937 random(CreateRandomSeed());
 	std::shuffle(box_contents_.begin(), box_contents_.end(), random);
@@ -1094,7 +1120,7 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
 // 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
-// 아이템 상자는 그 아이템을 가진 것으로 기록하고 보낸다.
+// 아이템 상자는 그 아이템을, 블록 상자는 그 블록을 가진 것으로 기록하고 보낸다. 힌트로 배제 판이 바뀌면 배제 판도 이어 보낸다.
 void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p)
 {
 	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
@@ -1105,13 +1131,22 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
 	open_p.box = request_p.box;
-	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET) })];
+	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET) + sizeof(S2C_EXCLUSION_BOARD_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET), sizeof(S2C_BLOCK_PACKET) })];
 	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
 	int opener_size = sizeof(open_p);
 	const BoxContent& content = box_contents_[request_p.box];
 	if (content.kind == BoxContentKind::HINT) {
 		opener.AddHint(content.value);
 		opener_size += AppendHintPackets(opener_buffer + opener_size, content.value);
+		opener_size += AppendExclusionBoard(opener_buffer + opener_size, opener);
+	}
+	else if (content.kind == BoxContentKind::BLOCK) {
+		opener.AddBlock(static_cast<std::uint8_t>(content.value));
+		S2C_BLOCK_PACKET block_p;
+		block_p.header = { static_cast<std::uint16_t>(sizeof(block_p)), S2C_BLOCK };
+		block_p.piece = static_cast<std::uint8_t>(content.value);
+		std::memcpy(opener_buffer + opener_size, &block_p, sizeof(block_p));
+		opener_size += sizeof(block_p);
 	}
 	else if (content.kind == BoxContentKind::ITEM) {
 		opener.AddItem(static_cast<ItemKind>(content.value), content.grade);
@@ -1202,13 +1237,14 @@ void GameRoom::DropHint(Player& target)
 	S2C_HINT_LOST_PACKET lost_p;
 	lost_p.header = { static_cast<std::uint16_t>(sizeof(lost_p)), S2C_HINT_LOST };
 	lost_p.hint = hints_[*hint];
-	char target_buffer[sizeof(drop_p) + sizeof(lost_p)];
+	char target_buffer[sizeof(drop_p) + sizeof(lost_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
 	std::memcpy(target_buffer, &drop_p, sizeof(drop_p));
 	std::memcpy(target_buffer + sizeof(drop_p), &lost_p, sizeof(lost_p));
+	const int target_size = sizeof(drop_p) + sizeof(lost_p) + AppendExclusionBoard(target_buffer + sizeof(drop_p) + sizeof(lost_p), target);
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		if (&room_player == &target) session->SendPacket(target_buffer, sizeof(target_buffer));
+		if (&room_player == &target) session->SendPacket(target_buffer, target_size);
 		else session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
 	}
 }
@@ -1227,7 +1263,8 @@ void GameRoom::ProcessPublicHint()
 		const bool is_platform = hints_[index].kind == static_cast<std::uint8_t>(HintKind::PLATFORM_PATH);
 		if (!is_platform && grade >= best_grade && grade != static_cast<std::uint8_t>(HintGrade::S) && std::find(public_hints_.begin(), public_hints_.end(), index) == public_hints_.end()) candidates.push_back(index);
 	}
-	char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
+	// 힌트 뒤에는 사람마다 바뀐 배제 판을 이어 쓴다.
+	char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
 	int hint_size = 0;
 	if (!candidates.empty()) {
 		std::mt19937 random(CreateRandomSeed());
@@ -1240,7 +1277,7 @@ void GameRoom::ProcessPublicHint()
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
 		if (hint_size > 0) {
 			room_player.AddHint(public_hints_.back());
-			session->SendPacket(hint_buffer, hint_size);
+			session->SendPacket(hint_buffer, hint_size + AppendExclusionBoard(hint_buffer + hint_size, room_player));
 		}
 		SendPublicHintTime(*session);
 	}
@@ -1261,6 +1298,7 @@ void GameRoom::ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& req
 
 // 탐색 시간이 끝난 플레이어의 탐색을 마친다. 시작 위치에서 벗어나지 않았으면 돋보기를 쓰고,
 // 시작 위치에서 보물까지 수평 거리가 탐색 반경 안인지 탐색한 사람에게만 보낸다.
+// 찾았으면 원 밖, 못 찾았으면 원 안이 칸 전체를 덮는 칸을 배제하고, 배제 판이 바뀌면 결과 뒤에 이어 보낸다.
 void GameRoom::ProcessSearches()
 {
 	for (auto& room_player : room_players_) {
@@ -1273,8 +1311,71 @@ void GameRoom::ProcessSearches()
 		result_p.is_found = std::hypot(treasure_placement_.location.x - location[0], treasure_placement_.location.y - location[1]) <= result_p.radius;
 		result_p.location[0] = location[0];
 		result_p.location[1] = location[1];
-		if (auto session = FindSession(room_player)) session->SendPacket(reinterpret_cast<char*>(&result_p), result_p.header.size);
+		room_player.AddKeptExcludedCells(CollectCoveredCells([&result_p](float x0, float x1, float y0, float y1) {
+			const float cx = result_p.location[0];
+			const float cy = result_p.location[1];
+			if (result_p.is_found) return std::hypot(std::clamp(cx, x0, x1) - cx, std::clamp(cy, y0, y1) - cy) > result_p.radius;
+			return std::hypot(std::max(std::abs(x0 - cx), std::abs(x1 - cx)), std::max(std::abs(y0 - cy), std::abs(y1 - cy))) <= result_p.radius;
+		}));
+		char buffer[sizeof(result_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
+		std::memcpy(buffer, &result_p, sizeof(result_p));
+		const int size = sizeof(result_p) + AppendExclusionBoard(buffer + sizeof(result_p), room_player);
+		if (auto session = FindSession(room_player)) session->SendPacket(buffer, size);
 	}
+}
+
+std::uint64_t GameRoom::ComputeExclusionBoard(const Player& player) const
+{
+	std::uint64_t board = player.GetKeptExcludedCells();
+	for (const std::uint32_t index : player.GetHints()) {
+		const HINT_ENTRY& hint = hints_[index];
+		if (hint.kind != static_cast<std::uint8_t>(HintKind::DIRECTION)) continue;
+		const std::optional<float> boundary = server_->GetDirectionHintData().FindBoundary(hint.target, static_cast<HintDirection>(hint.detail));
+		if (!boundary) continue;
+		// "있다"면 반대 방위 쪽, "없다"면 그 방위 쪽이 배제된다. 북은 x가 작은 쪽, 동은 y가 작은 쪽이다.
+		const HintDirection direction = static_cast<HintDirection>(hint.is_true ? (hint.detail + 2) % static_cast<int>(HintDirection::COUNT) : hint.detail);
+		const float b = *boundary;
+		board |= CollectCoveredCells([direction, b](float x0, float x1, float y0, float y1) {
+			switch (direction) {
+			case HintDirection::NORTH: return x1 <= b;
+			case HintDirection::SOUTH: return x0 >= b;
+			case HintDirection::EAST: return y1 <= b;
+			case HintDirection::WEST: return y0 >= b;
+			default: return false;
+			}
+		});
+	}
+	return board;
+}
+
+int GameRoom::AppendExclusionBoard(char* buffer, Player& player) const
+{
+	const std::uint64_t board = ComputeExclusionBoard(player);
+	if (board == player.GetSentExclusionBoard()) return 0;
+	player.SetSentExclusionBoard(board);
+	S2C_EXCLUSION_BOARD_PACKET board_p;
+	board_p.header = { static_cast<std::uint16_t>(sizeof(board_p)), S2C_EXCLUSION_BOARD };
+	board_p.excluded_cells = board;
+	std::memcpy(buffer, &board_p, sizeof(board_p));
+	return sizeof(board_p);
+}
+
+// 게임이 시작된 뒤 가진 블록을 한 번만 쓸 수 있고, 놓는 칸은 모두 판 안이며 아직 배제되지 않은 칸이어야 한다.
+// 보물이 놓인 칸 안에 있으면 나머지 칸을, 없으면 놓인 칸을 배제하고, 쓴 사람에게 결과와 배제 판을 보낸다.
+void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p)
+{
+	if (!is_game_started_ || !user.CanUseBlock(request_p.piece) || request_p.rotation >= BLOCK_ROTATION_COUNT) return;
+	const std::uint64_t cells = GetBlockCells(request_p.piece, request_p.rotation, request_p.column, request_p.row);
+	if (cells == 0 || (cells & ComputeExclusionBoard(user)) != 0) return;
+	S2C_BLOCK_RESULT_PACKET result_p;
+	result_p.header = { static_cast<std::uint16_t>(sizeof(result_p)), S2C_BLOCK_RESULT };
+	result_p.piece = request_p.piece;
+	result_p.is_inside = (cells >> GetBlockCellIndex(treasure_placement_.location.x, treasure_placement_.location.y) & 1) != 0;
+	user.UseBlock(request_p.piece, result_p.is_inside ? ~cells : cells);
+	char buffer[sizeof(result_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
+	std::memcpy(buffer, &result_p, sizeof(result_p));
+	const int size = sizeof(result_p) + AppendExclusionBoard(buffer + sizeof(result_p), user);
+	if (auto session = FindSession(user)) session->SendPacket(buffer, size);
 }
 
 // 게임이 시작된 뒤 처음으로 보물 자리 가까이에서 곡괭이를 휘두르면 보물을 발견한다. 플레이 중인 방 전체에 알리고 게임이 끝날 시각을 정한다.
@@ -1333,11 +1434,12 @@ void GameRoom::ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& r
 	S2C_HINT_PICKUP_PACKET pickup_p;
 	pickup_p.header = { static_cast<std::uint16_t>(sizeof(pickup_p)), S2C_HINT_PICKUP };
 	pickup_p.drop = request_p.drop;
-	char picker_buffer[sizeof(pickup_p) + sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
+	char picker_buffer[sizeof(pickup_p) + sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
 	std::memcpy(picker_buffer, &pickup_p, sizeof(pickup_p));
 	int picker_size = sizeof(pickup_p);
 	picker.AddHint(hint_drop.hint);
 	picker_size += AppendHintPackets(picker_buffer + picker_size, hint_drop.hint);
+	picker_size += AppendExclusionBoard(picker_buffer + picker_size, picker);
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;

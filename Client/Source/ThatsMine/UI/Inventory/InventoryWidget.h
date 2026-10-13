@@ -20,7 +20,7 @@ class UWrapBox;
 
 DECLARE_DELEGATE(FOnInventoryCloseRequested);
 
-// 인벤토리. 장비·아이템·힌트 탭으로 나누어 보이고, 열 때마다 힌트 탭을 먼저 보인다.
+// 인벤토리. 장비·아이템·힌트 탭으로 나누어 보이고, 열 때마다 힌트 탭을 먼저 보인다. 장비 탭 아래쪽에는 블록 칸을 둔다.
 UCLASS()
 class THATSMINE_API UInventoryWidget : public UUserWidget
 {

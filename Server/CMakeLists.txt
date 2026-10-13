@@ -65,6 +65,7 @@ add_executable(GameServer
     Threads/Managers/LobbyThreadManager.cpp
     Threads/Managers/TimerThreadManager.cpp
     Common/ActiveList.h
+    Common/block_pieces.h
     Common/char_buffer.h
     Common/ConcurrentTaskQueue.h
     Common/enum_class.h

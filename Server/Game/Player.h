@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "enum_class.h"
 #include "game_packets.h"
+#include "block_pieces.h"
 #include "CharacterPose.h"
 #include "hitbox_types.h"
 #include "weapon_ammo.h"
@@ -51,6 +52,13 @@ class Player
 	std::uint8_t search_grade_ = 0;
 	float search_location_[2] = {};
 	long long search_end_ms_ = 0;
+	// 이번 게임에서 얻은 블록과 쓴 블록. BLOCK_PIECES 번호 자리의 비트가 켜져 있다.
+	std::uint32_t owned_blocks_ = 0;
+	std::uint32_t used_blocks_ = 0;
+	// 블록 결과와 돋보기 탐색 결과로 배제된 칸 모음. 기절해도 잃지 않는다.
+	std::uint64_t kept_excluded_cells_ = 0;
+	// 마지막으로 보낸 배제 판
+	std::uint64_t sent_exclusion_board_ = 0;
 
 	void ClearStun();
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채운다.
@@ -111,6 +119,7 @@ public:
 	// 가진 힌트 중 하나를 무작위로 골라 빼고 돌려준다. 가진 힌트가 없으면 비어 있다.
 	std::optional<std::uint32_t> TakeRandomHint();
 	void ResetHints() { hint_indices_.clear(); }
+	const std::vector<std::uint32_t>& GetHints() const { return hint_indices_; }
 	// 마지막으로 인정한 위치에 멈춘 상태로 되돌리고 새 되돌리기 번호를 돌려준다. 확인을 받을 때까지 이동 상태를 받지 않는다.
 	std::uint32_t StartMoveCorrection();
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.
@@ -148,4 +157,15 @@ public:
 	// 끝난 탐색을 마친다. 시작 위치에서 MAGNIFIER_MOVE_TOLERANCE 넘게 벗어나지 않았으면
 	// 넓은 탐지 돋보기는 하나 쓰고 기본 돋보기는 재사용 대기시간을 시작한 뒤 true를 돌려준다.
 	bool FinishSearch(long long time_ms);
+	// 블록을 가진다. 이미 가진 블록이면 그대로 둔다.
+	void AddBlock(std::uint8_t piece) { owned_blocks_ |= 1u << piece; }
+	bool CanUseBlock(std::uint8_t piece) const { return piece < BLOCK_PIECE_COUNT && (owned_blocks_ & ~used_blocks_ & (1u << piece)) != 0; }
+	// 블록을 쓴 것으로 기록하고 그 결과로 배제된 칸을 더한다.
+	void UseBlock(std::uint8_t piece, std::uint64_t excluded_cells);
+	void AddKeptExcludedCells(std::uint64_t cells) { kept_excluded_cells_ |= cells; }
+	std::uint64_t GetKeptExcludedCells() const { return kept_excluded_cells_; }
+	std::uint64_t GetSentExclusionBoard() const { return sent_exclusion_board_; }
+	void SetSentExclusionBoard(std::uint64_t board) { sent_exclusion_board_ = board; }
+	// 블록과 배제 판을 모두 잃는다.
+	void ResetBlocks();
 };

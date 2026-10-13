@@ -148,6 +148,11 @@ private:
 	void ProcessTimeLimit();
 	void ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p);
 	void ProcessSearches();
+	// 플레이어의 지금 배제 판. 가진 방향 힌트는 배제 영역이 칸 전체를 덮는 칸만 넣고, 블록 결과와 돋보기 탐색 결과로 배제된 칸을 더한다.
+	std::uint64_t ComputeExclusionBoard(const Player& player) const;
+	// 배제 판이 마지막으로 보낸 것과 다르면 배제 판 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 같으면 쓰지 않고 0을 돌려준다.
+	int AppendExclusionBoard(char* buffer, Player& player) const;
+	void ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p);
 	void SendPublicHintTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;

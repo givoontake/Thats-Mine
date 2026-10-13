@@ -93,6 +93,8 @@ public:
 
 	// 상자에서 얻은 아이템을 가지고 아이템 획득 안내를 띄운다. 넓은 탐지 돋보기는 개수를 늘리고, 다른 종류는 지금보다 높은 등급일 때만 바꾼다.
 	void AddItem(EItemKind kind, EHintGrade grade);
+	// 힌트·아이템·탄약·블록 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. has_badge가 false면 등급 없이 보인다.
+	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge);
 	// 서버가 탐색을 마쳤다. 기본 돋보기(grade가 비어 있음)는 재사용 대기시간을 시작하고, 넓은 탐지 돋보기는 그 등급을 하나 쓴다.
 	// 들고 있는 넓은 탐지 돋보기가 다 떨어지면 기본 돋보기로 바꾼다.
 	void ConsumeMagnifier(TOptional<EHintGrade> grade);
@@ -322,8 +324,6 @@ private:
 	const AHintBox* FindInteractBox() const;
 	// 열 수 있는 상자나 주울 수 있는 두루마리가 있으면 상호작용 안내를 보인다.
 	void UpdateInteractPrompt();
-	// 힌트·아이템·탄약 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. has_badge가 false면 등급 없이 보인다.
-	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge);
 	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
 	double GetPickaxeChargeSeconds() const;
 	float GetStunGaugeDecayPerSecond() const;

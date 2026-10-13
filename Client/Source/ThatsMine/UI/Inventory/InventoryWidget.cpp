@@ -24,6 +24,7 @@
 #include "Player/PlayerCharacter.h"
 #include "Settings/KeyBindingSubsystem.h"
 #include "UI/Hint/HintGradeBadge.h"
+#include "UI/Inventory/BlockBoardWidget.h"
 #include "Styling/CoreStyle.h"
 
 // 나무 버튼 재질 하나로 탭 버튼 크기의 그림 붓을 만든다.
@@ -158,6 +159,11 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 			ammo->SetJustification(ETextJustify::Right);
 			equipment_ammo_.Add(ammo);
 		}
+		// 장비 아래에 블록 칸을 둔다.
+		UBlockBoardWidget* block_board = WidgetTree->ConstructWidget<UBlockBoardWidget>();
+		UCanvasPanelSlot* block_slot = equipment_page->AddChildToCanvas(block_board);
+		block_slot->SetPosition(FVector2D(100.0, 404.0));
+		block_slot->SetSize(FVector2D(UBlockBoardWidget::WIDTH, UBlockBoardWidget::HEIGHT));
 		// 아이템은 두 줄로 나란히 놓는다.
 		item_count_ = AddText(item_page, FText::GetEmpty(), 28, FVector2D(100.0, 196.0), FVector2D(980.0, 44.0));
 		item_list_ = WidgetTree->ConstructWidget<UWrapBox>();

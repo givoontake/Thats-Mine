@@ -333,6 +333,37 @@ struct S2C_TIME_OVER_PACKET {
 	float yaw;
 };
 
+// 가진 블록 하나를 배제 판에 놓는다. piece는 BLOCK_PIECES 번호, rotation은 시계 방향 90도 회전 수이고, 돌린 모양의 가장 작은 열과 행이 (column, row) 칸에 온다.
+// 블록마다 한 번만 쓸 수 있고, 놓는 칸은 모두 판 안이며 아직 배제되지 않은 칸이어야 한다.
+struct C2S_BLOCK_USE_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t piece;
+	std::uint8_t rotation;
+	std::uint8_t column;
+	std::uint8_t row;
+};
+
+// 연 상자에 든 블록. piece는 BLOCK_PIECES 번호다. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다. 이미 가진 블록이면 더 생기지 않는다.
+struct S2C_BLOCK_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t piece;
+};
+
+// 서버가 인정한 블록 사용. 쓴 사람에게만 보내고, 바뀐 배제 판을 이어 보낸다.
+// is_inside면 보물이 블록이 놓인 칸 안에 있어 나머지 칸이 모두 배제되고, 아니면 블록이 놓인 칸이 배제된다.
+struct S2C_BLOCK_RESULT_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t piece;
+	bool is_inside;
+};
+
+// 그 사람의 배제 판. 칸 번호(block_pieces.h) 자리의 비트가 켜진 칸이 배제된 칸이다.
+// 가진 방향 힌트와 돋보기 탐색 결과는 배제 영역이 칸 전체를 덮을 때만 그 칸을 배제하고, 블록 결과는 칸 단위로 배제한다. 판이 바뀔 때마다 그 사람에게만 보낸다.
+struct S2C_EXCLUSION_BOARD_PACKET {
+	PACKET_HEADER header;
+	std::uint64_t excluded_cells;
+};
+
 // 탑 하나. 위치는 탑 바닥 가운데(cm)다.
 struct TOWER_ENTRY {
 	std::uint8_t kind;

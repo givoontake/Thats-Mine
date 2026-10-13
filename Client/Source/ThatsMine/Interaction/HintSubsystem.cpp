@@ -12,6 +12,7 @@
 #include "Player/PlayerCharacter.h"
 #include "TimerManager.h"
 #include "UI/Hint/HintNoticeWidget.h"
+#include "block_pieces.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHint, Log, All);
 
@@ -35,6 +36,7 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
 		&& network->RegisterPacketHandler(S2C_HINT_EXCLUSION, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionPacket))
 		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket))
+		&& network->RegisterPacketHandler(S2C_EXCLUSION_BOARD, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionBoardPacket))
 		&& network->RegisterPacketHandler(S2C_PUBLIC_HINT_TIME, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandlePublicHintTimePacket));
 }
 
@@ -49,6 +51,7 @@ void UHintSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_HINT);
 			network->UnregisterPacketHandler(S2C_HINT_EXCLUSION);
 			network->UnregisterPacketHandler(S2C_HINT_LOST);
+			network->UnregisterPacketHandler(S2C_EXCLUSION_BOARD);
 			network->UnregisterPacketHandler(S2C_PUBLIC_HINT_TIME);
 		}
 		is_active_ = false;
@@ -204,6 +207,28 @@ void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 	{
 		return;
 	}
+	RepaintExclusionMask();
+	on_exclusion_mask_changed_.Broadcast();
+}
+
+// 배제 판이 바뀌었다. 힌트를 잃어 줄어들 수도 있으므로 배제 칸을 다시 칠한다.
+void UHintSubsystem::HandleExclusionBoardPacket(const TArray<uint8>& payload)
+{
+	S2C_EXCLUSION_BOARD_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogHint, Warning, TEXT("Invalid exclusion board packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	exclusion_board_ = packet.excluded_cells;
+	RepaintExclusionMask();
+	on_exclusion_mask_changed_.Broadcast();
+}
+
+void UHintSubsystem::RepaintExclusionMask()
+{
 	exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
 	for (const FReceivedHint& received : received_hints_)
 	{
@@ -216,7 +241,7 @@ void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 	{
 		PaintSearchExclusion(search);
 	}
-	on_exclusion_mask_changed_.Broadcast();
+	PaintExclusionBoard();
 }
 
 // 다음 공개 힌트까지 남은 시간. 안내할 남은 시간마다 아직 지나지 않은 것에 타이머를 건다.
@@ -320,6 +345,23 @@ void UHintSubsystem::PaintExclusion(uint8 direction_value, float boundary)
 				: direction == HintDirection::EAST ? y < boundary
 				: y > boundary;
 			if (is_excluded)
+			{
+				exclusion_mask_[row * EXCLUSION_MASK_SIZE + column] = 1;
+			}
+		}
+	}
+}
+
+// 배제 판의 칸 하나는 배제 칸 EXCLUSION_MASK_SIZE / BLOCK_GRID_SIZE개 너비다.
+void UHintSubsystem::PaintExclusionBoard()
+{
+	static_assert(EXCLUSION_MASK_SIZE % BLOCK_GRID_SIZE == 0, "Exclusion mask must divide into board cells.");
+	constexpr int32 cell_size = EXCLUSION_MASK_SIZE / BLOCK_GRID_SIZE;
+	for (int32 row = 0; row < EXCLUSION_MASK_SIZE; ++row)
+	{
+		for (int32 column = 0; column < EXCLUSION_MASK_SIZE; ++column)
+		{
+			if ((exclusion_board_ >> ((row / cell_size) * BLOCK_GRID_SIZE + column / cell_size) & 1) != 0)
 			{
 				exclusion_mask_[row * EXCLUSION_MASK_SIZE + column] = 1;
 			}
