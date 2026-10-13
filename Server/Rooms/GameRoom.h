@@ -11,7 +11,6 @@
 #include "Player.h"
 #include "box_types.h"
 #include "hint_types.h"
-#include "platform_layout.h"
 #include "tower_types.h"
 #include "treasure_types.h"
 class Session;
@@ -88,17 +87,13 @@ private:
 	bool is_game_started_ = false;
 	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
 	long long last_pose_tick_ms_ = 0;
-	// 게임 시작 때 정한 발판 배치
-	PlatformLayout platform_layout_{};
-	// 이번 게임에 놓인 발판·탑의 지형 후보 배치물 번호. 이동·명중 검사가 놓인 발판·탑만 보게 넘긴다.
+	// 이번 게임에 놓인 탑의 지형 후보 배치물 번호. 이동·명중 검사가 놓인 탑만 보게 넘긴다.
 	std::vector<std::uint32_t> placed_objects_;
-	// 발판 배치를 담은 패킷. 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
-	S2C_PLATFORM_LAYOUT_PACKET platform_layout_p_{};
-	// 게임 시작 때 고른 탑 후보 번호·종류와, 그 탑 배치를 담은 패킷. 패킷은 발판 배치 패킷과 함께 로딩을 마친 플레이어에게 보낸다.
+	// 게임 시작 때 고른 탑 후보 번호·종류와, 그 탑 배치를 담은 패킷. 패킷은 로딩을 마친 플레이어에게 스폰보다 먼저 보낸다.
 	std::vector<TowerPlacement> tower_placements_;
 	S2C_TOWER_LAYOUT_PACKET tower_layout_p_{};
 	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 상자 번호는 이 목록의 순서다.
-	// 패킷은 모두 닫힌 상태로 만들어 두고, 게임 시작 전에 로딩을 마친 플레이어에게 발판 배치 패킷과 함께 보낸다. 시작 뒤에 들어온 플레이어에게는 그때 열림 상태로 새로 만들어 보낸다.
+	// 패킷은 모두 닫힌 상태로 만들어 두고, 게임 시작 전에 로딩을 마친 플레이어에게 탑 배치 패킷과 함께 보낸다. 시작 뒤에 들어온 플레이어에게는 그때 열림 상태로 새로 만들어 보낸다.
 	std::vector<std::uint32_t> box_placement_indices_;
 	std::vector<char> box_layout_packet_;
 	// 상자마다 열렸는지. 상자 번호 순서다.

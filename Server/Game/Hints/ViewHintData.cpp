@@ -43,7 +43,7 @@ std::vector<HINT_ENTRY> ViewHintData::JudgeViews(const MapData& map, float x, fl
 	std::vector<HINT_ENTRY> hints;
 	const std::optional<float> ground = map.GetLandscape().GetGroundHeight(x, y);
 	if (!ground) return hints;
-	// 발판·탑은 장소 시야를 막지 않으므로 놓인 것이 없다고 본다.
+	// 탑은 장소 시야를 막지 않으므로 놓인 것이 없다고 본다.
 	const std::vector<std::uint32_t> no_placed_objects;
 	hints.reserve(regions_.size());
 	for (const ViewRegion& region : regions_) {

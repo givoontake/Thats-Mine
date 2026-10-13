@@ -390,31 +390,7 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 		++source.object_count;
 	}
 
-	// 발판 후보. 모든 자리를 만들어 두고 검사할 때 방이 넘긴 놓인 번호만 본다. 충돌은 발판 크기의 상자 하나이고 방향은 요 각도만 돌린다.
-	const std::uint32_t platform_source = static_cast<std::uint32_t>(sources_.size());
-	TerrainSource& platform = sources_.emplace_back();
-	const XMFLOAT3 platform_half_size{ PLATFORM_SIZE * 0.5f, PLATFORM_SIZE * 0.5f, PLATFORM_THICKNESS * 0.5f };
-	platform.boxes.push_back({ { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, platform_half_size });
-	platform.local_min = { -platform_half_size.x, -platform_half_size.y, -platform_half_size.z };
-	platform.local_max = platform_half_size;
-	platform.has_local_shapes = true;
-	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
-		const PlatformCoordinate& coordinate = PLATFORM_COORDINATES[index];
-		const XMMATRIX world = XMMatrixRotationZ(XMConvertToRadians(coordinate.yaw)) * XMMatrixTranslation(coordinate.x, coordinate.y, coordinate.z);
-		TerrainObject& object = candidate_objects_.emplace_back();
-		XMStoreFloat4x4(&object.local_to_world, world);
-		XMStoreFloat4x4(&object.world_to_local, XMMatrixInverse(nullptr, world));
-		const auto [world_min, world_max] = TransformBounds(platform.local_min, platform.local_max, world);
-		object.world_min = world_min;
-		object.world_max = world_max;
-		object.source = platform_source;
-		object.first_capsule = static_cast<std::uint32_t>(object_capsules_.size());
-		object.capsule_count = 0;
-		object.flags = TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN;
-	}
-
 	// 탑 후보. 후보 자리마다 종류별 탑과 기초를 만들어 두고 검사할 때 방이 넘긴 놓인 번호만 본다. 기초는 탑 바닥 바로 아래에 가로·세로를 넓혀 붙인다.
-	first_tower_object_ = static_cast<std::uint32_t>(candidate_objects_.size());
 	if (!tower_candidates.empty()) {
 		const TerrainSource* tower_sources[TOWER_KIND_COUNT];
 		for (int kind = 0; kind < TOWER_KIND_COUNT; ++kind) {
@@ -577,15 +553,12 @@ bool CollisionObjectData::IsSegmentBlockedByObject(const TerrainObject& object, 
 	return false;
 }
 
-// 발판 후보는 자리 번호와 같은 번호이고, 탑 후보 i는 종류별 탑과 기초다. 놓인 종류의 탑과 기초만 넣는다.
-std::vector<std::uint32_t> CollisionObjectData::CollectPlacedObjects(const PlatformLayout& platform_layout, const std::vector<TowerPlacement>& tower_placements) const
+// 탑 후보 i는 종류별 탑과 기초다. 놓인 종류의 탑과 기초만 넣는다.
+std::vector<std::uint32_t> CollisionObjectData::CollectPlacedObjects(const std::vector<TowerPlacement>& tower_placements) const
 {
 	std::vector<std::uint32_t> placed_objects;
-	for (int index = 0; index < PLATFORM_COORDINATE_COUNT; ++index) {
-		if (platform_layout[index]) placed_objects.push_back(static_cast<std::uint32_t>(index));
-	}
 	for (const TowerPlacement& placement : tower_placements) {
-		const std::uint32_t first = first_tower_object_ + static_cast<std::uint32_t>(placement.candidate_index) * (TOWER_KIND_COUNT + 1);
+		const std::uint32_t first = static_cast<std::uint32_t>(placement.candidate_index) * (TOWER_KIND_COUNT + 1);
 		const std::uint32_t foundation = first + TOWER_KIND_COUNT;
 		if (foundation >= candidate_objects_.size()) continue;
 		placed_objects.push_back(first + static_cast<std::uint32_t>(placement.kind));
@@ -594,7 +567,7 @@ std::vector<std::uint32_t> CollisionObjectData::CollectPlacedObjects(const Platf
 	return placed_objects;
 }
 
-// 놓인 발판·탑을 먼저 보고, 격자보다 큰 배치물, 선분이 지나는 격자 칸을 시작점 쪽부터 따라가며 그 칸의 배치물을 본다. 막히는 것을 찾으면 바로 끝낸다.
+// 놓인 탑을 먼저 보고, 격자보다 큰 배치물, 선분이 지나는 격자 칸을 시작점 쪽부터 따라가며 그 칸의 배치물을 본다. 막히는 것을 찾으면 바로 끝낸다.
 bool CollisionObjectData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const XMFLOAT3& end, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const
 {
 	if (!is_loaded_) return false;
@@ -691,7 +664,7 @@ bool CollisionObjectData::IsCapsuleOverlappingObject(const TerrainObject& object
 	return false;
 }
 
-// 놓인 발판·탑을 먼저 보고, 격자보다 큰 배치물, 캡슐 경계 상자가 걸치는 격자 칸의 배치물을 본다. 겹치는 것을 찾으면 바로 끝낸다.
+// 놓인 탑을 먼저 보고, 격자보다 큰 배치물, 캡슐 경계 상자가 걸치는 격자 칸의 배치물을 본다. 겹치는 것을 찾으면 바로 끝낸다.
 bool CollisionObjectData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, float radius, float half_height, std::uint8_t flag, const std::vector<std::uint32_t>& placed_objects) const
 {
 	if (!is_loaded_) return false;

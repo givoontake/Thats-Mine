@@ -11,8 +11,6 @@ VIEW_FALSE = {0}에서 보물이 묻힌 곳이 보이지 않는다.
 NEAREST_OBJECT = 보물에서 {0} 가까운 물체는 {1}이다.
 # 보물에서 가장 가까운 탑은 {0}(탑)
 NEAREST_TOWER = 보물에서 가장 가까운 탑은 {0}이다.
-# {0}(발판 길) 발판 길이 보인다. 이 힌트를 얻으면 그 길의 발판이 보인다
-PLATFORM_PATH = {0} 발판 길이 보인다.
 # 보물 {0}(반경 m) 안에 {1}(물체)이 {2}개 있다. 0개면 아래 문장을 쓰고 {2}는 이/가다
 OBJECT_COUNT = 보물 {0}m 안에 {1} {2}개가 있다.
 OBJECT_COUNT_ZERO = 보물 {0}m 안에 {1}{2} 없다.
@@ -64,8 +62,3 @@ OBJECT_17 = 파란 버섯
 
 TOWER_0 = 주황 탑
 TOWER_1 = 베이지 탑
-
-PLATFORM_PATH_0 = Pyramid
-PLATFORM_PATH_1 = Anubis Statue
-PLATFORM_PATH_2 = Asian Village
-PLATFORM_PATH_3 = Ring Ruins

@@ -92,7 +92,7 @@ int32 UHintDropSubsystem::FindPickupDrop(const FVector& capsule_location) const
 }
 
 // 떨어진 힌트. 플레이 중인 방 전체가 받고, 게임 도중 들어오면 아직 줍지 않은 것을 받는다.
-// 서버 위치에서 아래로 내려 처음 닿는 고정 물체(땅·건물·발판) 위에 눕힌다. 방향은 드랍 번호로 정해 모든 화면에서 같고, 밴드 색은 힌트 등급을 따른다.
+// 서버 위치에서 아래로 내려 처음 닿는 고정 물체(땅·건물) 위에 눕힌다. 방향은 드랍 번호로 정해 모든 화면에서 같고, 밴드 색은 힌트 등급을 따른다.
 void UHintDropSubsystem::HandleHintDropPacket(const TArray<uint8>& payload)
 {
 	S2C_HINT_DROP_PACKET packet;

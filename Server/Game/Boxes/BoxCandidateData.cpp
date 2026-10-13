@@ -16,7 +16,7 @@ struct BoxGroupRule {
 	int min_count;
 	int max_count;
 };
-static constexpr BoxGroupRule BOX_GROUP_RULES[] = { { "Top", 4, 4 }, { "Asia", 3, 4 }, { "Egypt", 3, 4 }, { "Pyramid", 0, 1 } };
+static constexpr BoxGroupRule BOX_GROUP_RULES[] = { { "Asia", 3, 4 }, { "Egypt", 3, 4 }, { "Pyramid", 0, 1 } };
 
 // 상자 종류 글자(Treasure/Gift)를 바꾼다. 모르는 글자면 값이 없다.
 static std::optional<BoxKind> ParseBoxKind(const std::string& text)

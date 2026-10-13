@@ -2,7 +2,6 @@
 #include <cstdint>
 #include "common_packets.h"
 #include "settings.h"
-#include "platform_coordinates.h"
 
 // 히트박스 부위. 서버 판정 데이터와 클라이언트 명중 보고가 같은 값을 쓴다.
 enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT };
@@ -26,7 +25,7 @@ enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUG
 constexpr std::uint8_t BASIC_MAGNIFIER_GRADE = 0xFF;
 
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
-enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, PLATFORM_PATH, OBJECT_COUNT };
+enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, OBJECT_COUNT };
 
 // 힌트가 말하는 물체 종류. 메시 여러 개를 한 종류로 묶는다.
 // "보물에서 가까운 물체" 힌트는 MUSHROOM까지만 쓰고, 색 데이지·버섯은 DAISY·MUSHROOM으로 본다. 개수 힌트는 모든 종류를 쓰고, DAISY·MUSHROOM은 모든 색을 합친 수다.
@@ -187,14 +186,6 @@ struct C2S_MOVE_CORRECTION_ACK_PACKET {
 	std::uint32_t correction_id;
 };
 
-// 이번 게임의 발판 배치. 발판 자리(PLATFORM_COORDINATES)마다 놓으면 1인 비트를 자리 순서대로 담는다(바이트 안에서는 낮은 비트부터).
-// platform_count는 서버의 자리 수로, 클라이언트 표와 다르면 받지 않는다.
-struct S2C_PLATFORM_LAYOUT_PACKET {
-	PACKET_HEADER header;
-	std::uint16_t platform_count;
-	std::uint8_t spawned_bits[(PLATFORM_COORDINATE_COUNT + 7) / 8];
-};
-
 // 상자 하나. 종류는 BoxKind 값이고, 위치는 cm, 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.
 struct BOX_ENTRY {
 	std::uint8_t kind;
@@ -216,7 +207,6 @@ struct S2C_BOX_LAYOUT_PACKET {
 // VIEW: target은 영역 번호, is_true면 그 영역에서 보물이 묻힌 자리가 보인다.
 // NEAREST_OBJECT: target은 HintObjectKind, detail은 순위(0이 가장 가깝다), is_true는 항상 참이다.
 // NEAREST_TOWER: target은 TowerKind, is_true는 항상 참이다.
-// PLATFORM_PATH: target은 발판 길 번호이고, 이 힌트를 얻은 사람에게는 그 길의 발판이 보인다. is_true는 항상 참이다.
 // OBJECT_COUNT: target은 HintObjectKind, detail은 보물에서 수평 HINT_OBJECT_COUNT_RADIUS 안에 있는 그 종류 물체 수(최대 255)다. is_true는 항상 참이다.
 // grade는 HintGrade다.
 struct HINT_ENTRY {
@@ -392,5 +382,4 @@ struct S2C_TOWER_LAYOUT_PACKET {
 
 static_assert(sizeof(S2C_MOVE_PACKET) <= BUF_SIZE, "S2C_MOVE_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_SPAWN_PACKET) <= BUF_SIZE, "S2C_SPAWN_PACKET must fit in one packet.");
-static_assert(sizeof(S2C_PLATFORM_LAYOUT_PACKET) <= BUF_SIZE, "S2C_PLATFORM_LAYOUT_PACKET must fit in one packet.");
 static_assert(sizeof(S2C_TOWER_LAYOUT_PACKET) <= BUF_SIZE, "S2C_TOWER_LAYOUT_PACKET must fit in one packet.");

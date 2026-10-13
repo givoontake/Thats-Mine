@@ -118,7 +118,6 @@ void UHelpWidget::RefreshContent()
 	AddLine(NSLOCTEXT("Help", "Boxes", "땅 위의 나무 상자와 나무 위·공중의 선물 상자를 열면 힌트, 탄약, 아이템을 얻습니다. 선물 상자는 총으로 쏴서도 열 수 있습니다."));
 	AddLine(NSLOCTEXT("Help", "Grades", "힌트는 S·A·B·C 등급이 있고, 높은 등급일수록 보물이 있을 곳을 많이 좁혀 줍니다."));
 	AddLine(NSLOCTEXT("Help", "Exclusion", "힌트를 얻으면 지도에 보물이 없는 영역이 표시됩니다."));
-	AddLine(NSLOCTEXT("Help", "Platform", "발판 길 힌트를 얻으면 숨겨진 발판 길이 보입니다. 발판 길 꼭대기 상자에는 높은 등급 힌트가 들어 있습니다."));
 	AddLine(NSLOCTEXT("Help", "Drop", "기절하면 가진 힌트 하나를 두루마리로 떨어뜨립니다. 떨어진 두루마리는 누구나 주울 수 있습니다."));
 
 	AddHeading(NSLOCTEXT("Help", "CombatHeading", "무기·기절·아이템"));

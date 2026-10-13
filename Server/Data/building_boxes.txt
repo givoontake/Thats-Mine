@@ -17,8 +17,4 @@ Egypt Gift Egypt_Gift_01 13688.1 54209.5 10936.7 0.00 0.00 0.00 1.000 1.000 1.00
 Egypt Gift Egypt_Gift_02 13782.6 57373.4 10936.7 0.00 0.00 0.00 1.000 1.000 1.000 /Game/Thats_Mine/Meshes/Props/Gifts/SM_Gift_D_Red.SM_Gift_D_Red HintBox_Egypt_Gift_Template3
 Egypt Gift Egypt_Gift_03 18312.2 56874.6 10951.4 0.00 0.00 0.00 1.000 1.000 1.000 /Game/Thats_Mine/Meshes/Props/Gifts/SM_Gift_D_Red.SM_Gift_D_Red HintBox_Egypt_Gift_Template4
 Egypt Gift Egypt_Gift_04 19747.8 55079.1 10976.7 0.00 0.00 0.00 1.000 1.000 1.000 /Game/Thats_Mine/Meshes/Props/Gifts/SM_Gift_D_Red.SM_Gift_D_Red HintBox_Egypt_Gift_Template2
-Top Treasure Top_Treasure_01 -19340.0 -27022.3 6769.8 0.00 0.00 0.00 0.700 0.700 0.700 /Game/Thats_Mine/Meshes/Props/Chests/SM_Chest_Closed.SM_Chest_Closed HintBox_TOP01
-Top Treasure Top_Treasure_02 16800.0 49757.7 13157.2 0.00 0.00 0.00 0.700 0.700 0.700 /Game/Thats_Mine/Meshes/Props/Chests/SM_Chest_Closed.SM_Chest_Closed HintBox_TOP02
-Top Treasure Top_Treasure_03 35587.8 -8536.4 13126.1 0.00 -180.00 0.00 0.700 0.700 0.700 /Game/Thats_Mine/Meshes/Props/Chests/SM_Chest_Closed.SM_Chest_Closed HintBox_TOP03
-Top Treasure Top_Treasure_04 -49164.5 57882.4 11088.7 0.00 0.00 0.00 0.700 0.700 0.700 /Game/Thats_Mine/Meshes/Props/Chests/SM_Chest_Closed.SM_Chest_Closed HintBox_TOP04
 Pyramid Gift Pyramid_Gift_01 -23280.0 -27040.0 1341.5 0.00 90.00 -0.00 1.000 1.000 1.000 /Game/Thats_Mine/Meshes/Props/Gifts/SM_Gift_D_Red.SM_Gift_D_Red HintBox_Pyramid_CenterEntrance_Gift

@@ -28,7 +28,6 @@ constexpr int MAX_ROOM_ACTIONS_PER_TICK = 80; // 서버가 한 방에서 한 틱
 constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 완료를 기다리는 최대 시간. 지나면 남은 플레이어를 기다리지 않고 시작 대기에 들어간다.
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr int GAME_TIME_LIMIT_MS = 7200000; // 게임이 시작된 뒤 보물을 찾지 못해도 게임을 끝내는 시간. 끝나면 보물 위치를 알리고 GAME_END_WAIT_MS 뒤 방으로 돌아간다.
-constexpr double PLATFORM_SPAWN_PROBABILITY = 0.6; // 반드시 놓는 자리가 아닌 발판을 놓을 확률
 
 // 상자 배치. 게임 시작 때 힌트 상자 수만큼 유적 상자를 먼저 고르고, 나머지 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
 constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
@@ -75,9 +74,6 @@ constexpr int HINT_GRADE_B_PERCENT = 30;
 constexpr float HINT_EXCLUSION_GRID_STEP = 5000.0f; // 배제 영역을 셀 격자 간격(cm)
 // 힌트 상자. 힌트마다 등급 배수 × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.
 constexpr int HINT_BOX_COPIES[] = { 1, 1, 2, 2 }; // 등급별 배수(S, A, B, C 순서)
-// 발판 길 힌트. 발판 길마다 그 길을 보이게 하는 A 등급 힌트를 하나 두고, PLATFORM_HINT_BOX_COUNT × 글로벌 배수만큼 상자에 넣는다.
-// 발판 길 꼭대기 상자(유적 상자 Top 그룹)에는 S·A 등급 힌트만 넣는다.
-constexpr int PLATFORM_HINT_BOX_COUNT = 2;
 constexpr int HINT_BOX_PLAYERS_PER_MULTIPLIER = 5;
 // 탄약 상자. 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 만들고, 한 상자에는 한 무기의 탄만 든다. 열면 그 무기의 소지 탄이 늘어난다.
 constexpr int AMMO_BOX_COUNT = 50;

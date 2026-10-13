@@ -73,8 +73,6 @@ add_executable(GameServer
     Common/IndexRegistry.h
     Common/info_code.h
     Common/settings.h
-    Common/platform_coordinates.h
-    Common/platform_layout.h
     Common/random_seed.h
     Common/spawn_points.h
     Common/spread_selection.h
