@@ -41,7 +41,7 @@ protected:
 	TObjectPtr<UButton> login_button_;
 
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> local_login_button_;
+	TObjectPtr<UButton> quit_button_;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> status_text_;
@@ -50,8 +50,11 @@ private:
 	UFUNCTION()
 	void SubmitLogin();
 
-	UFUNCTION()
+	// 아이디·비밀번호를 비우고 로컬 게임 시작을 알린다.
 	void SubmitLocalLogin();
+
+	UFUNCTION()
+	void QuitGame();
 
 	UFUNCTION()
 	void HandleIDCommitted(const FText& text, ETextCommit::Type commit_type);

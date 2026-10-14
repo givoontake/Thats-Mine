@@ -2,6 +2,7 @@
 
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 #define LOCTEXT_NAMESPACE "Login"
 
@@ -12,7 +13,7 @@ void ULoginWidget::NativeOnInitialized()
 	SetDesiredFocusWidget(id_input_);
 	password_input_->SetIsPassword(true);
 	login_button_->OnClicked.AddDynamic(this, &ULoginWidget::SubmitLogin);
-	local_login_button_->OnClicked.AddDynamic(this, &ULoginWidget::SubmitLocalLogin);
+	quit_button_->OnClicked.AddDynamic(this, &ULoginWidget::QuitGame);
 	id_input_->OnTextCommitted.AddDynamic(this, &ULoginWidget::HandleIDCommitted);
 	password_input_->OnTextCommitted.AddDynamic(this, &ULoginWidget::HandlePasswordCommitted);
 }
@@ -30,6 +31,12 @@ void ULoginWidget::ShowStatus(const FText& message)
 
 void ULoginWidget::SubmitLogin()
 {
+	// -Local 인자로 실행하면 로그인 버튼이 아이디·비밀번호 없이 로컬 게임을 시작한다.
+	if (FParse::Param(FCommandLine::Get(), TEXT("Local")))
+	{
+		SubmitLocalLogin();
+		return;
+	}
 	const FString user_id = id_input_->GetText().ToString().TrimStartAndEnd();
 	if (user_id.IsEmpty())
 	{
@@ -70,6 +77,11 @@ void ULoginWidget::SubmitLocalLogin()
 	id_input_->SetText(FText::GetEmpty());
 	password_input_->SetText(FText::GetEmpty());
 	on_local_login_requested_.Broadcast();
+}
+
+void ULoginWidget::QuitGame()
+{
+	UKismetSystemLibrary::QuitGame(this, GetOwningPlayer(), EQuitPreference::Quit, false);
 }
 
 #undef LOCTEXT_NAMESPACE
