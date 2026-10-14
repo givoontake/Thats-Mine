@@ -107,6 +107,7 @@ void UHelpWidget::RefreshContent()
 	AddLine(FText::Format(NSLOCTEXT("Help", "Actions", "{0} 상호작용(상자 열기·두루마리 줍기), {1} 줍기, {2} 재장전"), key(EKeyAction::INTERACT), key(EKeyAction::PICKUP), key(EKeyAction::RELOAD)));
 	AddLine(FText::Format(NSLOCTEXT("Help", "Weapons", "{0} 저격총, {1} 권총, {2} 곡괭이, {3} 돋보기(돋보기를 든 채 다시 누르면 기본·넓은 탐지 돋보기를 바꿈)"), key(EKeyAction::WEAPON_SNIPER), key(EKeyAction::WEAPON_PISTOL), key(EKeyAction::WEAPON_PICKAXE), key(EKeyAction::WEAPON_MAGNIFIER)));
 	AddLine(FText::Format(NSLOCTEXT("Help", "Windows", "{0} 인벤토리, {1} 지도, {2} 도움말, ESC 메뉴(설정·나가기)"), key(EKeyAction::INVENTORY), key(EKeyAction::MAP), key(EKeyAction::HELP)));
+	AddLine(FText::Format(NSLOCTEXT("Help", "Ping", "{0} 핑 찍기: 화면 가운데 지점에 핑을 찍어 내 위치에서의 거리를 봅니다. 핑은 나만 보이고 미니맵·지도에도 표시됩니다."), key(EKeyAction::PING)));
 
 	AddHeading(NSLOCTEXT("Help", "GoalHeading", "게임 목표와 진행"));
 	AddLine(NSLOCTEXT("Help", "Goal", "맵 어딘가에 묻힌 보물을 가장 먼저 곡괭이로 파내면 승리합니다."));

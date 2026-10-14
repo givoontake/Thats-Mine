@@ -54,6 +54,7 @@ void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_GAME_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameStartPacket));
 	network->RegisterPacketHandler(S2C_TREASURE_FOUND, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureFoundPacket));
 	network->RegisterPacketHandler(S2C_TIME_OVER, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTimeOverPacket));
+	network->RegisterPacketHandler(S2C_TREASURE_REVEAL, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureRevealPacket));
 	prepare_start_time_ = world.GetRealTimeSeconds();
 	const AGameModeBase* game_mode = world.GetAuthGameMode();
 	const APlayerCharacter* character = game_mode && game_mode->DefaultPawnClass ? Cast<APlayerCharacter>(game_mode->DefaultPawnClass->GetDefaultObject()) : nullptr;
@@ -78,6 +79,7 @@ void UGameStartSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_GAME_START);
 			network->UnregisterPacketHandler(S2C_TREASURE_FOUND);
 			network->UnregisterPacketHandler(S2C_TIME_OVER);
+			network->UnregisterPacketHandler(S2C_TREASURE_REVEAL);
 		}
 		is_active_ = false;
 	}
@@ -301,6 +303,27 @@ void UGameStartSubsystem::HandleTimeOverPacket(const TArray<uint8>& payload)
 		timer->SetMessage(LOCTEXT("TimeOver", "시간이 끝났습니다! 보물 위치를 공개합니다."), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
 	}
 	RevealTreasure(packet.location, packet.yaw);
+}
+
+void UGameStartSubsystem::RequestTreasureReveal() const
+{
+	if (is_active_)
+	{
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_TREASURE_REVEAL, TArray<uint8>());
+	}
+}
+
+// 시험용 보물 위치 요청의 답. 미니맵이 그 자리를 표시한다.
+void UGameStartSubsystem::HandleTreasureRevealPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_TREASURE_REVEAL_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_TREASURE_REVEAL_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	revealed_treasure_location_ = FVector(packet.location[0], packet.location[1], packet.location[2]);
 }
 
 void UGameStartSubsystem::RevealTreasure(const float location[3], float yaw)

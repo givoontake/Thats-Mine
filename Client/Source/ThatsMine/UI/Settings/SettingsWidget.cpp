@@ -229,26 +229,14 @@ void USettingsWidget::LoadSavedSettings()
 
 FReply USettingsWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const FKeyEvent& event)
 {
-	// 바꿀 키를 기다리는 중이면 키보드 키 하나를 받는다. ESC는 취소이고, 다른 동작이 쓰던 키면 두 동작의 키를 맞바꾼다.
+	// 바꿀 키를 기다리는 중이면 키보드 키 하나를 받는다.
 	if (capturing_action_ != INDEX_NONE)
 	{
 		const FKey key = event.GetKey();
-		if (key != EKeys::Escape && (key.IsMouseButton() || key.IsGamepadKey()))
+		if (!key.IsMouseButton() && !key.IsGamepadKey())
 		{
-			return FReply::Handled();
+			CaptureKey(key);
 		}
-		if (key != EKeys::Escape)
-		{
-			const int32 other = pending_keys_.IndexOfByKey(key);
-			if (other != INDEX_NONE)
-			{
-				pending_keys_[other] = pending_keys_[capturing_action_];
-			}
-			pending_keys_[capturing_action_] = key;
-		}
-		capturing_action_ = INDEX_NONE;
-		option_description_->SetText(FText::GetEmpty());
-		UpdateKeyTexts();
 		return FReply::Handled();
 	}
 	if (event.GetKey() == EKeys::Escape && on_close_requested_.IsBound())
@@ -257,6 +245,34 @@ FReply USettingsWidget::NativeOnPreviewKeyDown(const FGeometry& geometry, const 
 		return FReply::Handled();
 	}
 	return Super::NativeOnPreviewKeyDown(geometry, event);
+}
+
+// 바꿀 키를 기다리는 중이면 왼쪽·오른쪽 버튼이 아닌 마우스 버튼(휠 클릭 등)도 받는다.
+FReply USettingsWidget::NativeOnPreviewMouseButtonDown(const FGeometry& geometry, const FPointerEvent& event)
+{
+	const FKey key = event.GetEffectingButton();
+	if (capturing_action_ != INDEX_NONE && key != EKeys::LeftMouseButton && key != EKeys::RightMouseButton)
+	{
+		CaptureKey(key);
+		return FReply::Handled();
+	}
+	return Super::NativeOnPreviewMouseButtonDown(geometry, event);
+}
+
+void USettingsWidget::CaptureKey(const FKey& key)
+{
+	if (key != EKeys::Escape)
+	{
+		const int32 other = pending_keys_.IndexOfByKey(key);
+		if (other != INDEX_NONE)
+		{
+			pending_keys_[other] = pending_keys_[capturing_action_];
+		}
+		pending_keys_[capturing_action_] = key;
+	}
+	capturing_action_ = INDEX_NONE;
+	option_description_->SetText(FText::GetEmpty());
+	UpdateKeyTexts();
 }
 
 void USettingsWidget::SelectAudioTab()

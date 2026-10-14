@@ -1,4 +1,5 @@
 #include "WorldMapWidget.h"
+#include "MapGridWidget.h"
 #include "MapPlayerMarkerWidget.h"
 #include "Engine/GameInstance.h"
 #include "Settings/KeyBindingSubsystem.h"
@@ -12,7 +13,9 @@
 #include "Engine/Texture2D.h"
 #include "GameFramework/Pawn.h"
 #include "InputCoreTypes.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Interaction/HintSubsystem.h"
+#include "Interaction/PingSubsystem.h"
 #include "Network/GameStartSubsystem.h"
 #include "settings.h"
 
@@ -62,6 +65,8 @@ TSharedRef<SWidget> UWorldMapWidget::RebuildWidget()
 		exclusion_image_->SetColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, EXCLUSION_SHADE_OPACITY));
 		exclusion_image_->SetVisibility(ESlateVisibility::Collapsed);
 		map_canvas_->AddChildToCanvas(exclusion_image_);
+		grid_ = WidgetTree->ConstructWidget<UMapGridWidget>();
+		map_canvas_->AddChildToCanvas(grid_);
 		for (const FMapPlace& place : places_)
 		{
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
@@ -87,6 +92,14 @@ TSharedRef<SWidget> UWorldMapWidget::RebuildWidget()
 		treasure_slot->SetAlignment(FVector2D(0.5, 0.5));
 		treasure_slot->SetSize(FVector2D(TREASURE_MARKER_SIZE, TREASURE_MARKER_SIZE));
 		treasure_slot->SetZOrder(9);
+
+		ping_marker_ = WidgetTree->ConstructWidget<UImage>();
+		ping_marker_->SetBrush(FSlateRoundedBoxBrush(FLinearColor(1.0f, 0.82f, 0.1f), PING_MARKER_SIZE * 0.5f, FLinearColor::White, 2.0f, FVector2f(PING_MARKER_SIZE)));
+		ping_marker_->SetVisibility(ESlateVisibility::Collapsed);
+		UCanvasPanelSlot* ping_slot = map_canvas_->AddChildToCanvas(ping_marker_);
+		ping_slot->SetAlignment(FVector2D(0.5, 0.5));
+		ping_slot->SetSize(FVector2D(PING_MARKER_SIZE));
+		ping_slot->SetZOrder(9);
 
 		player_marker_ = WidgetTree->ConstructWidget<UMapPlayerMarkerWidget>();
 		player_marker_->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -147,6 +160,7 @@ void UWorldMapWidget::NativeTick(const FGeometry& geometry, float delta_time)
 	else
 	{
 		UpdatePlayerMarker();
+		UpdatePingMarker();
 	}
 }
 
@@ -203,7 +217,12 @@ void UWorldMapWidget::UpdateMap()
 	UCanvasPanelSlot* exclusion_slot = CastChecked<UCanvasPanelSlot>(exclusion_image_->Slot);
 	exclusion_slot->SetPosition(mask_min * MAP_SIZE * zoom_ + pan_);
 	exclusion_slot->SetSize((mask_max - mask_min) * MAP_SIZE * zoom_);
+	// 격자도 지도 범위를 덮는다.
+	UCanvasPanelSlot* grid_slot = CastChecked<UCanvasPanelSlot>(grid_->Slot);
+	grid_slot->SetPosition(mask_min * MAP_SIZE * zoom_ + pan_);
+	grid_slot->SetSize((mask_max - mask_min) * MAP_SIZE * zoom_);
 	UpdateTreasureMarker();
+	UpdatePingMarker();
 	UpdatePlayerMarker();
 }
 
@@ -220,6 +239,21 @@ void UWorldMapWidget::UpdateTreasureMarker()
 	const FVector2D world_size = world_max_ - world_min_;
 	const FVector2D position((world_max_.Y - location.Y) / world_size.Y, (location.X - world_min_.X) / world_size.X);
 	CastChecked<UCanvasPanelSlot>(treasure_marker_->Slot)->SetPosition(position * MAP_SIZE * zoom_ + pan_);
+}
+
+void UWorldMapWidget::UpdatePingMarker()
+{
+	const UPingSubsystem* pings = GetWorld()->GetSubsystem<UPingSubsystem>();
+	if (!pings || !pings->GetPingLocation())
+	{
+		ping_marker_->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	ping_marker_->SetVisibility(ESlateVisibility::HitTestInvisible);
+	const FVector location = *pings->GetPingLocation();
+	const FVector2D world_size = world_max_ - world_min_;
+	const FVector2D position((world_max_.Y - location.Y) / world_size.Y, (location.X - world_min_.X) / world_size.X);
+	CastChecked<UCanvasPanelSlot>(ping_marker_->Slot)->SetPosition(position * MAP_SIZE * zoom_ + pan_);
 }
 
 // 힌트 서브시스템의 배제 텍스처를 반투명 검정으로 덮는다.

@@ -27,9 +27,13 @@
 #include "Interaction/HintDropSubsystem.h"
 #include "Interaction/HintBox.h"
 #include "Interaction/ItemSubsystem.h"
+#include "Interaction/PingSubsystem.h"
 #include "RemoteMovementComponent.h"
 #include "UI/EquipmentWidget.h"
 #include "UI/InteractPromptWidget.h"
+#include "UI/Map/CoordinateWidget.h"
+#include "UI/Map/MinimapWidget.h"
+#include "UI/Map/PingMarkerWidget.h"
 #include "UI/Effects/DamageDirectionWidget.h"
 #include "UI/Effects/SearchGaugeWidget.h"
 #include "UI/Effects/StunGaugeWidget.h"
@@ -57,6 +61,10 @@ static constexpr double CAMERA_GROUND_CLEARANCE = 100.0;
 
 // 기절 게이지를 화면 아래 끝에서 띄우는 거리
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
+// 미니맵을 화면 오른쪽 끝과 위 끝에서 띄우는 거리
+static constexpr float MINIMAP_SCREEN_MARGIN = 28.0f;
+// 핑을 찍을 때 화면 가운데에서 찾는 최대 거리(cm)
+static constexpr double PING_TRACE_DISTANCE = 300000.0;
 // 곡괭이 범위 데칼을 발밑 위아래로 투영하는 거리(cm). 비탈에서도 원이 끊기지 않게 한다.
 static constexpr double PICKAXE_RANGE_DECAL_DEPTH = 300.0;
 // 줄어드는 기절 게이지 표시를 고치는 간격(초)
@@ -191,6 +199,21 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 		interact_prompt_widget_->RemoveFromParent();
 		interact_prompt_widget_ = nullptr;
 	}
+	if (minimap_widget_)
+	{
+		minimap_widget_->RemoveFromParent();
+		minimap_widget_ = nullptr;
+	}
+	if (coordinate_widget_)
+	{
+		coordinate_widget_->RemoveFromParent();
+		coordinate_widget_ = nullptr;
+	}
+	if (ping_marker_widget_)
+	{
+		ping_marker_widget_->RemoveFromParent();
+		ping_marker_widget_ = nullptr;
+	}
 	if (search_gauge_widget_)
 	{
 		search_gauge_widget_->RemoveFromParent();
@@ -256,6 +279,7 @@ void APlayerCharacter::BindGameKeys(UInputComponent* input)
 	input->BindKey(bindings->GetKey(EKeyAction::RELOAD), IE_Pressed, this, &APlayerCharacter::Reload);
 	input->BindKey(bindings->GetKey(EKeyAction::PICKUP), IE_Pressed, this, &APlayerCharacter::PickUp);
 	input->BindKey(bindings->GetKey(EKeyAction::INTERACT), IE_Pressed, this, &APlayerCharacter::Interact);
+	input->BindKey(bindings->GetKey(EKeyAction::PING), IE_Pressed, this, &APlayerCharacter::PlacePing);
 	input->BindKey(bindings->GetKey(EKeyAction::JUMP), IE_Pressed, this, &APlayerCharacter::Jump);
 	input->BindKey(bindings->GetKey(EKeyAction::JUMP), IE_Released, this, &APlayerCharacter::StopJumping);
 }
@@ -283,6 +307,22 @@ void APlayerCharacter::Interact()
 	}
 	// 조준한 상자가 없으면 발밑 근처의 떨어진 두루마리를 줍는다.
 	GetWorld()->GetSubsystem<UHintDropSubsystem>()->RequestPickup(GetCapsuleComponent()->GetComponentLocation());
+}
+
+void APlayerCharacter::PlacePing()
+{
+	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
+	if (!GetWorld() || !IsValid(camera) || !camera->IsActive())
+	{
+		return;
+	}
+	const FVector start = camera->GetComponentLocation();
+	FCollisionQueryParams query(SCENE_QUERY_STAT(Ping), false, this);
+	FHitResult hit;
+	if (GetWorld()->LineTraceSingleByChannel(hit, start, start + camera->GetForwardVector() * PING_TRACE_DISTANCE, ECC_Visibility, query))
+	{
+		GetWorld()->GetSubsystem<UPingSubsystem>()->SetPingLocation(hit.ImpactPoint);
+	}
 }
 
 const AHintBox* APlayerCharacter::FindInteractBox() const
@@ -976,6 +1016,42 @@ void APlayerCharacter::PawnClientRestart()
 			GetWorldTimerManager().SetTimer(interact_prompt_timer_, this, &APlayerCharacter::UpdateInteractPrompt, INTERACT_PROMPT_INTERVAL, true);
 		}
 	}
+	if (!minimap_widget_ && controller && controller->IsLocalController())
+	{
+		minimap_widget_ = CreateWidget<UMinimapWidget>(controller, UMinimapWidget::StaticClass());
+		if (minimap_widget_)
+		{
+			// 화면 오른쪽 위 끝에서 위·오른쪽을 같은 여백으로 띄운다.
+			FGameViewportWidgetSlot slot;
+			slot.Anchors = FAnchors(1.0f, 0.0f);
+			slot.Alignment = FVector2D(1.0, 0.0);
+			slot.Offsets = FMargin(-MINIMAP_SCREEN_MARGIN, MINIMAP_SCREEN_MARGIN, UMinimapWidget::FRAME_SIZE, UMinimapWidget::FRAME_SIZE);
+			slot.ZOrder = 10;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(minimap_widget_, controller->GetLocalPlayer(), slot);
+		}
+	}
+	if (!coordinate_widget_ && controller && controller->IsLocalController())
+	{
+		coordinate_widget_ = CreateWidget<UCoordinateWidget>(controller, UCoordinateWidget::StaticClass());
+		if (coordinate_widget_)
+		{
+			// 화면 전체에 깔고 왼쪽 위에 좌표를 쓴다.
+			FGameViewportWidgetSlot slot;
+			slot.ZOrder = 10;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(coordinate_widget_, controller->GetLocalPlayer(), slot);
+		}
+	}
+	if (!ping_marker_widget_ && controller && controller->IsLocalController())
+	{
+		ping_marker_widget_ = CreateWidget<UPingMarkerWidget>(controller, UPingMarkerWidget::StaticClass());
+		if (ping_marker_widget_)
+		{
+			// 화면 전체에 깔고 핑 자리에 표시와 거리를 쓴다.
+			FGameViewportWidgetSlot slot;
+			slot.ZOrder = 10;
+			UGameViewportSubsystem::Get()->AddWidgetForPlayer(ping_marker_widget_, controller->GetLocalPlayer(), slot);
+		}
+	}
 	if (!pickaxe_range_decal_ && controller && controller->IsLocalController())
 	{
 		// 발밑에서 아래를 보게 돌려 땅에 반지름 TREASURE_DIG_DISTANCE의 원을 그린다. 곡괭이를 들 때만 보인다.
@@ -1283,6 +1359,21 @@ void APlayerCharacter::UnPossessed()
 	{
 		interact_prompt_widget_->RemoveFromParent();
 		interact_prompt_widget_ = nullptr;
+	}
+	if (minimap_widget_)
+	{
+		minimap_widget_->RemoveFromParent();
+		minimap_widget_ = nullptr;
+	}
+	if (coordinate_widget_)
+	{
+		coordinate_widget_->RemoveFromParent();
+		coordinate_widget_ = nullptr;
+	}
+	if (ping_marker_widget_)
+	{
+		ping_marker_widget_->RemoveFromParent();
+		ping_marker_widget_ = nullptr;
 	}
 	if (stun_gauge_widget_)
 	{

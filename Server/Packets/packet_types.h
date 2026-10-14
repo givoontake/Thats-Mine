@@ -68,3 +68,5 @@ constexpr std::uint8_t S2C_BLOCK_RESULT = 98;
 constexpr std::uint8_t S2C_EXCLUSION_BOARD = 99;
 constexpr std::uint8_t S2C_INFO = 100;
 constexpr std::uint8_t S2C_AREA_REMOVAL = 101;
+constexpr std::uint8_t C2S_TREASURE_REVEAL = 102; // 시험용
+constexpr std::uint8_t S2C_TREASURE_REVEAL = 103; // 시험용

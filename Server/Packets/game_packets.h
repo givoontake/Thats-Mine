@@ -293,6 +293,17 @@ struct S2C_AREA_REMOVAL_PACKET {
 	std::uint8_t cell;
 };
 
+// 시험용 보물 위치 요청. 방에 플레이어가 혼자일 때만 답한다.
+struct C2S_TREASURE_REVEAL_PACKET {
+	PACKET_HEADER header;
+};
+
+// 시험용 보물 위치 요청의 답. 보물 바닥 가운데 위치(cm)다. 요청한 사람에게만 보낸다.
+struct S2C_TREASURE_REVEAL_PACKET {
+	PACKET_HEADER header;
+	float location[3];
+};
+
 // 보물을 발견한 플레이어와 보물 바닥 가운데 위치(cm), 보물 방향(도). 플레이 중인 방 전체에 보낸다. GAME_END_WAIT_MS 뒤 게임이 끝나고 방으로 돌아간다.
 // 보물 위치는 발견되기 전에는 보내지 않는다.
 struct S2C_TREASURE_FOUND_PACKET {

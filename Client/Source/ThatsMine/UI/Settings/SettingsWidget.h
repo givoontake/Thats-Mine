@@ -43,6 +43,7 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& geometry, const FKeyEvent& event) override;
+	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry& geometry, const FPointerEvent& event) override;
 
 	// 탭 버튼의 기본 모양과 선택된 탭 배경. 로비 메뉴 버튼과 같은 모양이다.
 	UPROPERTY(EditDefaultsOnly, Category = "Appearance")
@@ -131,6 +132,8 @@ private:
 	UFUNCTION()
 	void StartKeyCapture();
 	void UpdateKeyTexts();
+	// 바꿀 키를 기다리는 동작에 key를 넣는다. ESC는 취소이고, 다른 동작이 쓰던 키면 두 동작의 키를 맞바꾼다.
+	void CaptureKey(const FKey& key);
 	// 줄의 화살표가 알린 방향(-1, +1)으로 값을 옮긴다.
 	void StepLobbyFrame(int32 step);
 	void StepGameFrame(int32 step);

@@ -7,6 +7,7 @@
 
 class UCanvasPanel;
 class UImage;
+class UMapGridWidget;
 class UMapPlayerMarkerWidget;
 class UTexture2D;
 class UTextBlock;
@@ -59,6 +60,7 @@ private:
 	static constexpr double ZOOM_SPEED = 18.0;
 	static constexpr float EXCLUSION_SHADE_OPACITY = 0.3f;
 	static constexpr double TREASURE_MARKER_SIZE = 36.0;
+	static constexpr double PING_MARKER_SIZE = 14.0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanel> map_canvas_;
@@ -73,12 +75,20 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UImage> treasure_marker_;
 
+	// 내가 찍은 핑. 핑이 없으면 숨긴다.
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> ping_marker_;
+
 	// 힌트로 배제한 곳을 어둡게 덮는 이미지 하나. 배제 칸은 불투명, 나머지는 투명한 텍스처를 반투명 검정으로 그려 어느 곳이든 한 번만 어두워진다.
 	UPROPERTY(Transient)
 	TObjectPtr<UImage> exclusion_image_;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextBlock>> place_labels_;
+
+	// 배제 판(block_pieces.h)과 같은 8×8 칸 격자선과 50m 작은 격자선
+	UPROPERTY(Transient)
+	TObjectPtr<UMapGridWidget> grid_;
 
 	double zoom_ = 1.0;
 	double target_zoom_ = 1.0;
@@ -91,6 +101,7 @@ private:
 	void UpdateMap();
 	void UpdatePlayerMarker();
 	void UpdateTreasureMarker();
+	void UpdatePingMarker();
 	// 힌트 서브시스템의 배제 텍스처를 다시 가져온다.
 	void UpdateExclusionTexture();
 

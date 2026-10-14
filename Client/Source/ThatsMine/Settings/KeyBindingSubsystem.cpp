@@ -34,6 +34,7 @@ FKey UKeyBindingSubsystem::GetDefaultKey(EKeyAction action)
 	case EKeyAction::INVENTORY: return EKeys::Tab;
 	case EKeyAction::MAP: return EKeys::M;
 	case EKeyAction::HELP: return EKeys::F1;
+	case EKeyAction::PING: return EKeys::MiddleMouseButton;
 	default: return EKeys::Invalid;
 	}
 }
@@ -57,6 +58,7 @@ FText UKeyBindingSubsystem::GetActionName(EKeyAction action)
 	case EKeyAction::INVENTORY: return NSLOCTEXT("KeyBinding", "Inventory", "인벤토리");
 	case EKeyAction::MAP: return NSLOCTEXT("KeyBinding", "Map", "지도");
 	case EKeyAction::HELP: return NSLOCTEXT("KeyBinding", "Help", "도움말");
+	case EKeyAction::PING: return NSLOCTEXT("KeyBinding", "Ping", "핑 찍기");
 	default: return FText::GetEmpty();
 	}
 }

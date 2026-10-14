@@ -47,5 +47,6 @@ inline constexpr std::array<PacketSizeRange, 256> CLIENT_PACKET_SIZE_TABLE = [] 
 	table[C2S_HINT_PICKUP] = { sizeof(C2S_HINT_PICKUP_PACKET), sizeof(C2S_HINT_PICKUP_PACKET) };
 	table[C2S_SEARCH] = { sizeof(C2S_SEARCH_PACKET), sizeof(C2S_SEARCH_PACKET) };
 	table[C2S_BLOCK_USE] = { sizeof(C2S_BLOCK_USE_PACKET), sizeof(C2S_BLOCK_USE_PACKET) };
+	table[C2S_TREASURE_REVEAL] = { sizeof(C2S_TREASURE_REVEAL_PACKET), sizeof(C2S_TREASURE_REVEAL_PACKET) };
 	return table;
 }();

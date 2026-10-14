@@ -6,6 +6,7 @@
 #include "Components/TextBlock.h"
 #include "Engine/World.h"
 #include "Styling/CoreStyle.h"
+#include "UI/Map/MinimapWidget.h"
 
 TSharedRef<SWidget> UGameTimeWidget::RebuildWidget()
 {
@@ -24,7 +25,8 @@ TSharedRef<SWidget> UGameTimeWidget::RebuildWidget()
 		UCanvasPanelSlot* text_slot = root->AddChildToCanvas(time_text_);
 		text_slot->SetAnchors(FAnchors(1.0f, 0.0f));
 		text_slot->SetAlignment(FVector2D(1.0, 0.0));
-		text_slot->SetPosition(FVector2D(-SCREEN_MARGIN, SCREEN_MARGIN));
+		// 오른쪽 위 미니맵 바로 아래에 둔다.
+		text_slot->SetPosition(FVector2D(-SCREEN_MARGIN, SCREEN_MARGIN + UMinimapWidget::FRAME_SIZE + MINIMAP_GAP));
 		text_slot->SetAutoSize(true);
 	}
 	SetVisibility(ESlateVisibility::HitTestInvisible);

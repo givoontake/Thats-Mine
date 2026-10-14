@@ -116,4 +116,6 @@ private:
 	// 게임에서 나가 로비로 돌아간다.
 	void LeaveToLobby();
 	void QuitGame();
+	// 시험용. F9를 누르면 서버에 보물 위치를 요청한다. 서버는 혼자 하는 방에서만 답한다.
+	void RequestTreasureReveal();
 };

@@ -24,6 +24,9 @@ class USearchGaugeWidget;
 class UStunGaugeWidget;
 class UHintPopupWidget;
 class UInteractPromptWidget;
+class UMinimapWidget;
+class UCoordinateWidget;
+class UPingMarkerWidget;
 class UDecalComponent;
 class AHintBox;
 class UUserWidget;
@@ -249,6 +252,15 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UInteractPromptWidget> interact_prompt_widget_;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UMinimapWidget> minimap_widget_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCoordinateWidget> coordinate_widget_;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPingMarkerWidget> ping_marker_widget_;
+
 	// 곡괭이를 든 내 캐릭터 발밑에 보물 발견 범위를 그리는 데칼
 	UPROPERTY(Transient)
 	TObjectPtr<UDecalComponent> pickaxe_range_decal_;
@@ -329,6 +341,8 @@ private:
 	const AHintBox* FindInteractBox() const;
 	// 열 수 있는 상자나 주울 수 있는 두루마리가 있으면 상호작용 안내를 보인다.
 	void UpdateInteractPrompt();
+	// 화면 가운데가 가리키는 곳에 핑을 찍는다. 이전 핑은 사라진다.
+	void PlacePing();
 	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
 	double GetPickaxeChargeSeconds() const;
 	float GetStunGaugeDecayPerSecond() const;

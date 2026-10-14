@@ -26,6 +26,8 @@ private:
 	static constexpr int32 FONT_SIZE = 24;
 	// 화면 오른쪽 위 끝에서 띄우는 거리
 	static constexpr float SCREEN_MARGIN = 28.0f;
+	// 미니맵 아래 끝과 남은 시간 글씨 사이 거리
+	static constexpr float MINIMAP_GAP = 8.0f;
 
 	void UpdateTimeText();
 
