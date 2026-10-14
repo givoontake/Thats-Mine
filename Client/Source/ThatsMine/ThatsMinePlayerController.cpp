@@ -379,8 +379,18 @@ void AThatsMinePlayerController::ToggleSettings()
 	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	input_mode.SetHideCursorDuringCapture(false);
 	SetInputMode(input_mode);
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
+bool AThatsMinePlayerController::IsMenuOpen() const
+{
+	return (pause_menu_widget_ && pause_menu_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport());
+}
+
+// 메뉴를 열고 닫을 때마다 내 캐릭터의 장비 표시를 다시 그려 에임을 숨기거나 보인다.
 void AThatsMinePlayerController::TogglePauseMenu()
 {
 	if (pause_menu_widget_ && pause_menu_widget_->IsInViewport())
@@ -418,6 +428,10 @@ void AThatsMinePlayerController::TogglePauseMenu()
 	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	input_mode.SetHideCursorDuringCapture(false);
 	SetInputMode(input_mode);
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 void AThatsMinePlayerController::ClosePauseMenu()
@@ -430,6 +444,10 @@ void AThatsMinePlayerController::ClosePauseMenu()
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 // 서버가 방에서 내보내면 로비 레벨로 옮겨 간다. 그동안 메뉴는 닫아 둔다.
@@ -455,4 +473,8 @@ void AThatsMinePlayerController::CloseSettings()
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }

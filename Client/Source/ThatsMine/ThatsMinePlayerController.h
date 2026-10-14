@@ -30,6 +30,8 @@ public:
 	/** Constructor */
 	AThatsMinePlayerController();
 	virtual void FlushPressedKeys() override;
+	// ESC 메뉴나 거기서 연 설정 창이 떠 있는지. 떠 있으면 에임을 숨긴다.
+	bool IsMenuOpen() const;
 
 protected:
 

@@ -99,6 +99,8 @@ public:
 	void AddItem(EItemKind kind, EHintGrade grade);
 	// 힌트·아이템·탄약·블록 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. has_badge가 false면 등급 없이 보인다.
 	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge);
+	// 장비 표시(화면 아래 장비·에임, 인벤토리)를 지금 상태로 다시 그린다.
+	void UpdateEquipmentDisplay();
 	// 서버가 탐색을 마쳤다. 기본 돋보기(grade가 비어 있음)는 재사용 대기시간을 시작하고, 넓은 탐지 돋보기는 그 등급을 하나 쓴다.
 	// 들고 있는 넓은 탐지 돋보기가 다 떨어지면 기본 돋보기로 바꾼다.
 	void ConsumeMagnifier(TOptional<EHintGrade> grade);
@@ -320,7 +322,6 @@ private:
 	void BeginReload(EWeaponType weapon);
 	void FinishReload(EWeaponType weapon);
 	void PlayReloadAnimation(EWeaponType weapon);
-	void UpdateEquipmentDisplay();
 	void UpdateStunGaugeDisplay();
 	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채우고 장비·인벤토리 표시를 고친다. 다 차면 충전 표시 타이머를 멈춘다.
 	void UpdatePickaxeCharges();

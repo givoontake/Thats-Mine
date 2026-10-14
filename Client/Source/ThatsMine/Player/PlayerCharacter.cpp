@@ -39,6 +39,7 @@
 #include "UI/Effects/StunGaugeWidget.h"
 #include "UI/Hint/HintPopupWidget.h"
 #include "settings.h"
+#include "ThatsMinePlayerController.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
 #include "LocalDebug/Combat/CombatDebug.h"
@@ -1410,7 +1411,9 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 	{
 		display.name = settings->display_name;
 		display.uses_ammo = settings->hitscan.is_enabled || weapon == EWeaponType::PICKAXE;
-		display.should_show_crosshair = settings->hitscan.is_enabled && !is_aiming_;
+		// ESC 메뉴가 떠 있으면 에임을 숨긴다.
+		const AThatsMinePlayerController* controller = Cast<AThatsMinePlayerController>(GetController());
+		display.should_show_crosshair = settings->hitscan.is_enabled && !is_aiming_ && !(controller && controller->IsMenuOpen());
 		if (display.uses_ammo)
 		{
 			display.capacity = FMath::Max(1, settings->hitscan.magazine_capacity);
