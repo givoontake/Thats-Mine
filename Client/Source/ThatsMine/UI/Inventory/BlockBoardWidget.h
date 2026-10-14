@@ -9,7 +9,7 @@ class UCanvasPanel;
 class UTextBlock;
 class UTexture2D;
 
-// 인벤토리 장비 탭의 블록 칸. 왼쪽은 지도 사진을 8×8칸으로 나눈 배제 판이고, 오른쪽은 가졌고 아직 쓰지 않은 블록이다.
+// 인벤토리 블록 탭의 블록 칸. 왼쪽은 지도 사진을 8×8칸으로 나눈 배제 판이고, 오른쪽은 가졌고 아직 쓰지 않은 블록이다. 같은 블록은 한 칸에 두고 2개 이상이면 개수를 적는다.
 // 블록을 마우스 왼쪽 버튼으로 끌어 판에 놓으면 칸에 맞춰 붙고, 놓을 수 있는 자리(모든 칸이 판 안이고 배제되지 않음)면 초록, 아니면 빨강으로 보인다.
 // 끄는 중 오른쪽 버튼·휠·R키로 시계 방향으로 돌린다. 놓을 수 있는 자리에서 버튼을 떼면 사용할지 묻고, 사용을 누르면 서버에 보낸다.
 UCLASS()
@@ -22,7 +22,7 @@ public:
 
 	// 위젯 크기. 인벤토리가 이 크기의 칸에 놓는다.
 	static constexpr double WIDTH = 1000.0;
-	static constexpr double HEIGHT = 420.0;
+	static constexpr double HEIGHT = 620.0;
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -39,13 +39,14 @@ protected:
 private:
 	// 판은 왼쪽 위에 놓은 정사각형이고, 블록 칸은 판 오른쪽에 가로 SLOT_COLUMNS개씩 줄지어 놓는다.
 	static constexpr double BOARD_SIZE = HEIGHT;
-	static constexpr double LIST_LEFT = 450.0;
-	static constexpr double LIST_TOP = 70.0;
-	static constexpr int32 SLOT_COLUMNS = 6;
+	static constexpr double LIST_LEFT = 650.0;
+	static constexpr double LIST_TOP = 92.0;
+	static constexpr int32 SLOT_COLUMNS = 4;
 	static constexpr double SLOT_SIZE = 85.0;
 	static constexpr double SLOT_STEP = 87.0;
 	// 블록 칸 안에 그리는 블록 한 칸 크기
 	static constexpr double SLOT_CELL_SIZE = 15.0;
+	static constexpr int32 SLOT_COUNT_FONT_SIZE = 13;
 
 	// 놓을 자리. 블록을 돌린 모양의 가장 작은 열과 행이 (column, row) 칸에 온다.
 	struct FBlockPlacement
@@ -73,6 +74,8 @@ private:
 	TObjectPtr<UCanvasPanel> confirm_panel_;
 
 	TArray<int32> usable_blocks_;
+	// usable_blocks_ 순서로 그 블록의 수
+	TArray<int32> usable_block_counts_;
 	uint64 exclusion_board_ = 0;
 	// 끄는 중인 블록과 돌린 수. 끄는 중이 아니면 piece가 INDEX_NONE이다.
 	FBlockPlacement drag_;

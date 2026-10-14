@@ -139,5 +139,7 @@ constexpr float MAGNIFIER_HEIGHT_MARGIN = 300.0f;
 constexpr float MAGNIFIER_HEIGHT_SAMPLE_STEP = 500.0f;
 constexpr float MAGNIFIER_MOVE_TOLERANCE = 100.0f; // 탐색이 끝날 때 시작 위치에서 벗어나도 되는 수평 거리(cm). 벗어나면 탐색을 취소하고 돋보기를 쓰지 않은 것으로 본다.
 
-// 블록 상자. 블록(block_pieces.h)마다 등급과 상관없이 BLOCK_BOX_COUNT × 글로벌 배수만큼 상자를 만든다. 얻은 블록은 그 게임 동안 아무 때나 한 번 쓸 수 있고 기절해도 잃지 않는다.
+// 블록 상자. 블록(block_pieces.h)마다 등급과 상관없이 BLOCK_BOX_COUNT × 칸 수별 배수 × 글로벌 배수만큼 상자를 만든다.
+// 얻은 블록은 하나마다 그 게임 동안 아무 때나 한 번 쓸 수 있고, 같은 블록을 여러 개 가질 수 있으며, 기절해도 잃지 않는다.
 constexpr int BLOCK_BOX_COUNT = 1;
+constexpr int BLOCK_BOX_SIZE_MULTIPLIERS[] = { 3, 2 }; // 1칸·2칸 블록의 배수. 3칸 이상은 1이다.

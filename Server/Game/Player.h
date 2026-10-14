@@ -52,9 +52,8 @@ class Player
 	std::uint8_t search_grade_ = 0;
 	float search_location_[3] = {};
 	long long search_end_ms_ = 0;
-	// 이번 게임에서 얻은 블록과 쓴 블록. BLOCK_PIECES 번호 자리의 비트가 켜져 있다.
-	std::uint32_t owned_blocks_ = 0;
-	std::uint32_t used_blocks_ = 0;
+	// 이번 게임에서 얻고 아직 쓰지 않은 블록 수. BLOCK_PIECES 번호 순서다.
+	std::array<std::uint8_t, BLOCK_PIECE_COUNT> block_counts_{};
 	// 블록 결과와 돋보기 탐색 결과로 배제된 칸 모음. 기절해도 잃지 않는다.
 	std::uint64_t kept_excluded_cells_ = 0;
 	// 마지막으로 보낸 배제 판
@@ -156,10 +155,10 @@ public:
 	// 끝난 탐색을 마친다. 시작 위치에서 MAGNIFIER_MOVE_TOLERANCE 넘게 벗어나지 않았으면
 	// 넓은 탐지 돋보기는 하나 쓰고 기본 돋보기는 재사용 대기시간을 시작한 뒤 true를 돌려준다.
 	bool FinishSearch(long long time_ms);
-	// 블록을 가진다. 이미 가진 블록이면 그대로 둔다.
-	void AddBlock(std::uint8_t piece) { owned_blocks_ |= 1u << piece; }
-	bool CanUseBlock(std::uint8_t piece) const { return piece < BLOCK_PIECE_COUNT && (owned_blocks_ & ~used_blocks_ & (1u << piece)) != 0; }
-	// 블록을 쓴 것으로 기록하고 그 결과로 배제된 칸을 더한다.
+	// 블록을 하나 더 가진다. 같은 블록을 여러 개 가질 수 있다.
+	void AddBlock(std::uint8_t piece) { if (block_counts_[piece] < UINT8_MAX) ++block_counts_[piece]; }
+	bool CanUseBlock(std::uint8_t piece) const { return piece < BLOCK_PIECE_COUNT && block_counts_[piece] > 0; }
+	// 그 블록을 하나 쓰고 그 결과로 배제된 칸을 더한다.
 	void UseBlock(std::uint8_t piece, std::uint64_t excluded_cells);
 	void AddKeptExcludedCells(std::uint64_t cells) { kept_excluded_cells_ |= cells; }
 	std::uint64_t GetKeptExcludedCells() const { return kept_excluded_cells_; }

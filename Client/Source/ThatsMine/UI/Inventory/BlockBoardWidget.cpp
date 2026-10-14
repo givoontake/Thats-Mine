@@ -9,6 +9,8 @@
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Interaction/BlockSubsystem.h"
 #include "Interaction/HintSubsystem.h"
 #include "Materials/MaterialInterface.h"
@@ -73,7 +75,7 @@ TSharedRef<SWidget> UBlockBoardWidget::RebuildWidget()
 			return label;
 		};
 		block_count_ = add_text(root, FText::GetEmpty(), 26, TEXT_COLOR, FVector2D(LIST_LEFT, 0.0), FVector2D(WIDTH - LIST_LEFT, 38.0));
-		add_text(root, NSLOCTEXT("Block", "Guide", "블록을 끌어 지도에 놓으세요 · 끄는 중 우클릭·휠·R로 회전"), 16, FLinearColor(0.65f, 0.60f, 0.51f), FVector2D(LIST_LEFT, 38.0), FVector2D(WIDTH - LIST_LEFT, 28.0));
+		add_text(root, NSLOCTEXT("Block", "Guide", "블록을 끌어 지도에 놓으세요 · 끄는 중 우클릭·휠·R로 회전"), 16, FLinearColor(0.65f, 0.60f, 0.51f), FVector2D(LIST_LEFT, 38.0), FVector2D(WIDTH - LIST_LEFT, 50.0))->SetAutoWrapText(true);
 		empty_text_ = add_text(root, NSLOCTEXT("Block", "Empty", "획득한 블록이 없습니다."), 22, FLinearColor(0.65f, 0.60f, 0.51f), FVector2D(LIST_LEFT, 190.0), FVector2D(WIDTH - LIST_LEFT, 36.0));
 		empty_text_->SetJustification(ETextJustify::Center);
 
@@ -107,8 +109,8 @@ TSharedRef<SWidget> UBlockBoardWidget::RebuildWidget()
 			label->SetColorAndOpacity(FSlateColor::UseForeground());
 			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
 			UCanvasPanelSlot* button_slot = confirm_panel_->AddChildToCanvas(button);
-			button_slot->SetPosition(FVector2D(65.0 + index * 220.0, 220.0));
-			button_slot->SetSize(FVector2D(200.0, 52.0));
+			button_slot->SetPosition(FVector2D(15.0 + index * 170.0, 220.0));
+			button_slot->SetSize(FVector2D(150.0, 52.0));
 			if (index == 0)
 			{
 				button->OnClicked.AddDynamic(this, &UBlockBoardWidget::ConfirmUse);
@@ -159,7 +161,13 @@ void UBlockBoardWidget::RefreshBlocks()
 {
 	const UBlockSubsystem* blocks = GetWorld()->GetSubsystem<UBlockSubsystem>();
 	usable_blocks_ = blocks ? blocks->GetUsableBlocks() : TArray<int32>();
-	block_count_->SetText(FText::Format(NSLOCTEXT("Block", "Count", "획득한 블록 · {0}개"), FText::AsNumber(usable_blocks_.Num())));
+	usable_block_counts_.Reset();
+	int32 total_count = 0;
+	for (const int32 piece : usable_blocks_)
+	{
+		total_count += usable_block_counts_.Add_GetRef(blocks->GetBlockCount(piece));
+	}
+	block_count_->SetText(FText::Format(NSLOCTEXT("Block", "Count", "획득한 블록 · {0}개"), FText::AsNumber(total_count)));
 	empty_text_->SetVisibility(usable_blocks_.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (drag_.piece != INDEX_NONE && !usable_blocks_.Contains(drag_.piece))
 	{
@@ -283,6 +291,20 @@ int32 UBlockBoardWidget::NativePaint(const FPaintArgs& args, const FGeometry& ge
 		const FIntPoint size = GetPieceSize(BLOCK_PIECES[usable_blocks_[index]]);
 		const FVector2D origin = GetSlotPosition(index) + (FVector2D(SLOT_SIZE) - FVector2D(size) * SLOT_CELL_SIZE) * 0.5;
 		draw_piece(usable_blocks_[index], 0, origin, SLOT_CELL_SIZE, usable_blocks_[index] == drag_.piece ? PIECE_COLOR * FLinearColor(1.0f, 1.0f, 1.0f, 0.3f) : PIECE_COLOR);
+	}
+	++layer;
+	// 같은 블록이 2개 이상이면 칸 오른쪽 아래에 개수를 적는다.
+	const FSlateFontInfo count_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), SLOT_COUNT_FONT_SIZE);
+	for (int32 index = 0; index < slot_count; ++index)
+	{
+		if (usable_block_counts_[index] < 2)
+		{
+			continue;
+		}
+		const FString count_text = FString::Printf(TEXT("×%d"), usable_block_counts_[index]);
+		const FVector2D text_size = FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(count_text, count_font);
+		const FVector2D text_position = GetSlotPosition(index) + FVector2D(SLOT_SIZE) - text_size - FVector2D(5.0, 3.0);
+		FSlateDrawElement::MakeText(draw_elements, layer, geometry.ToPaintGeometry(FVector2f(text_size), FSlateLayoutTransform(FVector2f(text_position))), count_text, count_font, ESlateDrawEffect::None, FLinearColor(1.0f, 0.94f, 0.79f) * tint);
 	}
 	++layer;
 

@@ -757,7 +757,7 @@ void GameRoom::GenerateHints()
 }
 
 // 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를,
-// 블록마다 BLOCK_BOX_COUNT × 글로벌 배수만큼 블록 상자를 만들어 섞고,
+// 블록마다 BLOCK_BOX_COUNT × 칸 수별 배수 × 글로벌 배수만큼 블록 상자를 만들어 섞고,
 // 그 수만큼 상자 자리를 골라 상자마다 하나씩 넣는다.
 // 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다. 배치 패킷은 상자 수에 맞춘 크기로 만든다.
 void GameRoom::PlaceBoxes(int player_count)
@@ -776,7 +776,9 @@ void GameRoom::PlaceBoxes(int player_count)
 		}
 	}
 	for (std::uint32_t piece = 0; piece < BLOCK_PIECE_COUNT; ++piece) {
-		box_contents_.insert(box_contents_.end(), BLOCK_BOX_COUNT * global_multiplier, BoxContent{ BoxContentKind::BLOCK, piece });
+		const std::size_t size_index = BLOCK_PIECES[piece].cell_count - 1;
+		const int size_multiplier = size_index < std::size(BLOCK_BOX_SIZE_MULTIPLIERS) ? BLOCK_BOX_SIZE_MULTIPLIERS[size_index] : 1;
+		box_contents_.insert(box_contents_.end(), BLOCK_BOX_COUNT * size_multiplier * global_multiplier, BoxContent{ BoxContentKind::BLOCK, piece });
 	}
 	std::mt19937 random(CreateRandomSeed());
 	std::shuffle(box_contents_.begin(), box_contents_.end(), random);
@@ -1323,7 +1325,7 @@ int GameRoom::AppendExclusionBoard(char* buffer, Player& player) const
 	return sizeof(board_p);
 }
 
-// 게임이 시작된 뒤 가진 블록을 한 번만 쓸 수 있고, 놓는 칸은 모두 판 안이며 아직 배제되지 않은 칸이어야 한다.
+// 게임이 시작된 뒤 가진 블록을 하나마다 한 번 쓸 수 있고, 놓는 칸은 모두 판 안이며 아직 배제되지 않은 칸이어야 한다.
 // 보물이 놓인 칸 안에 있으면 나머지 칸을, 없으면 놓인 칸을 배제하고, 쓴 사람에게 결과와 배제 판을 보낸다.
 void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p)
 {

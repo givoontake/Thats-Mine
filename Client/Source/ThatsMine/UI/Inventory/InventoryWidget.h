@@ -20,7 +20,7 @@ class UWrapBox;
 
 DECLARE_DELEGATE(FOnInventoryCloseRequested);
 
-// 인벤토리. 장비·아이템·힌트 탭으로 나누어 보이고, 열 때마다 힌트 탭을 먼저 보인다. 장비 탭 아래쪽에는 블록 칸을 둔다.
+// 인벤토리. 장비·아이템·힌트·블록 탭으로 나누어 보이고, 열 때마다 힌트 탭을 먼저 보인다.
 UCLASS()
 class THATSMINE_API UInventoryWidget : public UUserWidget
 {
@@ -51,6 +51,7 @@ private:
 	static constexpr int32 EQUIPMENT_TAB = 0;
 	static constexpr int32 ITEM_TAB = 1;
 	static constexpr int32 HINT_TAB = 2;
+	static constexpr int32 BLOCK_TAB = 3;
 
 	// 탭 버튼 모양과 고른 탭의 배경. 로비 메뉴 버튼과 같은 나무 모양이고, 화면을 만들 때 재질을 불러 채운다.
 	UPROPERTY(Transient)
@@ -96,6 +97,8 @@ private:
 	void SelectItemTab();
 	UFUNCTION()
 	void SelectHintTab();
+	UFUNCTION()
+	void SelectBlockTab();
 	void SelectTab(int32 tab);
 	UTextBlock* AddText(UCanvasPanel* canvas, const FText& text, int32 size, const FVector2D& position, const FVector2D& dimensions);
 	UImage* AddPanel(UCanvasPanel* canvas, const FVector2D& position, const FVector2D& dimensions);

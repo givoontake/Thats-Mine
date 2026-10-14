@@ -53,7 +53,7 @@ TArray<int32> UBlockSubsystem::GetUsableBlocks() const
 	TArray<int32> blocks;
 	for (int32 piece = 0; piece < BLOCK_PIECE_COUNT; ++piece)
 	{
-		if ((owned_blocks_ & ~used_blocks_ & (1u << piece)) != 0)
+		if (block_counts_[piece] > 0)
 		{
 			blocks.Add(piece);
 		}
@@ -77,7 +77,7 @@ void UBlockSubsystem::RequestUse(int32 piece, int32 rotation, int32 column, int3
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BLOCK_USE, payload);
 }
 
-// 내가 연 상자의 블록. 상자 열림 패킷 뒤에 이어 온다. 이미 가진 블록이어도 획득 안내는 띄운다.
+// 내가 연 상자의 블록. 상자 열림 패킷 뒤에 이어 온다. 이미 가진 블록이면 하나 더 가진다.
 void UBlockSubsystem::HandleBlockPacket(const TArray<uint8>& payload)
 {
 	S2C_BLOCK_PACKET packet;
@@ -92,15 +92,15 @@ void UBlockSubsystem::HandleBlockPacket(const TArray<uint8>& payload)
 	{
 		return;
 	}
-	const bool is_owned = (owned_blocks_ & (1u << packet.piece)) != 0;
-	owned_blocks_ |= 1u << packet.piece;
+	if (block_counts_[packet.piece] < MAX_uint8)
+	{
+		++block_counts_[packet.piece];
+	}
 	on_blocks_changed_.Broadcast();
 	if (APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
 	{
 		FInventoryHint entry;
-		entry.text = is_owned
-			? FText::Format(NSLOCTEXT("Block", "OwnedBlockText", "이미 가진 {0}칸 블록입니다"), FText::AsNumber(BLOCK_PIECES[packet.piece].cell_count))
-			: FText::Format(NSLOCTEXT("Block", "BlockText", "{0}칸 블록 · 장비 탭에서 지도에 놓아 쓸 수 있습니다"), FText::AsNumber(BLOCK_PIECES[packet.piece].cell_count));
+		entry.text = FText::Format(NSLOCTEXT("Block", "BlockText", "{0}칸 블록 · 블록 탭에서 지도에 놓아 쓸 수 있습니다"), FText::AsNumber(BLOCK_PIECES[packet.piece].cell_count));
 		character->ShowAcquirePopup(entry, NSLOCTEXT("Block", "NewBlock", "블록 획득!"), false);
 	}
 }
@@ -120,7 +120,10 @@ void UBlockSubsystem::HandleBlockResultPacket(const TArray<uint8>& payload)
 	{
 		return;
 	}
-	used_blocks_ |= 1u << packet.piece;
+	if (block_counts_[packet.piece] > 0)
+	{
+		--block_counts_[packet.piece];
+	}
 	on_blocks_changed_.Broadcast();
 	GetWorld()->GetSubsystem<UHintSubsystem>()->ShowNotice(packet.is_inside
 		? NSLOCTEXT("Block", "Inside", "블록 안에 보물이 있습니다!")

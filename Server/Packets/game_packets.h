@@ -342,7 +342,7 @@ struct C2S_BLOCK_USE_PACKET {
 	std::uint8_t row;
 };
 
-// 연 상자에 든 블록. piece는 BLOCK_PIECES 번호다. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다. 이미 가진 블록이면 더 생기지 않는다.
+// 연 상자에 든 블록. piece는 BLOCK_PIECES 번호다. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다. 이미 가진 블록이면 그 블록이 하나 더 생긴다.
 struct S2C_BLOCK_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t piece;

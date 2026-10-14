@@ -114,7 +114,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		tab_style_.SetHoveredForeground(FLinearColor::White);
 		tab_style_.SetPressedForeground(FLinearColor(1.0f, 0.84f, 0.45f));
 		selected_tab_brush_ = MakeTabBrush(TEXT("/Game/Thats_Mine/UI/Shared/MI_ButtonWoodSelected.MI_ButtonWoodSelected"));
-		const FText tab_names[] = { NSLOCTEXT("Inventory", "Equipment", "장비"), NSLOCTEXT("Inventory", "Items", "아이템"), NSLOCTEXT("Inventory", "Hints", "힌트") };
+		const FText tab_names[] = { NSLOCTEXT("Inventory", "Equipment", "장비"), NSLOCTEXT("Inventory", "Items", "아이템"), NSLOCTEXT("Inventory", "Hints", "힌트"), NSLOCTEXT("Inventory", "Blocks", "블록") };
 		for (int32 tab = 0; tab < UE_ARRAY_COUNT(tab_names); ++tab)
 		{
 			UButton* button = WidgetTree->ConstructWidget<UButton>();
@@ -131,6 +131,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		tab_buttons_[EQUIPMENT_TAB]->OnClicked.AddDynamic(this, &UInventoryWidget::SelectEquipmentTab);
 		tab_buttons_[ITEM_TAB]->OnClicked.AddDynamic(this, &UInventoryWidget::SelectItemTab);
 		tab_buttons_[HINT_TAB]->OnClicked.AddDynamic(this, &UInventoryWidget::SelectHintTab);
+		tab_buttons_[BLOCK_TAB]->OnClicked.AddDynamic(this, &UInventoryWidget::SelectBlockTab);
 		pages_ = WidgetTree->ConstructWidget<UWidgetSwitcher>();
 		UCanvasPanelSlot* pages_slot = panel->AddChildToCanvas(pages_);
 		pages_slot->SetSize(FVector2D(1200.0, 900.0));
@@ -140,6 +141,8 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		pages_->AddChild(equipment_page);
 		pages_->AddChild(item_page);
 		pages_->AddChild(hint_page);
+		UCanvasPanel* block_page = WidgetTree->ConstructWidget<UCanvasPanel>();
+		pages_->AddChild(block_page);
 
 		for (int32 index = 0; index < UE_ARRAY_COUNT(EQUIPMENT_ORDER); ++index)
 		{
@@ -159,10 +162,9 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 			ammo->SetJustification(ETextJustify::Right);
 			equipment_ammo_.Add(ammo);
 		}
-		// 장비 아래에 블록 칸을 둔다.
 		UBlockBoardWidget* block_board = WidgetTree->ConstructWidget<UBlockBoardWidget>();
-		UCanvasPanelSlot* block_slot = equipment_page->AddChildToCanvas(block_board);
-		block_slot->SetPosition(FVector2D(100.0, 404.0));
+		UCanvasPanelSlot* block_slot = block_page->AddChildToCanvas(block_board);
+		block_slot->SetPosition(FVector2D(100.0, 196.0));
 		block_slot->SetSize(FVector2D(UBlockBoardWidget::WIDTH, UBlockBoardWidget::HEIGHT));
 		// 아이템은 두 줄로 나란히 놓는다.
 		item_count_ = AddText(item_page, FText::GetEmpty(), 28, FVector2D(100.0, 196.0), FVector2D(980.0, 44.0));
@@ -195,6 +197,11 @@ void UInventoryWidget::SelectItemTab()
 void UInventoryWidget::SelectHintTab()
 {
 	SelectTab(HINT_TAB);
+}
+
+void UInventoryWidget::SelectBlockTab()
+{
+	SelectTab(BLOCK_TAB);
 }
 
 // 고른 탭 버튼은 선택 배경과 눌림 글자색으로 칠하고, 그 탭 화면을 보인다.

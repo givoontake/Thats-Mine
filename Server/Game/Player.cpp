@@ -211,14 +211,13 @@ void Player::ResetItems()
 
 void Player::UseBlock(std::uint8_t piece, std::uint64_t excluded_cells)
 {
-	used_blocks_ |= 1u << piece;
+	--block_counts_[piece];
 	kept_excluded_cells_ |= excluded_cells;
 }
 
 void Player::ResetBlocks()
 {
-	owned_blocks_ = 0;
-	used_blocks_ = 0;
+	block_counts_.fill(0);
 	kept_excluded_cells_ = 0;
 	sent_exclusion_board_ = 0;
 }
