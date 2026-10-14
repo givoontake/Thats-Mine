@@ -112,7 +112,7 @@ void UHelpWidget::RefreshContent()
 	AddLine(NSLOCTEXT("Help", "Goal", "맵 어딘가에 묻힌 보물을 가장 먼저 곡괭이로 파내면 승리합니다."));
 	AddLine(NSLOCTEXT("Help", "TimeLimit", "제한시간은 2시간이고 남은 시간은 화면 오른쪽 위에 보입니다. 아무도 찾지 못하면 보물 위치가 공개되고 방으로 돌아갑니다."));
 	AddLine(NSLOCTEXT("Help", "PublicHint", "일정 시간마다 모든 플레이어의 지도에 보물이 없는 같은 지역 하나가 공개됩니다."));
-	AddLine(NSLOCTEXT("Help", "Pickaxe", "곡괭이는 최대 3번까지 휘두를 수 있고, 쓴 횟수는 시간이 지나면 다시 찹니다."));
+	AddLine(NSLOCTEXT("Help", "Pickaxe", "곡괭이는 최대 3번까지 휘두를 수 있고, 쓴 횟수는 시간이 지나면 다시 찹니다. 곡괭이를 들면 보물을 파낼 수 있는 범위가 발밑에 원으로 보입니다."));
 
 	AddHeading(NSLOCTEXT("Help", "HintHeading", "힌트와 상자"));
 	AddLine(NSLOCTEXT("Help", "Boxes", "땅 위의 나무 상자와 나무 위·공중의 선물 상자를 열면 힌트, 탄약, 아이템을 얻습니다. 선물 상자는 총으로 쏴서도 열 수 있습니다."));

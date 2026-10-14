@@ -48,7 +48,7 @@ constexpr float TREASURE_RADIUS = 85.0f; // 보물을 감싸는 수평 반경(cm
 constexpr float TREASURE_HALF_HEIGHT = 65.0f; // 보물 높이의 절반(cm)
 constexpr int TREASURE_PLACE_ATTEMPTS = 10000; // 조건에 맞는 위치를 찾을 때까지 다시 뽑는 최대 횟수
 // 보물 발견. 게임이 시작된 뒤 곡괭이를 휘두를 때 발밑(캡슐 아래 끝)이 보물 바닥 가운데에서 이 거리(cm) 안이면 보물을 발견한다.
-constexpr float TREASURE_DIG_DISTANCE = 150.0f;
+constexpr float TREASURE_DIG_DISTANCE = 300.0f;
 constexpr int GAME_END_WAIT_MS = 10000; // 보물을 발견한 뒤 게임을 끝내고 방으로 돌아갈 때까지 기다리는 시간
 constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
 
@@ -126,12 +126,12 @@ constexpr int ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[] = { 60000, 30000 }; // 곡괭�
 constexpr float ITEM_STUN_GAUGE_DECAYS_PER_SECOND[] = { 6.0f, 5.0f }; // 기절 게이지 초당 감소량
 constexpr int ITEM_STUN_GAUGE_DECAY_DELAYS_MS[] = { 3000, 4000 }; // 기절 게이지 감소 대기 시간
 constexpr int ITEM_STUN_PROTECTIONS_MS[] = { 60000, 45000 }; // 기절이 끝난 뒤 보호 시간
-constexpr float ITEM_MAGNIFIER_RADII[] = { 5000.0f, 4500.0f }; // 기본 돋보기 탐색 반경(cm)
-constexpr int ITEM_MAGNIFIER_COOLDOWNS_MS[] = { 120000, 150000 }; // 기본 돋보기 재사용 대기시간
+constexpr float ITEM_MAGNIFIER_RADII[] = { 3000.0f, 4000.0f }; // 기본 돋보기 탐색 반경(cm). 좁을수록 찾았을 때 보물 자리를 더 좁힌다.
+constexpr int ITEM_MAGNIFIER_COOLDOWNS_MS[] = { 80000, 100000 }; // 기본 돋보기 재사용 대기시간
 // 돋보기 탐색. 클릭하면 MAGNIFIER_SEARCH_MS 동안 움직이지 않고 탐색한 뒤, 탐색을 시작한 발밑에서 보물 바닥까지 거리가 반경 안인지 알려 준다.
 // 기본 돋보기는 모두 처음부터 가지고 횟수 제한 없이 쓰지만, 탐색을 마칠 때마다 재사용 대기시간이 지나야 다시 쓸 수 있다. 넓은 탐지 돋보기는 1회용이다.
-constexpr float MAGNIFIER_RADIUS = 4000.0f; // 기본 돋보기 탐색 반경(cm)
-constexpr int MAGNIFIER_COOLDOWN_MS = 180000; // 기본 돋보기 재사용 대기시간
+constexpr float MAGNIFIER_RADIUS = 5000.0f; // 기본 돋보기 탐색 반경(cm)
+constexpr int MAGNIFIER_COOLDOWN_MS = 120000; // 기본 돋보기 재사용 대기시간
 constexpr float WIDE_MAGNIFIER_RADII[] = { 20000.0f, 10000.0f }; // 넓은 탐지 돋보기 탐색 반경(cm)
 constexpr int MAGNIFIER_SEARCH_MS = 2000;
 // 못 찾은 탐색으로 칸을 배제할 때 칸의 땅 높이 범위를 위아래로 넓히는 여유(cm). 땅 높이를 MAGNIFIER_HEIGHT_SAMPLE_STEP 간격으로만 재서 생기는 오차를 덮는다.

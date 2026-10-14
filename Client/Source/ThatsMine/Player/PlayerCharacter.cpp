@@ -8,6 +8,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/DecalComponent.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "Flow/ClientStateSubsystem.h"
@@ -15,6 +16,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "InputActionValue.h"
+#include "Materials/MaterialInterface.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
@@ -55,6 +57,8 @@ static constexpr double CAMERA_GROUND_CLEARANCE = 100.0;
 
 // 기절 게이지를 화면 아래 끝에서 띄우는 거리
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
+// 곡괭이 범위 데칼을 발밑 위아래로 투영하는 거리(cm). 비탈에서도 원이 끊기지 않게 한다.
+static constexpr double PICKAXE_RANGE_DECAL_DEPTH = 300.0;
 // 줄어드는 기절 게이지 표시를 고치는 간격(초)
 static constexpr float STUN_GAUGE_DISPLAY_INTERVAL = 0.05f;
 // 보호 남은 시간 표시를 고치는 간격(초)
@@ -533,6 +537,10 @@ void APlayerCharacter::UpdateWeaponVisuals()
 			mesh->SetVisibility(weapon == current_weapon_);
 		}
 	}
+	if (pickaxe_range_decal_)
+	{
+		pickaxe_range_decal_->SetVisibility(current_weapon_ == EWeaponType::PICKAXE);
+	}
 	UpdateEquipmentDisplay();
 }
 
@@ -968,6 +976,18 @@ void APlayerCharacter::PawnClientRestart()
 			GetWorldTimerManager().SetTimer(interact_prompt_timer_, this, &APlayerCharacter::UpdateInteractPrompt, INTERACT_PROMPT_INTERVAL, true);
 		}
 	}
+	if (!pickaxe_range_decal_ && controller && controller->IsLocalController())
+	{
+		// 발밑에서 아래를 보게 돌려 땅에 반지름 TREASURE_DIG_DISTANCE의 원을 그린다. 곡괭이를 들 때만 보인다.
+		pickaxe_range_decal_ = NewObject<UDecalComponent>(this);
+		pickaxe_range_decal_->SetupAttachment(GetCapsuleComponent());
+		pickaxe_range_decal_->SetDecalMaterial(LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Thats_Mine/Effects/M_PickaxeRangeDecal.M_PickaxeRangeDecal")));
+		pickaxe_range_decal_->DecalSize = FVector(PICKAXE_RANGE_DECAL_DEPTH, TREASURE_DIG_DISTANCE, TREASURE_DIG_DISTANCE);
+		pickaxe_range_decal_->SetRelativeLocation(FVector(0.0, 0.0, -GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight()));
+		pickaxe_range_decal_->SetRelativeRotation(FRotator(-90.0, 0.0, 0.0));
+		pickaxe_range_decal_->SetVisibility(current_weapon_ == EWeaponType::PICKAXE);
+		pickaxe_range_decal_->RegisterComponent();
+	}
 
 #if WITH_LOCAL_HITBOX_DEBUG
 	// 로컬 플레이에서는 내 히트박스를 테두리로 그려 확인한다.
@@ -1387,7 +1407,7 @@ static FText GetItemText(EItemKind kind, EHintGrade grade)
 	case EItemKind::STUN_PROTECTION:
 		return FText::Format(NSLOCTEXT("Item", "StunProtection", "기절 후 보호 시간 {0}증가"), degree);
 	case EItemKind::MAGNIFIER_RADIUS:
-		return FText::Format(NSLOCTEXT("Item", "MagnifierRadius", "돋보기 탐색 범위 {0}증가"), degree);
+		return FText::Format(NSLOCTEXT("Item", "MagnifierRadius", "돋보기 탐색 범위 {0}감소"), degree);
 	case EItemKind::MAGNIFIER_COOLDOWN:
 		return FText::Format(NSLOCTEXT("Item", "MagnifierCooldown", "돋보기 재사용 대기시간 {0}감소"), degree);
 	case EItemKind::WIDE_MAGNIFIER:

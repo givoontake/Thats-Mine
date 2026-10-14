@@ -24,6 +24,7 @@ class USearchGaugeWidget;
 class UStunGaugeWidget;
 class UHintPopupWidget;
 class UInteractPromptWidget;
+class UDecalComponent;
 class AHintBox;
 class UUserWidget;
 struct FInputActionValue;
@@ -247,6 +248,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInteractPromptWidget> interact_prompt_widget_;
+
+	// 곡괭이를 든 내 캐릭터 발밑에 보물 발견 범위를 그리는 데칼
+	UPROPERTY(Transient)
+	TObjectPtr<UDecalComponent> pickaxe_range_decal_;
 	FTimerHandle interact_prompt_timer_;
 
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
