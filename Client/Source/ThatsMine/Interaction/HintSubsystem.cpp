@@ -114,7 +114,7 @@ FString UHintSubsystem::BuildSentence(const HINT_ENTRY& hint) const
 		return FString::Format(*FindText(TEXT("NEAREST_TOWER")), { FindText(TEXT("TOWER_") + target) });
 	case HintKind::OBJECT_COUNT:
 	{
-		const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADIUS / 100.0f));
+		const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADII[hint.grade] / 100.0f));
 		const FString name = FindText(TEXT("OBJECT_") + target);
 		if (hint.detail > 0)
 		{

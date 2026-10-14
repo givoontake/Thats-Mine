@@ -11,8 +11,8 @@ struct TowerPlacement {
 	TowerKind kind;
 };
 
-// 놓인 탑 중 (x, y)에서 수평 거리로 가장 가까운 탑. 놓인 탑이 없으면 nullptr이다.
-inline const TowerPlacement* FindNearestTower(const std::vector<TowerPlacement>& tower_placements, const std::vector<DirectX::XMFLOAT3>& tower_candidates, float x, float y)
+// 놓인 탑 중 (x, y, z)에서 탑 바닥 가운데까지 거리로 가장 가까운 탑. 놓인 탑이 없으면 nullptr이다.
+inline const TowerPlacement* FindNearestTower(const std::vector<TowerPlacement>& tower_placements, const std::vector<DirectX::XMFLOAT3>& tower_candidates, float x, float y, float z)
 {
 	const TowerPlacement* nearest = nullptr;
 	float nearest_distance_sq = std::numeric_limits<float>::max();
@@ -20,7 +20,8 @@ inline const TowerPlacement* FindNearestTower(const std::vector<TowerPlacement>&
 		const DirectX::XMFLOAT3& location = tower_candidates[placement.candidate_index];
 		const float dx = location.x - x;
 		const float dy = location.y - y;
-		const float distance_sq = dx * dx + dy * dy;
+		const float dz = location.z - z;
+		const float distance_sq = dx * dx + dy * dy + dz * dz;
 		if (distance_sq < nearest_distance_sq) {
 			nearest_distance_sq = distance_sq;
 			nearest = &placement;

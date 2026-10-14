@@ -48,9 +48,9 @@ class Player
 	std::array<int, std::size(WIDE_MAGNIFIER_RADII)> wide_magnifier_counts_{};
 	// 기본 돋보기를 다시 쓸 수 있게 되는 시각(ms). 0이면 바로 쓸 수 있다.
 	long long magnifier_ready_ms_ = 0;
-	// 진행 중인 돋보기 탐색의 등급(BASIC_MAGNIFIER_GRADE면 기본 돋보기), 시작 위치(cm, x·y), 끝나는 시각. 끝나는 시각이 0이면 탐색 중이 아니다.
+	// 진행 중인 돋보기 탐색의 등급(BASIC_MAGNIFIER_GRADE면 기본 돋보기), 시작 위치(cm, x·y와 발밑 z), 끝나는 시각. 끝나는 시각이 0이면 탐색 중이 아니다.
 	std::uint8_t search_grade_ = 0;
-	float search_location_[2] = {};
+	float search_location_[3] = {};
 	long long search_end_ms_ = 0;
 	// 이번 게임에서 얻은 블록과 쓴 블록. BLOCK_PIECES 번호 자리의 비트가 켜져 있다.
 	std::uint32_t owned_blocks_ = 0;

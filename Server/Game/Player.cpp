@@ -234,6 +234,7 @@ bool Player::StartSearch(std::uint8_t grade, long long time_ms)
 	search_grade_ = grade;
 	search_location_[0] = move_state_.location[0];
 	search_location_[1] = move_state_.location[1];
+	search_location_[2] = move_state_.location[2] - CHARACTER_CAPSULE_HALF_HEIGHT;
 	search_end_ms_ = time_ms + MAGNIFIER_SEARCH_MS;
 	return true;
 }

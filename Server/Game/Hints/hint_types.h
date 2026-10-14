@@ -7,10 +7,11 @@
 #include "game_packets.h"
 #include "settings.h"
 
-// 힌트 물체 트리의 점. 물체 바닥 위치의 지도 좌표(cm)와 종류다.
+// 힌트 물체 트리의 점. 물체 바닥 위치의 지도 좌표·높이(cm)와 종류다.
 struct HintPoint {
 	float x;
 	float y;
+	float z;
 	HintObjectKind kind;
 };
 
@@ -25,7 +26,7 @@ constexpr HintObjectKind GetBaseHintObjectKind(HintObjectKind kind)
 	return kind;
 }
 
-// 가까운 종류 하나와 그 종류 물체 중 가장 가까운 것까지의 수평 거리(cm)
+// 가까운 종류 하나와 그 종류 물체 중 가장 가까운 것까지의 거리(cm)
 struct HintKindDistance {
 	HintObjectKind kind;
 	float distance;

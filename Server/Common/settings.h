@@ -47,27 +47,25 @@ constexpr float MAP_MAX[2] = { 100650.0f, 100700.0f };
 constexpr float TREASURE_RADIUS = 85.0f; // 보물을 감싸는 수평 반경(cm). 이 사각형 안의 땅이 모두 있어야 하고, 이 반경의 구가 배치물과 겹치면 다시 뽑는다.
 constexpr float TREASURE_HALF_HEIGHT = 65.0f; // 보물 높이의 절반(cm)
 constexpr int TREASURE_PLACE_ATTEMPTS = 10000; // 조건에 맞는 위치를 찾을 때까지 다시 뽑는 최대 횟수
-// 보물 발견. 게임이 시작된 뒤 곡괭이를 휘두를 때 캡슐 중심이 보물 바닥 가운데에서 이 수평 거리(cm) 안이면 보물을 발견한다.
+// 보물 발견. 게임이 시작된 뒤 곡괭이를 휘두를 때 발밑(캡슐 아래 끝)이 보물 바닥 가운데에서 이 거리(cm) 안이면 보물을 발견한다.
 constexpr float TREASURE_DIG_DISTANCE = 150.0f;
 constexpr int GAME_END_WAIT_MS = 10000; // 보물을 발견한 뒤 게임을 끝내고 방으로 돌아갈 때까지 기다리는 시간
 constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
 
 // 힌트 "보물에서 가까운 물체 종류" 순위에 담는 종류 수
 constexpr int HINT_NEAREST_KIND_COUNT = 3;
-// 개수 힌트. 판마다 물체 종류마다 하나씩, 보물에서 이 수평 거리(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
-// 배제 영역은 다른 힌트보다 촘촘한 HINT_OBJECT_COUNT_GRID_STEP 간격 격자 지점으로 센다.
-constexpr float HINT_OBJECT_COUNT_RADIUS = 3000.0f;
-constexpr float HINT_OBJECT_COUNT_GRID_STEP = 500.0f;
+// 개수 힌트. 판마다 물체 종류마다 등급마다 하나씩, 보물 바닥에서 그 등급 반경(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
+// 등급은 반경으로 정해지므로 배제 영역 순위로 정하는 등급에서 뺀다.
+constexpr float HINT_OBJECT_COUNT_RADII[] = { 1000.0f, 2000.0f, 3000.0f, 5000.0f }; // 등급별 반경(S, A, B, C 순서)
 // 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
 constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
 // 보임 힌트("~에서 보물이 묻힌 곳이 보인다")를 만들지. 당분간 끈다.
 constexpr bool HINT_VIEW_ENABLED = false;
 // 힌트의 "보물이 묻힌 자리가 보인다" 판정. 영역의 판정 위치(발밑 땅 + 3인칭 카메라 높이 140cm)에서 보물 자리 지면까지 그은 선이 하나라도 막히지 않으면 보인다.
 constexpr float PLACE_VIEW_END_MARGIN = 30.0f; // 선을 보물 자리 지면 이만큼(cm) 앞에서 멈춘다. 목표 지면 자체에 걸리지 않게 하고, 등진 경사면에 묻힌 자리는 땅 속을 지나 막히게 한다.
-// 힌트 등급. 판마다 힌트를 점수(배제 영역 × 가중치) 순으로 정렬해 위에서 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
+// 힌트 등급. 방향 힌트는 배제 영역 순으로 위 절반은 S, 나머지는 A다.
+// 방향·개수 힌트를 뺀 힌트는 배제 영역 순으로 정렬해 위에서 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
 // 배제 영역은 보물 가능 땅 중 그 힌트가 틀린 땅의 비율이고, 보물 가능 땅을 HINT_EXCLUSION_GRID_STEP 간격 격자 지점으로 세어 구한다.
-constexpr float HINT_DIRECTION_WEIGHT = 1.0f; // 방향 힌트 가중치
-constexpr float HINT_OTHER_WEIGHT = 0.8f; // 방향 외 힌트 가중치
 constexpr int HINT_GRADE_S_PERCENT = 10;
 constexpr int HINT_GRADE_A_PERCENT = 20;
 constexpr int HINT_GRADE_B_PERCENT = 30;
@@ -130,12 +128,15 @@ constexpr int ITEM_STUN_GAUGE_DECAY_DELAYS_MS[] = { 3000, 4000 }; // 기절 게�
 constexpr int ITEM_STUN_PROTECTIONS_MS[] = { 60000, 45000 }; // 기절이 끝난 뒤 보호 시간
 constexpr float ITEM_MAGNIFIER_RADII[] = { 5000.0f, 4500.0f }; // 기본 돋보기 탐색 반경(cm)
 constexpr int ITEM_MAGNIFIER_COOLDOWNS_MS[] = { 120000, 150000 }; // 기본 돋보기 재사용 대기시간
-// 돋보기 탐색. 클릭하면 MAGNIFIER_SEARCH_MS 동안 움직이지 않고 탐색한 뒤, 탐색을 시작한 위치에서 보물까지 수평 거리가 반경 안인지 알려 준다.
+// 돋보기 탐색. 클릭하면 MAGNIFIER_SEARCH_MS 동안 움직이지 않고 탐색한 뒤, 탐색을 시작한 발밑에서 보물 바닥까지 거리가 반경 안인지 알려 준다.
 // 기본 돋보기는 모두 처음부터 가지고 횟수 제한 없이 쓰지만, 탐색을 마칠 때마다 재사용 대기시간이 지나야 다시 쓸 수 있다. 넓은 탐지 돋보기는 1회용이다.
 constexpr float MAGNIFIER_RADIUS = 4000.0f; // 기본 돋보기 탐색 반경(cm)
 constexpr int MAGNIFIER_COOLDOWN_MS = 180000; // 기본 돋보기 재사용 대기시간
 constexpr float WIDE_MAGNIFIER_RADII[] = { 20000.0f, 10000.0f }; // 넓은 탐지 돋보기 탐색 반경(cm)
 constexpr int MAGNIFIER_SEARCH_MS = 2000;
+// 못 찾은 탐색으로 칸을 배제할 때 칸의 땅 높이 범위를 위아래로 넓히는 여유(cm). 땅 높이를 MAGNIFIER_HEIGHT_SAMPLE_STEP 간격으로만 재서 생기는 오차를 덮는다.
+constexpr float MAGNIFIER_HEIGHT_MARGIN = 300.0f;
+constexpr float MAGNIFIER_HEIGHT_SAMPLE_STEP = 500.0f;
 constexpr float MAGNIFIER_MOVE_TOLERANCE = 100.0f; // 탐색이 끝날 때 시작 위치에서 벗어나도 되는 수평 거리(cm). 벗어나면 탐색을 취소하고 돋보기를 쓰지 않은 것으로 본다.
 
 // 블록 상자. 블록(block_pieces.h)마다 등급과 상관없이 BLOCK_BOX_COUNT × 글로벌 배수만큼 상자를 만든다. 얻은 블록은 그 게임 동안 아무 때나 한 번 쓸 수 있고 기절해도 잃지 않는다.

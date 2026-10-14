@@ -24,7 +24,7 @@
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
-// 배제 판의 칸마다 x·y 범위(cm)를 is_covered(x0, x1, y0, y1)에 넘겨 참인 칸을 모은다.
+// 배제 판의 칸마다 칸 번호와 x·y 범위(cm)를 is_covered(cell, x0, x1, y0, y1)에 넘겨 참인 칸을 모은다.
 template <typename CoverCheck>
 static std::uint64_t CollectCoveredCells(const CoverCheck& is_covered)
 {
@@ -33,7 +33,8 @@ static std::uint64_t CollectCoveredCells(const CoverCheck& is_covered)
 		const float x0 = MAP_MIN[0] + row * BLOCK_CELL_SIZE_X;
 		for (int column = 0; column < BLOCK_GRID_SIZE; ++column) {
 			const float y1 = MAP_MAX[1] - column * BLOCK_CELL_SIZE_Y;
-			if (is_covered(x0, x0 + BLOCK_CELL_SIZE_X, y1 - BLOCK_CELL_SIZE_Y, y1)) cells |= 1ULL << (row * BLOCK_GRID_SIZE + column);
+			const int cell = row * BLOCK_GRID_SIZE + column;
+			if (is_covered(cell, x0, x0 + BLOCK_CELL_SIZE_X, y1 - BLOCK_CELL_SIZE_Y, y1)) cells |= 1ULL << cell;
 		}
 	}
 	return cells;
@@ -695,41 +696,57 @@ void GameRoom::PlaceTreasure()
 	std::cerr << "Treasure place fail.. " << std::endl;
 }
 
-// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑, 물체 종류마다 개수 순서다. 보임은 HINT_VIEW_ENABLED일 때만 만든다.
-// 등급은 힌트마다 점수(배제 영역 × 가중치)를 매겨 높은 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
+// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑, 물체 종류마다 등급마다 개수 순서다. 보임은 HINT_VIEW_ENABLED일 때만 만든다.
+// 거리는 보물 바닥에서 잰다. 개수 힌트의 등급은 반경으로 정해져 있고, 방향 힌트는 배제 영역 순으로 위 절반은 S, 나머지는 A다.
+// 나머지 힌트는 배제 영역 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
 void GameRoom::GenerateHints()
 {
 	const float x = treasure_placement_.location.x;
 	const float y = treasure_placement_.location.y;
+	const float z = treasure_placement_.location.z;
 	hints_ = server_->GetDirectionHintData().JudgeDirections(x, y);
+	const std::size_t direction_hint_count = hints_.size();
 	if (HINT_VIEW_ENABLED) {
 		const std::vector<HINT_ENTRY> view_hints = server_->GetViewHintData().JudgeViews(server_->GetMapData(), x, y);
 		hints_.insert(hints_.end(), view_hints.begin(), view_hints.end());
 	}
-	const NearestHintKinds nearest_kinds = server_->GetHintObjectTree().FindNearestKinds(x, y);
+	const NearestHintKinds nearest_kinds = server_->GetHintObjectTree().FindNearestKinds(x, y, z);
 	for (std::size_t rank = 0; rank < nearest_kinds.count; ++rank) {
 		hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_OBJECT), static_cast<std::uint8_t>(nearest_kinds.kinds[rank].kind), static_cast<std::uint8_t>(rank), true, 0 });
 	}
 	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
-	const TowerPlacement* nearest_tower = FindNearestTower(tower_placements_, tower_candidates, x, y);
+	const TowerPlacement* nearest_tower = FindNearestTower(tower_placements_, tower_candidates, x, y, z);
 	if (nearest_tower) hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_TOWER), static_cast<std::uint8_t>(nearest_tower->kind), 0, true, 0 });
-	const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, HINT_OBJECT_COUNT_RADIUS);
-	for (std::size_t kind = 0; kind < object_counts.size(); ++kind) {
-		hints_.push_back({ static_cast<std::uint8_t>(HintKind::OBJECT_COUNT), static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)), true, 0 });
+	const std::size_t graded_hint_count = hints_.size();
+	for (std::uint8_t grade = 0; grade < std::size(HINT_OBJECT_COUNT_RADII); ++grade) {
+		const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, z, HINT_OBJECT_COUNT_RADII[grade]);
+		for (std::size_t kind = 0; kind < object_counts.size(); ++kind) {
+			hints_.push_back({ static_cast<std::uint8_t>(HintKind::OBJECT_COUNT), static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)), true, grade });
+		}
 	}
 
+	// 힌트 번호 [begin, end)를 배제 영역이 큰 순서로 정렬해 돌려준다.
 	const HintExclusionData& exclusion_data = server_->GetHintExclusionData();
-	std::vector<std::pair<float, std::size_t>> scores; // 점수, 힌트 번호
-	scores.reserve(hints_.size());
-	for (std::size_t index = 0; index < hints_.size(); ++index) {
-		const HINT_ENTRY& hint = hints_[index];
-		const float exclusion = hint.kind == static_cast<std::uint8_t>(HintKind::NEAREST_TOWER)
-			? exclusion_data.GetNearestTowerExclusion(static_cast<TowerKind>(hint.target), tower_placements_, tower_candidates)
-			: exclusion_data.GetExclusion(hint);
-		const float weight = hint.kind == static_cast<std::uint8_t>(HintKind::DIRECTION) ? HINT_DIRECTION_WEIGHT : HINT_OTHER_WEIGHT;
-		scores.push_back({ exclusion * weight, index });
+	const auto sort_by_exclusion = [&](std::size_t begin, std::size_t end)
+	{
+		std::vector<std::pair<float, std::size_t>> scores; // 배제 영역, 힌트 번호
+		scores.reserve(end - begin);
+		for (std::size_t index = begin; index < end; ++index) {
+			const HINT_ENTRY& hint = hints_[index];
+			const float exclusion = hint.kind == static_cast<std::uint8_t>(HintKind::NEAREST_TOWER)
+				? exclusion_data.GetNearestTowerExclusion(static_cast<TowerKind>(hint.target), tower_placements_, tower_candidates)
+				: exclusion_data.GetExclusion(hint);
+			scores.push_back({ exclusion, index });
+		}
+		std::sort(scores.begin(), scores.end(), [](const std::pair<float, std::size_t>& a, const std::pair<float, std::size_t>& b) { return a.first > b.first; });
+		return scores;
+	};
+	const std::vector<std::pair<float, std::size_t>> direction_scores = sort_by_exclusion(0, direction_hint_count);
+	for (std::size_t order = 0; order < direction_scores.size(); ++order) {
+		const HintGrade grade = order < (direction_scores.size() + 1) / 2 ? HintGrade::S : HintGrade::A;
+		hints_[direction_scores[order].second].grade = static_cast<std::uint8_t>(grade);
 	}
-	std::sort(scores.begin(), scores.end(), [](const std::pair<float, std::size_t>& a, const std::pair<float, std::size_t>& b) { return a.first > b.first; });
+	const std::vector<std::pair<float, std::size_t>> scores = sort_by_exclusion(direction_hint_count, graded_hint_count);
 	const std::size_t s_end = scores.size() * HINT_GRADE_S_PERCENT / 100;
 	const std::size_t a_end = scores.size() * (HINT_GRADE_S_PERCENT + HINT_GRADE_A_PERCENT) / 100;
 	const std::size_t b_end = scores.size() * (HINT_GRADE_S_PERCENT + HINT_GRADE_A_PERCENT + HINT_GRADE_B_PERCENT) / 100;
@@ -1249,8 +1266,9 @@ void GameRoom::ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& req
 }
 
 // 탐색 시간이 끝난 플레이어의 탐색을 마친다. 시작 위치에서 벗어나지 않았으면 돋보기를 쓰고,
-// 시작 위치에서 보물까지 수평 거리가 탐색 반경 안인지 탐색한 사람에게만 보낸다.
-// 찾았으면 원 밖, 못 찾았으면 원 안이 칸 전체를 덮는 칸을 배제하고, 배제 판이 바뀌면 결과 뒤에 이어 보낸다.
+// 시작한 발밑에서 보물 바닥까지 거리가 탐색 반경 안인지 탐색한 사람에게만 보낸다.
+// 찾았으면 구 밖, 못 찾았으면 구 안이 칸 전체를 덮는 칸을 배제하고, 배제 판이 바뀌면 결과 뒤에 이어 보낸다.
+// 칸 안 땅 높이는 범위(여유를 더한 최솟값~최댓값)로만 알아서, 칸의 가장 가까운·먼 수평 거리와 높이 범위의 가장 가까운·먼 높이 차로 판정한다.
 void GameRoom::ProcessSearches()
 {
 	for (auto& room_player : room_players_) {
@@ -1260,14 +1278,31 @@ void GameRoom::ProcessSearches()
 		result_p.header = { static_cast<std::uint16_t>(sizeof(result_p)), S2C_SEARCH_RESULT };
 		result_p.grade = room_player.GetSearchGrade();
 		result_p.radius = room_player.GetSearchRadius();
-		result_p.is_found = std::hypot(treasure_placement_.location.x - location[0], treasure_placement_.location.y - location[1]) <= result_p.radius;
+		const float dx = treasure_placement_.location.x - location[0];
+		const float dy = treasure_placement_.location.y - location[1];
+		const float dz = treasure_placement_.location.z - location[2];
+		const float radius_sq = result_p.radius * result_p.radius;
+		result_p.is_found = dx * dx + dy * dy + dz * dz <= radius_sq;
 		result_p.location[0] = location[0];
 		result_p.location[1] = location[1];
-		room_player.AddKeptExcludedCells(CollectCoveredCells([&result_p](float x0, float x1, float y0, float y1) {
-			const float cx = result_p.location[0];
-			const float cy = result_p.location[1];
-			if (result_p.is_found) return std::hypot(std::clamp(cx, x0, x1) - cx, std::clamp(cy, y0, y1) - cy) > result_p.radius;
-			return std::hypot(std::max(std::abs(x0 - cx), std::abs(x1 - cx)), std::max(std::abs(y0 - cy), std::abs(y1 - cy))) <= result_p.radius;
+		const HintExclusionData& exclusion_data = server_->GetHintExclusionData();
+		room_player.AddKeptExcludedCells(CollectCoveredCells([&](int cell, float x0, float x1, float y0, float y1) {
+			const float cx = location[0];
+			const float cy = location[1];
+			const float cz = location[2];
+			const DirectX::XMFLOAT2& heights = exclusion_data.GetCellHeightRange(cell);
+			const float low = heights.x - MAGNIFIER_HEIGHT_MARGIN;
+			const float high = heights.y + MAGNIFIER_HEIGHT_MARGIN;
+			if (result_p.is_found) {
+				const float near_x = std::clamp(cx, x0, x1) - cx;
+				const float near_y = std::clamp(cy, y0, y1) - cy;
+				const float near_z = std::max({ 0.0f, low - cz, cz - high });
+				return near_x * near_x + near_y * near_y + near_z * near_z > radius_sq;
+			}
+			const float far_x = std::max(std::abs(x0 - cx), std::abs(x1 - cx));
+			const float far_y = std::max(std::abs(y0 - cy), std::abs(y1 - cy));
+			const float far_z = std::max(std::abs(low - cz), std::abs(high - cz));
+			return far_x * far_x + far_y * far_y + far_z * far_z <= radius_sq;
 		}));
 		char buffer[sizeof(result_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
 		std::memcpy(buffer, &result_p, sizeof(result_p));
@@ -1312,7 +1347,10 @@ void GameRoom::DigTreasure(const Player& digger)
 {
 	if (!is_game_started_ || game_end_ms_ != 0 || !digger.HasMoveState()) return;
 	const float* location = digger.GetMoveState().location;
-	if (std::hypot(location[0] - treasure_placement_.location.x, location[1] - treasure_placement_.location.y) > TREASURE_DIG_DISTANCE) return;
+	const float dx = location[0] - treasure_placement_.location.x;
+	const float dy = location[1] - treasure_placement_.location.y;
+	const float dz = location[2] - CHARACTER_CAPSULE_HALF_HEIGHT - treasure_placement_.location.z;
+	if (dx * dx + dy * dy + dz * dz > TREASURE_DIG_DISTANCE * TREASURE_DIG_DISTANCE) return;
 	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
 	S2C_TREASURE_FOUND_PACKET found_p;
 	found_p.header = { static_cast<std::uint16_t>(sizeof(found_p)), S2C_TREASURE_FOUND };

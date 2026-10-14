@@ -207,7 +207,8 @@ struct S2C_BOX_LAYOUT_PACKET {
 // VIEW: target은 영역 번호, is_true면 그 영역에서 보물이 묻힌 자리가 보인다.
 // NEAREST_OBJECT: target은 HintObjectKind, detail은 순위(0이 가장 가깝다), is_true는 항상 참이다.
 // NEAREST_TOWER: target은 TowerKind, is_true는 항상 참이다.
-// OBJECT_COUNT: target은 HintObjectKind, detail은 보물에서 수평 HINT_OBJECT_COUNT_RADIUS 안에 있는 그 종류 물체 수(최대 255)다. is_true는 항상 참이다.
+// OBJECT_COUNT: target은 HintObjectKind, detail은 보물 바닥에서 등급 반경(HINT_OBJECT_COUNT_RADII) 안에 있는 그 종류 물체 수(최대 255)다. is_true는 항상 참이다.
+// 거리는 모두 높이까지 넣은 3차원 거리다.
 // grade는 HintGrade다.
 struct HINT_ENTRY {
 	std::uint8_t kind;
@@ -315,7 +316,7 @@ struct C2S_SEARCH_PACKET {
 };
 
 // 끝난 돋보기 탐색의 결과. 탐색한 사람에게만 보낸다. grade는 탐색 요청과 같은 값이고, 위치는 서버가 탐색 시작을 받았을 때의 캡슐 중심(cm, x·y)이다.
-// is_found면 그 위치에서 반경(cm) 안에 보물이 있다. 이 결과를 보낼 때 넓은 탐지 돋보기는 하나 쓰고, 기본 돋보기는 재사용 대기시간을 시작한다.
+// is_found면 그때 발밑에서 반경(cm) 안에 보물 바닥이 있다. 이 결과를 보낼 때 넓은 탐지 돋보기는 하나 쓰고, 기본 돋보기는 재사용 대기시간을 시작한다.
 struct S2C_SEARCH_RESULT_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t grade;

@@ -86,13 +86,13 @@ bool HintObjectTree::Build(const MapData& map)
 		if (const TerrainSource* source = collision_objects.FindSource(mesh.name)) {
 			for (std::uint32_t index = source->first_object; index < source->first_object + source->object_count; ++index) {
 				const DirectX::XMFLOAT3 location = collision_objects.GetObjectLocation(index);
-				if (IsInsideMap(location.x, location.y)) points_.push_back({ location.x, location.y, mesh.kind });
+				if (IsInsideMap(location.x, location.y)) points_.push_back({ location.x, location.y, location.z, mesh.kind });
 			}
 		}
 		else if (const DecorMesh* decor_mesh = decor_objects.FindMesh(mesh.name)) {
 			for (std::uint32_t index = decor_mesh->first_location; index < decor_mesh->first_location + decor_mesh->location_count; ++index) {
 				const DirectX::XMFLOAT3& location = decor_objects.GetLocations()[index];
-				if (IsInsideMap(location.x, location.y)) points_.push_back({ location.x, location.y, mesh.kind });
+				if (IsInsideMap(location.x, location.y)) points_.push_back({ location.x, location.y, location.z, mesh.kind });
 			}
 		}
 		else {
@@ -121,46 +121,48 @@ void HintObjectTree::BuildRange(std::size_t begin, std::size_t end, int depth)
 }
 
 // 기준선인 가운데 점을 순위에 반영하고, 찾는 위치가 있는 쪽 구간을 먼저 본 뒤, 순위가 덜 찼거나 기준선까지 거리가 순위 마지막 거리보다 짧을 때만 반대쪽 구간도 본다.
-void HintObjectTree::SearchRange(std::size_t begin, std::size_t end, int depth, float x, float y, NearestHintKinds& result) const
+void HintObjectTree::SearchRange(std::size_t begin, std::size_t end, int depth, float x, float y, float z, NearestHintKinds& result) const
 {
+	const auto consider_point = [&](const HintPoint& point)
+	{
+		const float dx = point.x - x;
+		const float dy = point.y - y;
+		const float dz = point.z - z;
+		ConsiderPoint(result, point.kind, dx * dx + dy * dy + dz * dz);
+	};
 	if (end - begin <= HINT_TREE_LEAF_SIZE) {
-		for (std::size_t index = begin; index < end; ++index) {
-			const float dx = points_[index].x - x;
-			const float dy = points_[index].y - y;
-			ConsiderPoint(result, points_[index].kind, dx * dx + dy * dy);
-		}
+		for (std::size_t index = begin; index < end; ++index) consider_point(points_[index]);
 		return;
 	}
 	const std::size_t middle = begin + (end - begin) / 2;
 	const HintPoint& split = points_[middle];
-	const float split_dx = split.x - x;
-	const float split_dy = split.y - y;
-	ConsiderPoint(result, split.kind, split_dx * split_dx + split_dy * split_dy);
+	consider_point(split);
 	const bool is_x = depth % 2 == 0;
 	const float gap = is_x ? x - split.x : y - split.y;
 	const bool is_left = gap < 0.0f;
-	SearchRange(is_left ? begin : middle + 1, is_left ? middle : end, depth + 1, x, y, result);
+	SearchRange(is_left ? begin : middle + 1, is_left ? middle : end, depth + 1, x, y, z, result);
 	const float worst = result.count < result.kinds.size() ? std::numeric_limits<float>::infinity() : result.kinds[result.count - 1].distance;
-	if (gap * gap < worst) SearchRange(is_left ? middle + 1 : begin, is_left ? end : middle, depth + 1, x, y, result);
+	if (gap * gap < worst) SearchRange(is_left ? middle + 1 : begin, is_left ? end : middle, depth + 1, x, y, z, result);
 }
 
-NearestHintKinds HintObjectTree::FindNearestKinds(float x, float y) const
+NearestHintKinds HintObjectTree::FindNearestKinds(float x, float y, float z) const
 {
 	NearestHintKinds result{};
 	if (!is_loaded_ || points_.empty()) return result;
-	SearchRange(0, points_.size(), 0, x, y, result);
+	SearchRange(0, points_.size(), 0, x, y, z, result);
 	for (std::size_t index = 0; index < result.count; ++index) result.kinds[index].distance = std::sqrt(result.kinds[index].distance);
 	return result;
 }
 
-// 기준선인 가운데 점을 세고, 찾는 원이 기준선 양쪽에 걸치는 쪽 구간만 내려간다.
-void HintObjectTree::CountRange(std::size_t begin, std::size_t end, int depth, float x, float y, float radius_sq, HintKindCounts& counts) const
+// 기준선인 가운데 점을 세고, 찾는 구가 기준선 양쪽에 걸치는 쪽 구간만 내려간다.
+void HintObjectTree::CountRange(std::size_t begin, std::size_t end, int depth, float x, float y, float z, float radius_sq, HintKindCounts& counts) const
 {
 	const auto count_point = [&](const HintPoint& point)
 	{
 		const float dx = point.x - x;
 		const float dy = point.y - y;
-		if (dx * dx + dy * dy <= radius_sq) ++counts[static_cast<std::size_t>(point.kind)];
+		const float dz = point.z - z;
+		if (dx * dx + dy * dy + dz * dz <= radius_sq) ++counts[static_cast<std::size_t>(point.kind)];
 	};
 	if (end - begin <= HINT_TREE_LEAF_SIZE) {
 		for (std::size_t index = begin; index < end; ++index) count_point(points_[index]);
@@ -171,15 +173,15 @@ void HintObjectTree::CountRange(std::size_t begin, std::size_t end, int depth, f
 	count_point(split);
 	const bool is_x = depth % 2 == 0;
 	const float gap = is_x ? x - split.x : y - split.y;
-	if (gap < 0.0f || gap * gap <= radius_sq) CountRange(begin, middle, depth + 1, x, y, radius_sq, counts);
-	if (gap >= 0.0f || gap * gap <= radius_sq) CountRange(middle + 1, end, depth + 1, x, y, radius_sq, counts);
+	if (gap < 0.0f || gap * gap <= radius_sq) CountRange(begin, middle, depth + 1, x, y, z, radius_sq, counts);
+	if (gap >= 0.0f || gap * gap <= radius_sq) CountRange(middle + 1, end, depth + 1, x, y, z, radius_sq, counts);
 }
 
-HintKindCounts HintObjectTree::CountKinds(float x, float y, float radius) const
+HintKindCounts HintObjectTree::CountKinds(float x, float y, float z, float radius) const
 {
 	HintKindCounts counts{};
 	if (!is_loaded_ || points_.empty()) return counts;
-	CountRange(0, points_.size(), 0, x, y, radius * radius, counts);
+	CountRange(0, points_.size(), 0, x, y, z, radius * radius, counts);
 	for (std::size_t kind = 0; kind < counts.size(); ++kind) {
 		const HintObjectKind base = GetBaseHintObjectKind(static_cast<HintObjectKind>(kind));
 		if (base != static_cast<HintObjectKind>(kind)) counts[static_cast<std::size_t>(base)] += counts[kind];
