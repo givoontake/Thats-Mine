@@ -106,10 +106,9 @@ private:
 	std::vector<BoxContent> box_contents_;
 	// 이번 게임에서 떨어진 힌트. 드랍 번호 순서이고, 주워도 지우지 않고 주웠다고만 표시한다.
 	std::vector<HintDrop> hint_drops_;
-	// 이번 게임에서 모두에게 공개한 힌트의 힌트 목록 번호, 지난 공개 차례 수, 다음 공개 시각
-	std::vector<std::uint32_t> public_hints_;
-	int public_hint_turn_ = 0;
-	long long next_public_hint_ms_ = 0;
+	// 이번 게임에서 영역 지우기로 지운 배제 판 칸 모음과 다음 지우기 시각. 지운 칸은 플레이 중인 전원의 배제 판에 들어간다.
+	std::uint64_t removed_cells_ = 0;
+	long long next_area_removal_ms_ = 0;
 	// 보물을 발견해 게임이 끝나는 시각. 0이면 아직 발견하지 않았다.
 	long long game_end_ms_ = 0;
 
@@ -135,20 +134,18 @@ private:
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
 	void ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
-	int AppendHintPackets(char* buffer, std::uint32_t hint) const;
+	int AppendHintPacket(char* buffer, std::uint32_t hint) const;
 	void DropHint(Player& target);
-	void ProcessPublicHint();
+	void ProcessAreaRemoval();
 	void DigTreasure(const Player& digger);
 	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
 	void ProcessTimeLimit();
 	void ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p);
 	void ProcessSearches();
-	// 플레이어의 지금 배제 판. 가진 방향 힌트는 배제 영역이 칸 전체를 덮는 칸만 넣고, 블록 결과와 돋보기 탐색 결과로 배제된 칸을 더한다.
-	std::uint64_t ComputeExclusionBoard(const Player& player) const;
-	// 배제 판이 마지막으로 보낸 것과 다르면 배제 판 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 같으면 쓰지 않고 0을 돌려준다.
+	// 배제 판(블록 결과·돋보기 탐색 결과로 배제된 칸과 영역 지우기로 지운 칸)이 마지막으로 보낸 것과 다르면 배제 판 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 같으면 쓰지 않고 0을 돌려준다.
 	int AppendExclusionBoard(char* buffer, Player& player) const;
 	void ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p);
-	void SendPublicHintTime(Session& session) const;
+	void SendAreaRemovalTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;
 	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;

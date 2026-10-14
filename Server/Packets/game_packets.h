@@ -252,14 +252,6 @@ struct S2C_HINT_PACKET {
 	HINT_ENTRY hint;
 };
 
-// 방향 힌트가 지도에서 배제하는 영역. boundary 선보다 direction(HintDirection) 쪽 전부가 배제된다.
-// 북·남이면 boundary는 x, 동·서면 y(cm)다. 방향 힌트를 보낼 때만 힌트 패킷 뒤에 이어 보낸다.
-struct S2C_HINT_EXCLUSION_PACKET {
-	PACKET_HEADER header;
-	std::uint8_t direction;
-	float boundary;
-};
-
 // 기절한 플레이어가 힌트 하나를 떨어뜨렸다. 플레이 중인 방 전체에 보내고, 게임 도중 들어온 플레이어에게는 아직 줍지 않은 것만 보낸다.
 // 드랍 번호는 이번 게임에서 떨어뜨린 순서다. 위치는 떨어뜨린 플레이어의 캡슐 중심(cm)이고, 클라이언트가 그 아래 바닥에 놓는다.
 // 등급은 떨어진 힌트의 등급이며 누구나 두루마리 모습으로 알 수 있다.
@@ -288,11 +280,16 @@ struct S2C_HINT_PICKUP_PACKET {
 	std::uint16_t drop;
 };
 
-// 다음 공개 힌트까지 남은 시간. 게임 시작 때와 공개 차례가 지날 때마다 플레이 중인 방 전체에 보내고, 게임 도중 합류하면 그 사람에게 보낸다.
-// 공개 힌트는 차례가 되면 힌트 패킷으로 플레이 중인 전원에게 같은 힌트를 보낸다.
-struct S2C_PUBLIC_HINT_TIME_PACKET {
+// 다음 영역 지우기까지 남은 시간. 게임 시작 때와 지우기 차례가 지날 때마다 플레이 중인 방 전체에 보내고, 게임 도중 합류하면 그 사람에게 보낸다.
+struct S2C_AREA_REMOVAL_TIME_PACKET {
 	PACKET_HEADER header;
 	std::uint32_t remaining_ms;
+};
+
+// 영역 지우기 차례에 지운 배제 판 칸 번호(block_pieces.h). 플레이 중인 방 전체에 보내고, 바뀐 배제 판을 이어 보낸다.
+struct S2C_AREA_REMOVAL_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t cell;
 };
 
 // 보물을 발견한 플레이어와 보물 바닥 가운데 위치(cm), 보물 방향(도). 플레이 중인 방 전체에 보낸다. GAME_END_WAIT_MS 뒤 게임이 끝나고 방으로 돌아간다.
@@ -359,7 +356,7 @@ struct S2C_BLOCK_RESULT_PACKET {
 };
 
 // 그 사람의 배제 판. 칸 번호(block_pieces.h) 자리의 비트가 켜진 칸이 배제된 칸이다.
-// 가진 방향 힌트와 돋보기 탐색 결과는 배제 영역이 칸 전체를 덮을 때만 그 칸을 배제하고, 블록 결과는 칸 단위로 배제한다. 판이 바뀔 때마다 그 사람에게만 보낸다.
+// 돋보기 탐색 결과는 배제 영역이 칸 전체를 덮을 때만 그 칸을 배제하고, 블록 결과와 영역 지우기는 칸 단위로 배제한다. 판이 바뀔 때마다 그 사람에게만 보낸다.
 struct S2C_EXCLUSION_BOARD_PACKET {
 	PACKET_HEADER header;
 	std::uint64_t excluded_cells;

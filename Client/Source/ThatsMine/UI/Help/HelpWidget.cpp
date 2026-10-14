@@ -111,13 +111,13 @@ void UHelpWidget::RefreshContent()
 	AddHeading(NSLOCTEXT("Help", "GoalHeading", "게임 목표와 진행"));
 	AddLine(NSLOCTEXT("Help", "Goal", "맵 어딘가에 묻힌 보물을 가장 먼저 곡괭이로 파내면 승리합니다."));
 	AddLine(NSLOCTEXT("Help", "TimeLimit", "제한시간은 2시간이고 남은 시간은 화면 오른쪽 위에 보입니다. 아무도 찾지 못하면 보물 위치가 공개되고 방으로 돌아갑니다."));
-	AddLine(NSLOCTEXT("Help", "PublicHint", "일정 시간마다 모든 플레이어에게 같은 힌트가 제공됩니다."));
+	AddLine(NSLOCTEXT("Help", "PublicHint", "일정 시간마다 모든 플레이어의 지도에 보물이 없는 같은 지역 하나가 공개됩니다."));
 	AddLine(NSLOCTEXT("Help", "Pickaxe", "곡괭이는 최대 3번까지 휘두를 수 있고, 쓴 횟수는 시간이 지나면 다시 찹니다."));
 
 	AddHeading(NSLOCTEXT("Help", "HintHeading", "힌트와 상자"));
 	AddLine(NSLOCTEXT("Help", "Boxes", "땅 위의 나무 상자와 나무 위·공중의 선물 상자를 열면 힌트, 탄약, 아이템을 얻습니다. 선물 상자는 총으로 쏴서도 열 수 있습니다."));
 	AddLine(NSLOCTEXT("Help", "Grades", "힌트는 S·A·B·C 등급이 있고, 높은 등급일수록 보물이 있을 곳을 많이 좁혀 줍니다."));
-	AddLine(NSLOCTEXT("Help", "Exclusion", "힌트를 얻으면 지도에 보물이 없는 영역이 표시됩니다."));
+	AddLine(NSLOCTEXT("Help", "Exclusion", "돋보기 탐색 결과, 블록 사용 결과, 지역 공개로 보물이 없는 영역이 지도에 표시됩니다."));
 	AddLine(NSLOCTEXT("Help", "Drop", "기절하면 가진 힌트 하나를 두루마리로 떨어뜨립니다. 떨어진 두루마리는 누구나 주울 수 있습니다."));
 
 	AddHeading(NSLOCTEXT("Help", "CombatHeading", "무기·기절·아이템"));

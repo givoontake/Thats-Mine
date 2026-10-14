@@ -171,29 +171,12 @@ void UBlockBoardWidget::RefreshBlocks()
 	}
 }
 
-// 지도 위젯과 같이 배제 칸 텍스처를 만들고, 배제 판도 받아 둔다.
+// 힌트 서브시스템의 배제 텍스처와 배제 판을 받아 둔다.
 void UBlockBoardWidget::RefreshExclusion()
 {
 	const UHintSubsystem* hints = GetWorld()->GetSubsystem<UHintSubsystem>();
 	exclusion_board_ = hints ? hints->GetExclusionBoard() : 0;
-	const TArray<uint8>* mask = hints ? &hints->GetExclusionMask() : nullptr;
-	if (!mask || mask->IsEmpty())
-	{
-		exclusion_texture_ = nullptr;
-		return;
-	}
-	constexpr int32 size = UHintSubsystem::EXCLUSION_MASK_SIZE;
-	exclusion_texture_ = UTexture2D::CreateTransient(size, size, PF_B8G8R8A8);
-	exclusion_texture_->Filter = TF_Bilinear;
-	exclusion_texture_->SRGB = false;
-	FTexture2DMipMap& mip = exclusion_texture_->GetPlatformData()->Mips[0];
-	FColor* pixels = static_cast<FColor*>(mip.BulkData.Lock(LOCK_READ_WRITE));
-	for (int32 index = 0; index < size * size; ++index)
-	{
-		pixels[index] = FColor(0, 0, 0, (*mask)[index] ? 255 : 0);
-	}
-	mip.BulkData.Unlock();
-	exclusion_texture_->UpdateResource();
+	exclusion_texture_ = hints ? hints->GetExclusionTexture() : nullptr;
 	// 사용할지 묻는 중에 그 자리가 배제되면 묻기를 그만둔다.
 	if (pending_.piece != INDEX_NONE && !CanPlace(pending_))
 	{

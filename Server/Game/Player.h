@@ -119,7 +119,6 @@ public:
 	// 가진 힌트 중 하나를 무작위로 골라 빼고 돌려준다. 가진 힌트가 없으면 비어 있다.
 	std::optional<std::uint32_t> TakeRandomHint();
 	void ResetHints() { hint_indices_.clear(); }
-	const std::vector<std::uint32_t>& GetHints() const { return hint_indices_; }
 	// 마지막으로 인정한 위치에 멈춘 상태로 되돌리고 새 되돌리기 번호를 돌려준다. 확인을 받을 때까지 이동 상태를 받지 않는다.
 	std::uint32_t StartMoveCorrection();
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.

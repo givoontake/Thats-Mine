@@ -1,5 +1,4 @@
 #pragma once
-#include <optional>
 #include <vector>
 #include "hint_types.h"
 
@@ -20,6 +19,4 @@ public:
 	bool IsLoaded() const { return is_loaded_; }
 	// (x, y)가 기준 영역마다 네 방위 쪽에 있는지 판정한다. 기준 영역 순서로, 영역마다 HintDirection 순서의 힌트 네 개를 돌려준다.
 	std::vector<HINT_ENTRY> JudgeDirections(float x, float y) const;
-	// 기준 영역 사각형에서 그 방위 쪽 변의 좌표. 북쪽은 최소 x, 남쪽은 최대 x, 동쪽은 최소 y, 서쪽은 최대 y다. 기준 영역이 아니면 값이 없다.
-	std::optional<float> FindBoundary(std::uint8_t region, HintDirection direction) const;
 };

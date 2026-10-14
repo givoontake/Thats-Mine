@@ -59,7 +59,7 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> map_texture_;
 
-	// 배제 칸 텍스처. 배제된 곳은 알파 255, 나머지는 0이다.
+	// 힌트 서브시스템의 배제 칸 텍스처. 배제된 곳은 알파 255, 나머지는 0이다.
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> exclusion_texture_;
 

@@ -669,9 +669,8 @@ void GameRoom::StartGame(int requester_id)
 	GenerateHints();
 	PlaceBoxes(player_count);
 	hint_drops_.clear();
-	public_hints_.clear();
-	public_hint_turn_ = 0;
-	next_public_hint_ms_ = 0;
+	removed_cells_ = 0;
+	next_area_removal_ms_ = 0;
 	game_end_ms_ = 0;
 }
 
@@ -823,7 +822,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 {
 	ProcessLoadedPlayers();
 	ProcessGameStart();
-	ProcessPublicHint();
+	ProcessAreaRemoval();
 	ProcessSearches();
 	ProcessTimeLimit();
 	if (game_end_ms_ != 0 && tick_time_ms >= game_end_ms_) {
@@ -946,13 +945,11 @@ void GameRoom::ProcessLoadedPlayers()
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (is_game_started_) {
 				session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
-				// 지금까지 공개된 힌트를 받고 다음 공개까지 남은 시간을 받는다. 힌트는 캐릭터가 생긴 뒤에 보낸다.
-				for (const std::uint32_t hint : public_hints_) {
-					room_player.AddHint(hint);
-					char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET)];
-					session->SendPacket(hint_buffer, AppendHintPackets(hint_buffer, hint));
-				}
-				SendPublicHintTime(*session);
+				// 지금까지 지운 칸이 든 배제 판과 다음 지우기까지 남은 시간을 받는다.
+				char board_buffer[sizeof(S2C_EXCLUSION_BOARD_PACKET)];
+				const int board_size = AppendExclusionBoard(board_buffer, room_player);
+				if (board_size > 0) session->SendPacket(board_buffer, board_size);
+				SendAreaRemovalTime(*session);
 			}
 			else if (game_start_ms_ != 0) session->SendPacket(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
 			room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
@@ -1094,7 +1091,7 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
 // 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
-// 아이템 상자는 그 아이템을, 블록 상자는 그 블록을 가진 것으로 기록하고 보낸다. 힌트로 배제 판이 바뀌면 배제 판도 이어 보낸다.
+// 아이템 상자는 그 아이템을, 블록 상자는 그 블록을 가진 것으로 기록하고 보낸다.
 void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p)
 {
 	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
@@ -1105,14 +1102,13 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
 	open_p.box = request_p.box;
-	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET) + sizeof(S2C_EXCLUSION_BOARD_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET), sizeof(S2C_BLOCK_PACKET) })];
+	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET), sizeof(S2C_BLOCK_PACKET) })];
 	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
 	int opener_size = sizeof(open_p);
 	const BoxContent& content = box_contents_[request_p.box];
 	if (content.kind == BoxContentKind::HINT) {
 		opener.AddHint(content.value);
-		opener_size += AppendHintPackets(opener_buffer + opener_size, content.value);
-		opener_size += AppendExclusionBoard(opener_buffer + opener_size, opener);
+		opener_size += AppendHintPacket(opener_buffer + opener_size, content.value);
 	}
 	else if (content.kind == BoxContentKind::BLOCK) {
 		opener.AddBlock(static_cast<std::uint8_t>(content.value));
@@ -1175,27 +1171,14 @@ bool GameRoom::CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& req
 	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
 }
 
-// 힌트 목록 번호의 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 방향 힌트는 지도에서 배제할 영역을 이어 쓴다.
-// buffer는 힌트 패킷과 배제 영역 패킷이 모두 들어갈 크기여야 한다.
-int GameRoom::AppendHintPackets(char* buffer, std::uint32_t hint) const
+// 힌트 목록 번호의 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다.
+int GameRoom::AppendHintPacket(char* buffer, std::uint32_t hint) const
 {
 	S2C_HINT_PACKET hint_p;
 	hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_HINT };
 	hint_p.hint = hints_[hint];
 	std::memcpy(buffer, &hint_p, sizeof(hint_p));
-	int size = sizeof(hint_p);
-	// "있다"면 반대 방위 쪽, "없다"면 그 방위 쪽이 배제된다.
-	const HINT_ENTRY& entry = hint_p.hint;
-	const std::optional<float> boundary = entry.kind == static_cast<std::uint8_t>(HintKind::DIRECTION) ? server_->GetDirectionHintData().FindBoundary(entry.target, static_cast<HintDirection>(entry.detail)) : std::nullopt;
-	if (boundary) {
-		S2C_HINT_EXCLUSION_PACKET exclusion_p;
-		exclusion_p.header = { static_cast<std::uint16_t>(sizeof(exclusion_p)), S2C_HINT_EXCLUSION };
-		exclusion_p.direction = static_cast<std::uint8_t>(entry.is_true ? (entry.detail + 2) % static_cast<int>(HintDirection::COUNT) : entry.detail);
-		exclusion_p.boundary = *boundary;
-		std::memcpy(buffer + size, &exclusion_p, sizeof(exclusion_p));
-		size += sizeof(exclusion_p);
-	}
-	return size;
+	return sizeof(hint_p);
 }
 
 // 기절한 플레이어가 가진 힌트 중 하나를 서버가 마지막으로 인정한 위치에 떨어뜨린다. 가진 힌트가 없으면 아무것도 하지 않는다.
@@ -1211,48 +1194,44 @@ void GameRoom::DropHint(Player& target)
 	S2C_HINT_LOST_PACKET lost_p;
 	lost_p.header = { static_cast<std::uint16_t>(sizeof(lost_p)), S2C_HINT_LOST };
 	lost_p.hint = hints_[*hint];
-	char target_buffer[sizeof(drop_p) + sizeof(lost_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
+	char target_buffer[sizeof(drop_p) + sizeof(lost_p)];
 	std::memcpy(target_buffer, &drop_p, sizeof(drop_p));
 	std::memcpy(target_buffer + sizeof(drop_p), &lost_p, sizeof(lost_p));
-	const int target_size = sizeof(drop_p) + sizeof(lost_p) + AppendExclusionBoard(target_buffer + sizeof(drop_p) + sizeof(lost_p), target);
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		if (&room_player == &target) session->SendPacket(target_buffer, target_size);
+		if (&room_player == &target) session->SendPacket(target_buffer, sizeof(target_buffer));
 		else session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
 	}
 }
 
-// 공개 차례가 되면 그 차례에 고를 수 있는 등급의 아직 공개하지 않은 힌트 중 하나를 무작위로 골라 플레이 중인 전원이 가진 것으로 기록하고 보낸다.
-// 고를 힌트가 없으면 그 차례는 건너뛴다. 차례가 지나면 다음 공개까지 남은 시간을 플레이 중인 전원에게 보낸다.
-void GameRoom::ProcessPublicHint()
+// 지우기 차례가 되면 보물 칸과 이미 지운 칸을 뺀 배제 판 칸 하나를 무작위로 골라 지운다. 지울 칸이 없으면 그 차례는 건너뛴다.
+// 플레이 중인 전원에게 지운 칸과 바뀐 배제 판, 다음 지우기까지 남은 시간을 보낸다.
+void GameRoom::ProcessAreaRemoval()
 {
-	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < next_public_hint_ms_) return;
-	const std::uint8_t best_grade = PUBLIC_HINT_BEST_GRADES[std::min<std::size_t>(public_hint_turn_, std::size(PUBLIC_HINT_BEST_GRADES) - 1)];
-	++public_hint_turn_;
-	next_public_hint_ms_ += PUBLIC_HINT_INTERVAL_MS;
-	std::vector<std::uint32_t> candidates;
-	for (std::uint32_t index = 0; index < hints_.size(); ++index) {
-		const std::uint8_t grade = hints_[index].grade;
-		if (grade >= best_grade && grade != static_cast<std::uint8_t>(HintGrade::S) && std::find(public_hints_.begin(), public_hints_.end(), index) == public_hints_.end()) candidates.push_back(index);
+	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < next_area_removal_ms_) return;
+	next_area_removal_ms_ += AREA_REMOVAL_INTERVAL_MS;
+	const int treasure_cell = GetBlockCellIndex(treasure_placement_.location.x, treasure_placement_.location.y);
+	std::vector<std::uint8_t> candidates;
+	for (int cell = 0; cell < BLOCK_GRID_SIZE * BLOCK_GRID_SIZE; ++cell) {
+		if (cell != treasure_cell && (removed_cells_ >> cell & 1) == 0) candidates.push_back(static_cast<std::uint8_t>(cell));
 	}
-	// 힌트 뒤에는 사람마다 바뀐 배제 판을 이어 쓴다.
-	char hint_buffer[sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
-	int hint_size = 0;
+	S2C_AREA_REMOVAL_PACKET removal_p;
+	removal_p.header = { static_cast<std::uint16_t>(sizeof(removal_p)), S2C_AREA_REMOVAL };
 	if (!candidates.empty()) {
 		std::mt19937 random(CreateRandomSeed());
-		const std::uint32_t hint = candidates[std::uniform_int_distribution<std::size_t>(0, candidates.size() - 1)(random)];
-		public_hints_.push_back(hint);
-		hint_size = AppendHintPackets(hint_buffer, hint);
+		removal_p.cell = candidates[std::uniform_int_distribution<std::size_t>(0, candidates.size() - 1)(random)];
+		removed_cells_ |= 1ULL << removal_p.cell;
 	}
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		if (hint_size > 0) {
-			room_player.AddHint(public_hints_.back());
-			session->SendPacket(hint_buffer, hint_size + AppendExclusionBoard(hint_buffer + hint_size, room_player));
+		if (!candidates.empty()) {
+			char buffer[sizeof(removal_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
+			std::memcpy(buffer, &removal_p, sizeof(removal_p));
+			session->SendPacket(buffer, sizeof(removal_p) + AppendExclusionBoard(buffer + sizeof(removal_p), room_player));
 		}
-		SendPublicHintTime(*session);
+		SendAreaRemovalTime(*session);
 	}
 }
 
@@ -1297,33 +1276,9 @@ void GameRoom::ProcessSearches()
 	}
 }
 
-std::uint64_t GameRoom::ComputeExclusionBoard(const Player& player) const
-{
-	std::uint64_t board = player.GetKeptExcludedCells();
-	for (const std::uint32_t index : player.GetHints()) {
-		const HINT_ENTRY& hint = hints_[index];
-		if (hint.kind != static_cast<std::uint8_t>(HintKind::DIRECTION)) continue;
-		const std::optional<float> boundary = server_->GetDirectionHintData().FindBoundary(hint.target, static_cast<HintDirection>(hint.detail));
-		if (!boundary) continue;
-		// "있다"면 반대 방위 쪽, "없다"면 그 방위 쪽이 배제된다. 북은 x가 작은 쪽, 동은 y가 작은 쪽이다.
-		const HintDirection direction = static_cast<HintDirection>(hint.is_true ? (hint.detail + 2) % static_cast<int>(HintDirection::COUNT) : hint.detail);
-		const float b = *boundary;
-		board |= CollectCoveredCells([direction, b](float x0, float x1, float y0, float y1) {
-			switch (direction) {
-			case HintDirection::NORTH: return x1 <= b;
-			case HintDirection::SOUTH: return x0 >= b;
-			case HintDirection::EAST: return y1 <= b;
-			case HintDirection::WEST: return y0 >= b;
-			default: return false;
-			}
-		});
-	}
-	return board;
-}
-
 int GameRoom::AppendExclusionBoard(char* buffer, Player& player) const
 {
-	const std::uint64_t board = ComputeExclusionBoard(player);
+	const std::uint64_t board = player.GetKeptExcludedCells() | removed_cells_;
 	if (board == player.GetSentExclusionBoard()) return 0;
 	player.SetSentExclusionBoard(board);
 	S2C_EXCLUSION_BOARD_PACKET board_p;
@@ -1339,7 +1294,7 @@ void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request
 {
 	if (!is_game_started_ || !user.CanUseBlock(request_p.piece) || request_p.rotation >= BLOCK_ROTATION_COUNT) return;
 	const std::uint64_t cells = GetBlockCells(request_p.piece, request_p.rotation, request_p.column, request_p.row);
-	if (cells == 0 || (cells & ComputeExclusionBoard(user)) != 0) return;
+	if (cells == 0 || (cells & (user.GetKeptExcludedCells() | removed_cells_)) != 0) return;
 	S2C_BLOCK_RESULT_PACKET result_p;
 	result_p.header = { static_cast<std::uint16_t>(sizeof(result_p)), S2C_BLOCK_RESULT };
 	result_p.piece = request_p.piece;
@@ -1388,11 +1343,11 @@ void GameRoom::ProcessTimeLimit()
 	}
 }
 
-void GameRoom::SendPublicHintTime(Session& session) const
+void GameRoom::SendAreaRemovalTime(Session& session) const
 {
-	S2C_PUBLIC_HINT_TIME_PACKET time_p;
-	time_p.header = { static_cast<std::uint16_t>(sizeof(time_p)), S2C_PUBLIC_HINT_TIME };
-	time_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, next_public_hint_ms_ - tick_time_ms_));
+	S2C_AREA_REMOVAL_TIME_PACKET time_p;
+	time_p.header = { static_cast<std::uint16_t>(sizeof(time_p)), S2C_AREA_REMOVAL_TIME };
+	time_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, next_area_removal_ms_ - tick_time_ms_));
 	session.SendPacket(reinterpret_cast<char*>(&time_p), time_p.header.size);
 }
 
@@ -1407,12 +1362,11 @@ void GameRoom::ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& r
 	S2C_HINT_PICKUP_PACKET pickup_p;
 	pickup_p.header = { static_cast<std::uint16_t>(sizeof(pickup_p)), S2C_HINT_PICKUP };
 	pickup_p.drop = request_p.drop;
-	char picker_buffer[sizeof(pickup_p) + sizeof(S2C_HINT_PACKET) + sizeof(S2C_HINT_EXCLUSION_PACKET) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
+	char picker_buffer[sizeof(pickup_p) + sizeof(S2C_HINT_PACKET)];
 	std::memcpy(picker_buffer, &pickup_p, sizeof(pickup_p));
 	int picker_size = sizeof(pickup_p);
 	picker.AddHint(hint_drop.hint);
-	picker_size += AppendHintPackets(picker_buffer + picker_size, hint_drop.hint);
-	picker_size += AppendExclusionBoard(picker_buffer + picker_size, picker);
+	picker_size += AppendHintPacket(picker_buffer + picker_size, hint_drop.hint);
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
@@ -1493,7 +1447,7 @@ void GameRoom::ProcessGameStart()
 	}
 	if (tick_time_ms_ < game_start_ms_) return;
 	is_game_started_ = true;
-	next_public_hint_ms_ = tick_time_ms_ + PUBLIC_HINT_INTERVAL_MS;
+	next_area_removal_ms_ = tick_time_ms_ + AREA_REMOVAL_INTERVAL_MS;
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 	game_start_p.remaining_ms = GAME_TIME_LIMIT_MS;
@@ -1501,7 +1455,7 @@ void GameRoom::ProcessGameStart()
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
 		session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
-		SendPublicHintTime(*session);
+		SendAreaRemovalTime(*session);
 	}
 }
 

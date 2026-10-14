@@ -1,6 +1,7 @@
 #include "HintSubsystem.h"
 
 #include "Engine/GameInstance.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "Kismet/GameplayStatics.h"
@@ -17,8 +18,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogHint, Log, All);
 
 // 문장 파일. 패키징할 때 Content/Data 폴더를 함께 넣는다.
 static const TCHAR* HINT_TEXT_PATH = TEXT("Data/hint_texts.txt");
-// 공개 힌트 안내를 띄우는 남은 시간(초)
-static constexpr int32 PUBLIC_HINT_NOTICE_SECONDS[] = { 180, 60, 30, 10 };
+// 영역 지우기 안내를 띄우는 남은 시간(초)
+static constexpr int32 AREA_REMOVAL_NOTICE_SECONDS[] = { 60, 30, 10 };
 
 void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 {
@@ -33,10 +34,10 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 	LoadTexts();
 	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
 	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
-		&& network->RegisterPacketHandler(S2C_HINT_EXCLUSION, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionPacket))
 		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket))
 		&& network->RegisterPacketHandler(S2C_EXCLUSION_BOARD, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionBoardPacket))
-		&& network->RegisterPacketHandler(S2C_PUBLIC_HINT_TIME, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandlePublicHintTimePacket));
+		&& network->RegisterPacketHandler(S2C_AREA_REMOVAL_TIME, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleAreaRemovalTimePacket))
+		&& network->RegisterPacketHandler(S2C_AREA_REMOVAL, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleAreaRemovalPacket));
 }
 
 void UHintSubsystem::Deinitialize()
@@ -48,10 +49,10 @@ void UHintSubsystem::Deinitialize()
 		if (UGameNetworkSubsystem* network = game_instance ? game_instance->GetSubsystem<UGameNetworkSubsystem>() : nullptr)
 		{
 			network->UnregisterPacketHandler(S2C_HINT);
-			network->UnregisterPacketHandler(S2C_HINT_EXCLUSION);
 			network->UnregisterPacketHandler(S2C_HINT_LOST);
 			network->UnregisterPacketHandler(S2C_EXCLUSION_BOARD);
-			network->UnregisterPacketHandler(S2C_PUBLIC_HINT_TIME);
+			network->UnregisterPacketHandler(S2C_AREA_REMOVAL_TIME);
+			network->UnregisterPacketHandler(S2C_AREA_REMOVAL);
 		}
 		is_active_ = false;
 	}
@@ -149,43 +150,9 @@ void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
 	hint.grade = static_cast<EHintGrade>(packet.hint.grade);
 	hint.text = FText::FromString(BuildSentence(packet.hint));
 	character->AddHint(hint);
-	// 서버는 이미 가진 힌트도 다시 보낸다. 받은 힌트 목록에는 한 번만 둔다.
-	exclusion_hint_index_ = received_hints_.IndexOfByPredicate([&packet](const FReceivedHint& received) { return FMemory::Memcmp(&received.hint, &packet.hint, sizeof(HINT_ENTRY)) == 0; });
-	if (exclusion_hint_index_ == INDEX_NONE)
-	{
-		exclusion_hint_index_ = received_hints_.Add({ packet.hint });
-	}
 }
 
-// 방향 힌트가 배제하는 영역. 칸 가운데가 경계선보다 배제 방위 쪽이면 그 칸을 배제한다. 북쪽은 x가 작은 쪽, 동쪽은 y가 작은 쪽이다.
-void UHintSubsystem::HandleExclusionPacket(const TArray<uint8>& payload)
-{
-	S2C_HINT_EXCLUSION_PACKET packet;
-	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
-	{
-		UE_LOG(LogHint, Warning, TEXT("Invalid hint exclusion packet."));
-		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
-		return;
-	}
-	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.direction >= static_cast<uint8>(HintDirection::COUNT))
-	{
-		return;
-	}
-	// 배제는 바로 앞에 받은 힌트의 것이다.
-	if (received_hints_.IsValidIndex(exclusion_hint_index_))
-	{
-		FReceivedHint& received = received_hints_[exclusion_hint_index_];
-		received.has_exclusion = true;
-		received.direction = packet.direction;
-		received.boundary = packet.boundary;
-	}
-	PaintExclusion(packet.direction, packet.boundary);
-	on_exclusion_mask_changed_.Broadcast();
-}
-
-// 기절해서 떨어뜨린 힌트. 드랍 패킷 뒤에 이어 온다. 같은 힌트를 인벤토리에서 빼고, 배제가 있던 힌트면 남은 배제로 칸을 다시 칠한다.
-// 남은 배제가 없어도 칸은 비우지 않고 모두 0으로 두어 지도가 배제 표시를 지우게 한다.
+// 기절해서 떨어뜨린 힌트. 드랍 패킷 뒤에 이어 온다. 같은 힌트를 인벤토리에서 뺀다.
 void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 {
 	S2C_HINT_LOST_PACKET packet;
@@ -196,27 +163,13 @@ void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 		return;
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	const int32 index = received_hints_.IndexOfByPredicate([&packet](const FReceivedHint& received) { return FMemory::Memcmp(&received.hint, &packet.hint, sizeof(HINT_ENTRY)) == 0; });
-	if (index == INDEX_NONE)
-	{
-		return;
-	}
-	const bool had_exclusion = received_hints_[index].has_exclusion;
-	received_hints_.RemoveAt(index);
-	exclusion_hint_index_ = INDEX_NONE;
 	if (APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
 	{
 		character->RemoveHint(FText::FromString(BuildSentence(packet.hint)));
 	}
-	if (!had_exclusion)
-	{
-		return;
-	}
-	RepaintExclusionMask();
-	on_exclusion_mask_changed_.Broadcast();
 }
 
-// 배제 판이 바뀌었다. 힌트를 잃어 줄어들 수도 있으므로 배제 칸을 다시 칠한다.
+// 배제 판이 바뀌었다. 배제 칸을 다시 칠한다.
 void UHintSubsystem::HandleExclusionBoardPacket(const TArray<uint8>& payload)
 {
 	S2C_EXCLUSION_BOARD_PACKET packet;
@@ -229,19 +182,12 @@ void UHintSubsystem::HandleExclusionBoardPacket(const TArray<uint8>& payload)
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	exclusion_board_ = packet.excluded_cells;
 	RepaintExclusionMask();
-	on_exclusion_mask_changed_.Broadcast();
+	NotifyExclusionChanged();
 }
 
 void UHintSubsystem::RepaintExclusionMask()
 {
 	exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
-	for (const FReceivedHint& received : received_hints_)
-	{
-		if (received.has_exclusion)
-		{
-			PaintExclusion(received.direction, received.boundary);
-		}
-	}
 	for (const FSearchExclusion& search : search_exclusions_)
 	{
 		PaintSearchExclusion(search);
@@ -249,13 +195,13 @@ void UHintSubsystem::RepaintExclusionMask()
 	PaintExclusionBoard();
 }
 
-// 다음 공개 힌트까지 남은 시간. 안내할 남은 시간마다 아직 지나지 않은 것에 타이머를 건다.
-void UHintSubsystem::HandlePublicHintTimePacket(const TArray<uint8>& payload)
+// 다음 영역 지우기까지 남은 시간. 안내할 남은 시간마다 아직 지나지 않은 것에 타이머를 건다.
+void UHintSubsystem::HandleAreaRemovalTimePacket(const TArray<uint8>& payload)
 {
-	S2C_PUBLIC_HINT_TIME_PACKET packet;
+	S2C_AREA_REMOVAL_TIME_PACKET packet;
 	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
 	{
-		UE_LOG(LogHint, Warning, TEXT("Invalid public hint time packet."));
+		UE_LOG(LogHint, Warning, TEXT("Invalid area removal time packet."));
 		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
 		return;
 	}
@@ -267,20 +213,33 @@ void UHintSubsystem::HandlePublicHintTimePacket(const TArray<uint8>& payload)
 	}
 	notice_timers_.Reset();
 	const float remaining = packet.remaining_ms / 1000.0f;
-	for (const int32 seconds : PUBLIC_HINT_NOTICE_SECONDS)
+	for (const int32 seconds : AREA_REMOVAL_NOTICE_SECONDS)
 	{
 		if (remaining > seconds)
 		{
-			timers.SetTimer(notice_timers_.AddDefaulted_GetRef(), FTimerDelegate::CreateUObject(this, &UHintSubsystem::ShowPublicHintNotice, seconds), remaining - seconds, false);
+			timers.SetTimer(notice_timers_.AddDefaulted_GetRef(), FTimerDelegate::CreateUObject(this, &UHintSubsystem::ShowAreaRemovalNotice, seconds), remaining - seconds, false);
 		}
 	}
 }
 
-void UHintSubsystem::ShowPublicHintNotice(int32 seconds)
+// 영역 지우기 차례에 지운 칸. 바뀐 배제 판이 뒤에 이어 온다.
+void UHintSubsystem::HandleAreaRemovalPacket(const TArray<uint8>& payload)
+{
+	S2C_AREA_REMOVAL_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogHint, Warning, TEXT("Invalid area removal packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	ShowNotice(NSLOCTEXT("Hint", "AreaRemoved", "보물이 없는 지역이 공개되었습니다!"));
+}
+
+void UHintSubsystem::ShowAreaRemovalNotice(int32 seconds)
 {
 	ShowNotice(seconds >= 60
-		? FText::Format(NSLOCTEXT("Hint", "PublicHintMinutes", "{0}분 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds / 60))
-		: FText::Format(NSLOCTEXT("Hint", "PublicHintSeconds", "{0}초 후에 힌트가 제공됩니다!"), FText::AsNumber(seconds)));
+		? FText::Format(NSLOCTEXT("Hint", "AreaRemovalMinutes", "{0}분 후에 보물이 없는 지역이 공개됩니다!"), FText::AsNumber(seconds / 60))
+		: FText::Format(NSLOCTEXT("Hint", "AreaRemovalSeconds", "{0}초 후에 보물이 없는 지역이 공개됩니다!"), FText::AsNumber(seconds)));
 }
 
 void UHintSubsystem::ShowNotice(const FText& text)
@@ -304,7 +263,7 @@ void UHintSubsystem::AddSearchResult(const FVector2D& center, float radius, bool
 {
 	const FSearchExclusion& search = search_exclusions_.Add_GetRef({ center, radius, is_found });
 	PaintSearchExclusion(search);
-	on_exclusion_mask_changed_.Broadcast();
+	NotifyExclusionChanged();
 	ShowNotice(is_found
 		? FText::Format(NSLOCTEXT("Hint", "SearchFound", "{0}m 이내에 보물을 발견했습니다!"), FText::AsNumber(FMath::RoundToInt32(radius / 100.0f)))
 		: NSLOCTEXT("Hint", "SearchNotFound", "발견하지 못했습니다.."));
@@ -332,31 +291,6 @@ void UHintSubsystem::PaintSearchExclusion(const FSearchExclusion& search)
 	}
 }
 
-void UHintSubsystem::PaintExclusion(uint8 direction_value, float boundary)
-{
-	const HintDirection direction = static_cast<HintDirection>(direction_value);
-	if (exclusion_mask_.IsEmpty())
-	{
-		exclusion_mask_.Init(0, EXCLUSION_MASK_SIZE * EXCLUSION_MASK_SIZE);
-	}
-	for (int32 row = 0; row < EXCLUSION_MASK_SIZE; ++row)
-	{
-		const double x = MAP_MIN[0] + (row + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[0] - MAP_MIN[0]);
-		for (int32 column = 0; column < EXCLUSION_MASK_SIZE; ++column)
-		{
-			const double y = MAP_MAX[1] - (column + 0.5) / EXCLUSION_MASK_SIZE * (MAP_MAX[1] - MAP_MIN[1]);
-			const bool is_excluded = direction == HintDirection::NORTH ? x < boundary
-				: direction == HintDirection::SOUTH ? x > boundary
-				: direction == HintDirection::EAST ? y < boundary
-				: y > boundary;
-			if (is_excluded)
-			{
-				exclusion_mask_[row * EXCLUSION_MASK_SIZE + column] = 1;
-			}
-		}
-	}
-}
-
 // 배제 판의 칸 하나는 배제 칸 EXCLUSION_MASK_SIZE / BLOCK_GRID_SIZE개 너비다.
 void UHintSubsystem::PaintExclusionBoard()
 {
@@ -372,4 +306,21 @@ void UHintSubsystem::PaintExclusionBoard()
 			}
 		}
 	}
+}
+
+void UHintSubsystem::NotifyExclusionChanged()
+{
+	constexpr int32 size = EXCLUSION_MASK_SIZE;
+	exclusion_texture_ = UTexture2D::CreateTransient(size, size, PF_B8G8R8A8);
+	exclusion_texture_->Filter = TF_Bilinear;
+	exclusion_texture_->SRGB = false;
+	FTexture2DMipMap& mip = exclusion_texture_->GetPlatformData()->Mips[0];
+	FColor* pixels = static_cast<FColor*>(mip.BulkData.Lock(LOCK_READ_WRITE));
+	for (int32 index = 0; index < size * size; ++index)
+	{
+		pixels[index] = FColor(0, 0, 0, exclusion_mask_[index] ? 255 : 0);
+	}
+	mip.BulkData.Unlock();
+	exclusion_texture_->UpdateResource();
+	on_exclusion_mask_changed_.Broadcast();
 }

@@ -78,9 +78,6 @@ private:
 	TObjectPtr<UImage> exclusion_image_;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UTexture2D> exclusion_texture_;
-
-	UPROPERTY(Transient)
 	TArray<TObjectPtr<UTextBlock>> place_labels_;
 
 	double zoom_ = 1.0;
@@ -94,7 +91,7 @@ private:
 	void UpdateMap();
 	void UpdatePlayerMarker();
 	void UpdateTreasureMarker();
-	// 힌트 서브시스템의 배제 칸으로 텍스처를 다시 만든다.
+	// 힌트 서브시스템의 배제 텍스처를 다시 가져온다.
 	void UpdateExclusionTexture();
 
 	void ResetView();

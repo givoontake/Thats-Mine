@@ -222,28 +222,16 @@ void UWorldMapWidget::UpdateTreasureMarker()
 	CastChecked<UCanvasPanelSlot>(treasure_marker_->Slot)->SetPosition(position * MAP_SIZE * zoom_ + pan_);
 }
 
-// 배제 칸은 알파 255, 나머지는 0인 텍스처를 만든다. 이미지 색의 불투명도와 곱해져 배제된 곳은 한 번만 어두워진다.
+// 힌트 서브시스템의 배제 텍스처를 반투명 검정으로 덮는다.
 void UWorldMapWidget::UpdateExclusionTexture()
 {
 	const UHintSubsystem* hints = GetWorld() ? GetWorld()->GetSubsystem<UHintSubsystem>() : nullptr;
-	const TArray<uint8>* mask = hints ? &hints->GetExclusionMask() : nullptr;
-	if (!exclusion_image_ || !mask || mask->IsEmpty())
+	UTexture2D* texture = hints ? hints->GetExclusionTexture() : nullptr;
+	if (!exclusion_image_ || !texture)
 	{
 		return;
 	}
-	constexpr int32 size = UHintSubsystem::EXCLUSION_MASK_SIZE;
-	exclusion_texture_ = UTexture2D::CreateTransient(size, size, PF_B8G8R8A8);
-	exclusion_texture_->Filter = TF_Bilinear;
-	exclusion_texture_->SRGB = false;
-	FTexture2DMipMap& mip = exclusion_texture_->GetPlatformData()->Mips[0];
-	FColor* pixels = static_cast<FColor*>(mip.BulkData.Lock(LOCK_READ_WRITE));
-	for (int32 index = 0; index < size * size; ++index)
-	{
-		pixels[index] = FColor(0, 0, 0, (*mask)[index] ? 255 : 0);
-	}
-	mip.BulkData.Unlock();
-	exclusion_texture_->UpdateResource();
-	exclusion_image_->SetBrushFromTexture(exclusion_texture_);
+	exclusion_image_->SetBrushFromTexture(texture);
 	exclusion_image_->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
