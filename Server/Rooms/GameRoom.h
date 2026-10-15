@@ -146,8 +146,6 @@ private:
 	void DigTreasure(const Player& digger);
 	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
 	void ProcessTimeLimit();
-	void ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p);
-	void ProcessSearches();
 	// 게임이 끝나고 GAME_END_WAIT_MS가 지나면 기록이 있는 부문마다 순위를 보내고 시상식이 끝날 시각을 정한다. 기록이 있는 부문이 없으면 바로 방으로 돌려보낸다.
 	void StartAward();
 	// 배제 판(블록 결과·돋보기 탐색 결과로 배제된 칸과 영역 지우기로 지운 칸)이 마지막으로 보낸 것과 다르면 배제 판 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 같으면 쓰지 않고 0을 돌려준다.

@@ -320,9 +320,9 @@ void UInventoryWidget::RefreshEquipment()
 		const EWeaponType weapon = EQUIPMENT_ORDER[index];
 		const FEquipmentDisplay display = character->GetWeaponDisplay(weapon);
 		equipment_names_[index]->SetText(display.name);
-		// 화면 아래 장비 표시와 같은 값이다. 총은 현재 탄 / 소지 탄, 곡괭이는 사용 가능 수와 충전 중이면 남은 시간이다. 돋보기는 넓은 탐지 돋보기 등급마다 가진 개수다.
-		equipment_ammo_[index]->SetText(weapon == EWeaponType::MAGNIFIER
-			? FText::Format(NSLOCTEXT("Inventory", "WideMagnifiers", "넓은 S {0} · A {1}"), FText::AsNumber(character->GetWideMagnifierCount(EHintGrade::S)), FText::AsNumber(character->GetWideMagnifierCount(EHintGrade::A)))
+		// 화면 아래 장비 표시와 같은 값이다. 총은 현재 탄 / 소지 탄, 곡괭이는 사용 가능 수와 충전 중이면 남은 시간이다. 돋보기는 쓰지 않는다.
+		equipment_ammo_[index]->SetText(!display.uses_ammo
+			? FText::GetEmpty()
 			: display.total_ammo.IsEmpty()
 			? FText::Format(NSLOCTEXT("Inventory", "Charges", "탄약 {0}"), FText::AsNumber(display.rounds))
 			: FText::Format(NSLOCTEXT("Inventory", "Ammo", "탄약 {0} / {1}"), FText::AsNumber(display.rounds), display.total_ammo));

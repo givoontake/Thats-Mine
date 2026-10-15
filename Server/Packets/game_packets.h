@@ -13,16 +13,14 @@ enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 enum class TowerKind : std::uint8_t { TOWER_02, TOWER_04 };
 
 // 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다.
-enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP, SEARCH };
+enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
 
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
 enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
 
-// 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 넓은 탐지 돋보기 앞까지는 얻으면 계속 적용되는 아이템이다.
-enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUGE_DECAY_DELAY, STUN_PROTECTION, MAGNIFIER_RADIUS, MAGNIFIER_COOLDOWN, WIDE_MAGNIFIER, COUNT };
+// 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 얻으면 그 게임 동안 계속 적용된다.
+enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUGE_DECAY_DELAY, STUN_PROTECTION, COUNT };
 
-// 탐색 요청과 결과에서 기본 돋보기를 뜻하는 등급 값. 넓은 탐지 돋보기는 HintGrade 값을 쓴다.
-constexpr std::uint8_t BASIC_MAGNIFIER_GRADE = 0xFF;
 // 시상식 부문. 탐색왕은 상자를 가장 많이 연 사람, 기절왕은 다른 플레이어를 가장 많이 기절시킨 사람이다.
 enum class AwardCategory : std::uint8_t { BOX_OPEN, STUN, COUNT };
 // 부문마다 시상대에 세우는 최대 인원
@@ -348,22 +346,6 @@ struct S2C_ITEM_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t kind;
 	std::uint8_t grade;
-};
-
-// 돋보기로 탐색을 시작한다. grade는 기본 돋보기면 BASIC_MAGNIFIER_GRADE, 넓은 탐지 돋보기면 그 등급이다. 서버는 MAGNIFIER_SEARCH_MS 뒤에 결과를 보낸다.
-struct C2S_SEARCH_PACKET {
-	PACKET_HEADER header;
-	std::uint8_t grade;
-};
-
-// 끝난 돋보기 탐색의 결과. 탐색한 사람에게만 보낸다. grade는 탐색 요청과 같은 값이고, 위치는 서버가 탐색 시작을 받았을 때의 캡슐 중심(cm, x·y)이다.
-// is_found면 그때 발밑에서 반경(cm) 안에 보물 바닥이 있다. 이 결과를 보낼 때 넓은 탐지 돋보기는 하나 쓰고, 기본 돋보기는 재사용 대기시간을 시작한다.
-struct S2C_SEARCH_RESULT_PACKET {
-	PACKET_HEADER header;
-	std::uint8_t grade;
-	bool is_found;
-	float location[2];
-	float radius;
 };
 
 // 아무도 보물을 찾지 못한 채 게임 제한시간이 끝났다. 보물 바닥 가운데 위치(cm)와 보물 방향(도)을 플레이 중인 방 전체에 보내고, GAME_END_WAIT_MS 뒤 방으로 돌아간다.

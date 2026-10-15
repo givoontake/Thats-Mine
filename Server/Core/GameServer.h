@@ -7,7 +7,6 @@
 #include "BoxCandidateData.h"
 #include "DirectionHintData.h"
 #include "ExOverlapped.h"
-#include "HintExclusionData.h"
 #include "HintObjectTree.h"
 #include "HitboxData.h"
 #include "MapData.h"
@@ -48,7 +47,6 @@ class GameServer
 	HintObjectTree hint_object_tree_; // 서버 시작 시 맵 데이터로 만든 뒤 읽기만 하는 힌트 물체 트리
 	DirectionHintData direction_hint_data_; // 서버 시작 시 맵 영역으로 만든 뒤 읽기만 하는 방향 힌트 기준
 	ViewHintData view_hint_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 보임 힌트 판정 위치
-	HintExclusionData hint_exclusion_data_; // 서버 시작 시 힌트 데이터로 만든 뒤 읽기만 하는 힌트 배제 영역
 
 	void PostAccept(AcceptOverlapped& accept_over);
 
@@ -70,7 +68,6 @@ public:
 	const HintObjectTree& GetHintObjectTree() const { return hint_object_tree_; }
 	const DirectionHintData& GetDirectionHintData() const { return direction_hint_data_; }
 	const ViewHintData& GetViewHintData() const { return view_hint_data_; }
-	const HintExclusionData& GetHintExclusionData() const { return hint_exclusion_data_; }
 
 	void SyncLobbyList(int session_index);
 

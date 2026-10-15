@@ -345,13 +345,6 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		ProcessHintPickup(*room_player, *reinterpret_cast<C2S_HINT_PICKUP_PACKET*>(packet));
 		break;
 	}
-	case C2S_SEARCH: {
-		if (room_state_.load() != RoomState::PLAY) break;
-		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
-		ProcessSearchStart(*room_player, *reinterpret_cast<C2S_SEARCH_PACKET*>(packet));
-		break;
-	}
 	case C2S_BLOCK_USE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
@@ -850,7 +843,6 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	ProcessLoadedPlayers();
 	ProcessGameStart();
 	ProcessAreaRemoval();
-	ProcessSearches();
 	ProcessTimeLimit();
 	// 시상식 중에는 게임 진행을 멈추고, 끝날 시각이 되면 방으로 돌려보낸다.
 	if (award_end_ms_ != 0) {
@@ -1007,11 +999,10 @@ static S2C_AMMO_PACKET MakeAmmoPacket(std::uint8_t weapon, const WeaponAmmo& amm
 }
 
 // 총 발사와 재장전은 서버 탄약 상태로, 곡괭이 휘두르기는 사용 가능 횟수로 확인해 인정한다.
-// 인정하지 않으면 그 사람에게 서버 상태를 보내 클라이언트를 맞춘다. 탐색은 탐색 시작 요청으로만 받고, 그 밖의 동작은 그대로 인정한다.
+// 인정하지 않으면 그 사람에게 서버 상태를 보내 클라이언트를 맞춘다. 그 밖의 동작은 그대로 인정한다.
 bool GameRoom::AcceptAction(Player& player, Session& session, const C2S_ACTION_PACKET& request_p)
 {
 	const PlayerAction action = static_cast<PlayerAction>(request_p.action);
-	if (action == PlayerAction::SEARCH) return false;
 	if (action == PlayerAction::MELEE && request_p.weapon == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
 		if (player.TryUsePickaxe(tick_time_ms_)) {
 			DigTreasure(player);
@@ -1074,13 +1065,12 @@ void GameRoom::ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& re
 }
 
 // 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
-// 최대치에 닿으면 진행 중인 탐색을 취소하고 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨리고, 쏜 사람의 기절왕 기록을 늘린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
+// 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨리고, 쏜 사람의 기절왕 기록을 늘린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
 void GameRoom::AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p)
 {
 	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
 	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
 		target.StopMovement();
-		target.CancelSearch();
 		S2C_STUN_PACKET stun_p;
 		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN };
 		stun_p.player_id = request_p.target_player_id;
@@ -1314,65 +1304,6 @@ void GameRoom::ProcessAreaRemoval()
 			session->SendPacket(buffer, sizeof(removal_p) + AppendExclusionBoard(buffer + sizeof(removal_p), room_player));
 		}
 		SendAreaRemovalTime(*session);
-	}
-}
-
-// 게임이 시작된 뒤 그 돋보기를 쓸 수 있으면 탐색을 시작하고, 다른 플레이어에게 탐색 동작을 중계한다.
-void GameRoom::ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p)
-{
-	if (!is_game_started_ || pending_action_count_ >= pending_actions_.size() || !searcher.StartSearch(request_p.grade, tick_time_ms_)) return;
-	auto& action_p = pending_actions_[pending_action_count_++];
-	action_p.header = { sizeof(action_p), S2C_ACTION };
-	action_p.player_id = searcher.GetSessionKey().player_id;
-	action_p.server_time_ms = tick_time_ms_;
-	action_p.action = static_cast<std::uint8_t>(PlayerAction::SEARCH);
-	action_p.weapon = static_cast<std::uint8_t>(WeaponType::MAGNIFIER);
-	searcher.GetPose().StartAction(action_p.action, action_p.weapon, tick_time_ms_);
-}
-
-// 탐색 시간이 끝난 플레이어의 탐색을 마친다. 시작 위치에서 벗어나지 않았으면 돋보기를 쓰고,
-// 시작한 발밑에서 보물 바닥까지 거리가 탐색 반경 안인지 탐색한 사람에게만 보낸다.
-// 찾았으면 구 밖, 못 찾았으면 구 안이 칸 전체를 덮는 칸을 배제하고, 배제 판이 바뀌면 결과 뒤에 이어 보낸다.
-// 칸 안 땅 높이는 범위(여유를 더한 최솟값~최댓값)로만 알아서, 칸의 가장 가까운·먼 수평 거리와 높이 범위의 가장 가까운·먼 높이 차로 판정한다.
-void GameRoom::ProcessSearches()
-{
-	for (auto& room_player : room_players_) {
-		if (!room_player.HasSession() || !room_player.IsSearchDue(tick_time_ms_) || !room_player.FinishSearch(tick_time_ms_)) continue;
-		const float* location = room_player.GetSearchLocation();
-		S2C_SEARCH_RESULT_PACKET result_p;
-		result_p.header = { static_cast<std::uint16_t>(sizeof(result_p)), S2C_SEARCH_RESULT };
-		result_p.grade = room_player.GetSearchGrade();
-		result_p.radius = room_player.GetSearchRadius();
-		const float dx = treasure_placement_.location.x - location[0];
-		const float dy = treasure_placement_.location.y - location[1];
-		const float dz = treasure_placement_.location.z - location[2];
-		const float radius_sq = result_p.radius * result_p.radius;
-		result_p.is_found = dx * dx + dy * dy + dz * dz <= radius_sq;
-		result_p.location[0] = location[0];
-		result_p.location[1] = location[1];
-		const HintExclusionData& exclusion_data = server_->GetHintExclusionData();
-		room_player.AddKeptExcludedCells(CollectCoveredCells([&](int cell, float x0, float x1, float y0, float y1) {
-			const float cx = location[0];
-			const float cy = location[1];
-			const float cz = location[2];
-			const DirectX::XMFLOAT2& heights = exclusion_data.GetCellHeightRange(cell);
-			const float low = heights.x - MAGNIFIER_HEIGHT_MARGIN;
-			const float high = heights.y + MAGNIFIER_HEIGHT_MARGIN;
-			if (result_p.is_found) {
-				const float near_x = std::clamp(cx, x0, x1) - cx;
-				const float near_y = std::clamp(cy, y0, y1) - cy;
-				const float near_z = std::max({ 0.0f, low - cz, cz - high });
-				return near_x * near_x + near_y * near_y + near_z * near_z > radius_sq;
-			}
-			const float far_x = std::max(std::abs(x0 - cx), std::abs(x1 - cx));
-			const float far_y = std::max(std::abs(y0 - cy), std::abs(y1 - cy));
-			const float far_z = std::max(std::abs(low - cz), std::abs(high - cz));
-			return far_x * far_x + far_y * far_y + far_z * far_z <= radius_sq;
-		}));
-		char buffer[sizeof(result_p) + sizeof(S2C_EXCLUSION_BOARD_PACKET)];
-		std::memcpy(buffer, &result_p, sizeof(result_p));
-		const int size = sizeof(result_p) + AppendExclusionBoard(buffer + sizeof(result_p), room_player);
-		if (auto session = FindSession(room_player)) session->SendPacket(buffer, size);
 	}
 }
 

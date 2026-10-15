@@ -106,8 +106,7 @@ void UPlayerAnimInstance::NativeUpdateAnimation(float delta_seconds)
 	// 고개는 모든 자세의 최종 출력에서 같은 목표를 즉시 바라본다. 상체 회전은 중복해서 더하지 않는다.
 	const FVector head_direction = character->GetActorQuat().RotateVector(FRotator(head_pitch, 0.0f, 0.0f).Vector());
 	head_look_location_ = character->GetMesh()->GetSocketLocation(TEXT("head")) + head_direction * 100000.0;
-	// 돋보기로 탐색하는 동안은 고개를 탐색 동작에 맡긴다.
-	head_look_alpha_ = FMath::FInterpConstantTo(head_look_alpha_, character->IsSearching() ? 0.0f : 1.0f, delta_seconds, 1.0f / POSE_ALPHA_BLEND_SECONDS);
+	head_look_alpha_ = FMath::FInterpConstantTo(head_look_alpha_, 1.0f, delta_seconds, 1.0f / POSE_ALPHA_BLEND_SECONDS);
 	if (is_holding_rifle_ || is_holding_pistol_)
 	{
 		const float target_pitch = FMath::Clamp(view_pitch, -FMath::Clamp(settings->aim_pitch_down_limit, 0.0f, 89.0f), FMath::Clamp(settings->aim_pitch_up_limit, 0.0f, 89.0f));

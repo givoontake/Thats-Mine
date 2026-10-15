@@ -54,7 +54,6 @@ void GameServer::StartServer()
 	if (!hint_object_tree_.Build(map_data_)) std::cerr << "Hint object tree build fail.. " << std::endl;
 	if (!direction_hint_data_.Build(map_region_data_)) std::cerr << "Direction hint data build fail.. " << std::endl;
 	if (!view_hint_data_.Load("Data/view_points.txt", map_region_data_)) std::cerr << "View hint data load fail.. " << std::endl;
-	if (!hint_exclusion_data_.Build(map_data_, map_region_data_, direction_hint_data_, view_hint_data_, hint_object_tree_)) std::cerr << "Hint exclusion data build fail.. " << std::endl;
 	bind(listen_socket_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_));
 	listen(listen_socket_, SOMAXCONN);
 	iocp_handle_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);

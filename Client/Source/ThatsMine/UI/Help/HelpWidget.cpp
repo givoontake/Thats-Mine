@@ -104,9 +104,9 @@ void UHelpWidget::RefreshContent()
 
 	AddHeading(NSLOCTEXT("Help", "ControlsHeading", "조작 키"));
 	AddLine(FText::Format(NSLOCTEXT("Help", "Move", "이동 {0} {1} {2} {3}, 점프 {4}"), key(EKeyAction::MOVE_FORWARD), key(EKeyAction::MOVE_LEFT), key(EKeyAction::MOVE_BACKWARD), key(EKeyAction::MOVE_RIGHT), key(EKeyAction::JUMP)));
-	AddLine(NSLOCTEXT("Help", "Mouse", "왼쪽 클릭: 곡괭이 휘두르기·총 쏘기·돋보기 탐색, 오른쪽 클릭: 저격총 조준"));
+	AddLine(NSLOCTEXT("Help", "Mouse", "왼쪽 클릭: 곡괭이 휘두르기·총 쏘기, 오른쪽 클릭: 저격총 조준"));
 	AddLine(FText::Format(NSLOCTEXT("Help", "Actions", "{0} 상호작용(상자 열기·두루마리 줍기), {1} 줍기, {2} 재장전"), key(EKeyAction::INTERACT), key(EKeyAction::PICKUP), key(EKeyAction::RELOAD)));
-	AddLine(FText::Format(NSLOCTEXT("Help", "Weapons", "{0} 저격총, {1} 권총, {2} 곡괭이, {3} 돋보기(돋보기를 든 채 다시 누르면 기본·넓은 탐지 돋보기를 바꿈)"), key(EKeyAction::WEAPON_SNIPER), key(EKeyAction::WEAPON_PISTOL), key(EKeyAction::WEAPON_PICKAXE), key(EKeyAction::WEAPON_MAGNIFIER)));
+	AddLine(FText::Format(NSLOCTEXT("Help", "Weapons", "{0} 저격총, {1} 권총, {2} 곡괭이, {3} 돋보기"), key(EKeyAction::WEAPON_SNIPER), key(EKeyAction::WEAPON_PISTOL), key(EKeyAction::WEAPON_PICKAXE), key(EKeyAction::WEAPON_MAGNIFIER)));
 	AddLine(FText::Format(NSLOCTEXT("Help", "Windows", "{0} 인벤토리, {1} 지도, {2} 도움말, ESC 메뉴(설정·나가기)"), key(EKeyAction::INVENTORY), key(EKeyAction::MAP), key(EKeyAction::HELP)));
 	AddLine(FText::Format(NSLOCTEXT("Help", "Ping", "{0} 핑 찍기: 화면 가운데 지점에 핑을 찍어 내 위치에서의 거리를 봅니다. 핑은 나만 보이고 미니맵·지도에도 표시됩니다."), key(EKeyAction::PING)));
 
@@ -120,15 +120,14 @@ void UHelpWidget::RefreshContent()
 	AddLine(NSLOCTEXT("Help", "Boxes", "땅 위의 나무 상자와 나무 위·공중의 선물 상자를 열면 힌트, 탄약, 아이템을 얻습니다. 선물 상자는 총으로 쏴서도 열 수 있습니다."));
 	AddLine(NSLOCTEXT("Help", "Categories", "힌트는 지역을 기준으로 방향을 알려 주는 위치 힌트와, 보물 30m·10m 안의 물체 개수를 알려 주는 단서 힌트가 있습니다. 인벤토리 힌트 탭에서 분류별로 보고, 별을 눌러 즐겨찾기한 힌트는 위에 먼저 보입니다."));
 	AddLine(NSLOCTEXT("Help", "Distance", "힌트와 돋보기, 핑의 거리는 높이까지 포함한 거리입니다."));
-	AddLine(NSLOCTEXT("Help", "Exclusion", "돋보기 탐색 결과, 블록 사용 결과, 지역 공개로 보물이 없는 영역이 지도에 표시됩니다."));
+	AddLine(NSLOCTEXT("Help", "Exclusion", "블록 사용 결과와 지역 공개로 보물이 없는 영역이 지도에 표시됩니다."));
 	AddLine(NSLOCTEXT("Help", "Drop", "기절하면 가진 힌트 하나를 두루마리로 떨어뜨립니다. 떨어진 두루마리는 누구나 주울 수 있습니다."));
 
 	AddHeading(NSLOCTEXT("Help", "CombatHeading", "무기·기절·아이템"));
 	AddLine(NSLOCTEXT("Help", "Stun", "저격총·권총으로 다른 플레이어를 맞히면 기절 게이지가 오르고, 가득 차면 잠시 기절합니다. 기절이 끝나면 한동안 보호됩니다."));
 	AddLine(NSLOCTEXT("Help", "Ammo", "탄약은 상자에서 얻습니다."));
-	AddLine(NSLOCTEXT("Help", "Magnifier", "기본 돋보기는 언제나 가지고 있고, 쓴 자리 주변에 보물이 있는지 알려 줍니다. 한 번 쓰면 재사용 대기시간이 지나야 다시 쓸 수 있습니다."));
-	AddLine(NSLOCTEXT("Help", "WideMagnifier", "넓은 탐지 돋보기는 상자에서 얻는 1회용 아이템으로, 훨씬 넓은 범위를 한 번 탐지합니다."));
-	AddLine(NSLOCTEXT("Help", "Items", "S·A 등급 아이템은 곡괭이 충전, 기절 게이지, 보호 시간, 돋보기 범위·대기시간을 좋게 하고 게임 내내 유지됩니다."));
+	AddLine(NSLOCTEXT("Help", "Magnifier", "돋보기를 들고 있으면 30m 안에 있는 힌트 물체의 종류와 수를 화면 오른쪽에 보여 줍니다."));
+	AddLine(NSLOCTEXT("Help", "Items", "S·A 등급 아이템은 곡괭이 충전, 기절 게이지, 보호 시간을 좋게 하고 게임 내내 유지됩니다."));
 	content_->ScrollToStart();
 }
 

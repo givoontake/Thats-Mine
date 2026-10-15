@@ -121,25 +121,13 @@ constexpr int STUN_DURATION_MS = 5000; // 기절 시간. 기절 동안 서버는
 constexpr int STUN_PROTECTION_MS = 30000; // 기절이 끝난 뒤 보호 시간. 보호 동안 명중당해도 기절 게이지가 오르지 않는다.
 
 // 아이템. 상자에서 얻는 S·A 등급 아이템이고, 등급별 값은 S, A 순서다.
-// 넓은 탐지 돋보기 외의 아이템은 얻은 뒤 그 게임 동안 계속 적용되고 기절해도 잃지 않는다. 같은 종류를 또 얻으면 가장 높은 등급만 적용한다.
-// 넓은 탐지 돋보기는 가진 개수만큼 한 번씩 쓴다. 상자는 종류마다 등급별 개수 × 글로벌 배수만큼 만든다.
+// 아이템은 얻은 뒤 그 게임 동안 계속 적용되고 기절해도 잃지 않는다. 같은 종류를 또 얻으면 가장 높은 등급만 적용한다.
+// 상자는 종류마다 등급별 개수 × 글로벌 배수만큼 만든다.
 constexpr int ITEM_BOX_COUNTS[] = { 1, 2 };
 constexpr int ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[] = { 20000, 10000 }; // 곡괭이 1번이 차는 시간에서 빼는 시간
 constexpr float ITEM_STUN_GAUGE_DECAYS_PER_SECOND[] = { 6.0f, 5.0f }; // 기절 게이지 초당 감소량
 constexpr int ITEM_STUN_GAUGE_DECAY_DELAYS_MS[] = { 3000, 4000 }; // 기절 게이지 감소 대기 시간
 constexpr int ITEM_STUN_PROTECTIONS_MS[] = { 60000, 45000 }; // 기절이 끝난 뒤 보호 시간
-constexpr float ITEM_MAGNIFIER_RADII[] = { 3000.0f, 4000.0f }; // 기본 돋보기 탐색 반경(cm). 좁을수록 찾았을 때 보물 자리를 더 좁힌다.
-constexpr int ITEM_MAGNIFIER_COOLDOWNS_MS[] = { 80000, 100000 }; // 기본 돋보기 재사용 대기시간
-// 돋보기 탐색. 클릭하면 MAGNIFIER_SEARCH_MS 동안 움직이지 않고 탐색한 뒤, 탐색을 시작한 발밑에서 보물 바닥까지 거리가 반경 안인지 알려 준다.
-// 기본 돋보기는 모두 처음부터 가지고 횟수 제한 없이 쓰지만, 탐색을 마칠 때마다 재사용 대기시간이 지나야 다시 쓸 수 있다. 넓은 탐지 돋보기는 1회용이다.
-constexpr float MAGNIFIER_RADIUS = 5000.0f; // 기본 돋보기 탐색 반경(cm)
-constexpr int MAGNIFIER_COOLDOWN_MS = 120000; // 기본 돋보기 재사용 대기시간
-constexpr float WIDE_MAGNIFIER_RADII[] = { 20000.0f, 10000.0f }; // 넓은 탐지 돋보기 탐색 반경(cm)
-constexpr int MAGNIFIER_SEARCH_MS = 2000;
-// 못 찾은 탐색으로 칸을 배제할 때 칸의 땅 높이 범위를 위아래로 넓히는 여유(cm). 땅 높이를 MAGNIFIER_HEIGHT_SAMPLE_STEP 간격으로만 재서 생기는 오차를 덮는다.
-constexpr float MAGNIFIER_HEIGHT_MARGIN = 300.0f;
-constexpr float MAGNIFIER_HEIGHT_SAMPLE_STEP = 500.0f;
-constexpr float MAGNIFIER_MOVE_TOLERANCE = 100.0f; // 탐색이 끝날 때 시작 위치에서 벗어나도 되는 수평 거리(cm). 벗어나면 탐색을 취소하고 돋보기를 쓰지 않은 것으로 본다.
 
 // 블록 상자. 블록(block_pieces.h)마다 등급과 상관없이 BLOCK_BOX_COUNT × 칸 수별 배수 × 글로벌 배수만큼 상자를 만든다.
 // 얻은 블록은 하나마다 그 게임 동안 아무 때나 한 번 쓸 수 있고, 같은 블록을 여러 개 가질 수 있으며, 기절해도 잃지 않는다.

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <string>
 #include <vector>
 #include "hint_types.h"
 
@@ -25,4 +26,6 @@ public:
 	bool IsLoaded() const { return is_loaded_; }
 	// (x, y, z)에서 거리 radius(cm) 안에 있는 물체 수를 종류마다 센다.
 	HintKindCounts CountKinds(float x, float y, float z, float radius) const;
+	// 트리의 점을 클라이언트 돋보기가 읽는 힌트 물체 목록 파일(hint_object_file.h)로 쓴다.
+	bool Export(const std::string& file_path) const;
 };

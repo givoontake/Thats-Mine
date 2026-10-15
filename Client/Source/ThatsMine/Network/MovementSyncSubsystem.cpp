@@ -511,7 +511,7 @@ void UMovementSyncSubsystem::HandleActionPacket(const TArray<uint8>& payload)
 	}
 	S2C_ACTION_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.action > static_cast<uint8>(EPlayerAction::SEARCH))
+	if (packet.action > static_cast<uint8>(EPlayerAction::PICKUP))
 	{
 		return;
 	}

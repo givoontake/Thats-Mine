@@ -25,7 +25,6 @@ add_executable(GameServer
     Game/Player.cpp
     Game/Boxes/BoxCandidateData.cpp
     Game/Hints/DirectionHintData.cpp
-    Game/Hints/HintExclusionData.cpp
     Game/Hints/HintObjectTree.cpp
     Game/Hints/ViewHintData.cpp
     Game/Treasure/treasure_placement.cpp
@@ -71,6 +70,7 @@ add_executable(GameServer
     Common/enum_class.h
     Common/error_code.h
     Common/hint_meshes.h
+    Common/hint_object_file.h
     Common/IndexRegistry.h
     Common/info_code.h
     Common/settings.h
@@ -89,7 +89,6 @@ add_executable(GameServer
     Game/Boxes/box_types.h
     Game/Boxes/BoxCandidateData.h
     Game/Hints/DirectionHintData.h
-    Game/Hints/HintExclusionData.h
     Game/Hints/HintObjectTree.h
     Game/Hints/ViewHintData.h
     Game/Hints/hint_types.h

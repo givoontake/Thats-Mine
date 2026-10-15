@@ -46,18 +46,11 @@ class Player
 	long long pickaxe_charge_start_ms_ = 0;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
 	std::vector<std::uint32_t> hint_indices_;
-	// 이번 게임에서 얻은 아이템. 넓은 탐지 돋보기 앞 종류는 가진 가장 높은 등급이고 없으면 NO_ITEM_GRADE다. 넓은 탐지 돋보기는 등급마다 가진 개수다.
-	std::array<std::uint8_t, static_cast<std::size_t>(ItemKind::WIDE_MAGNIFIER)> item_grades_;
-	std::array<int, std::size(WIDE_MAGNIFIER_RADII)> wide_magnifier_counts_{};
-	// 기본 돋보기를 다시 쓸 수 있게 되는 시각(ms). 0이면 바로 쓸 수 있다.
-	long long magnifier_ready_ms_ = 0;
-	// 진행 중인 돋보기 탐색의 등급(BASIC_MAGNIFIER_GRADE면 기본 돋보기), 시작 위치(cm, x·y와 발밑 z), 끝나는 시각. 끝나는 시각이 0이면 탐색 중이 아니다.
-	std::uint8_t search_grade_ = 0;
-	float search_location_[3] = {};
-	long long search_end_ms_ = 0;
+	// 이번 게임에서 얻은 아이템. 종류마다 가진 가장 높은 등급이고 없으면 NO_ITEM_GRADE다.
+	std::array<std::uint8_t, static_cast<std::size_t>(ItemKind::COUNT)> item_grades_;
 	// 이번 게임에서 얻고 아직 쓰지 않은 블록 수. BLOCK_PIECES 번호 순서다.
 	std::array<std::uint8_t, BLOCK_PIECE_COUNT> block_counts_{};
-	// 블록 결과와 돋보기 탐색 결과로 배제된 칸 모음. 기절해도 잃지 않는다.
+	// 블록 결과로 배제된 칸 모음. 기절해도 잃지 않는다.
 	std::uint64_t kept_excluded_cells_ = 0;
 	// 마지막으로 보낸 배제 판
 	std::uint64_t sent_exclusion_board_ = 0;
@@ -74,8 +67,6 @@ class Player
 	int GetPickaxeChargeMs() const;
 	float GetStunGaugeDecayPerSecond() const;
 	int GetStunGaugeDecayDelayMs() const;
-	float GetMagnifierRadius() const;
-	int GetMagnifierCooldownMs() const;
 
 	void ClearMoveState();
 
@@ -148,21 +139,10 @@ public:
 	int GetPickaxeCharges() const { return pickaxe_charges_; }
 	// 다음 1번이 찰 때까지 남은 시간(ms). 다 차 있으면 0이다.
 	long long GetPickaxeChargeRemainingMs(long long time_ms) const;
-	// 아이템을 가진다. 넓은 탐지 돋보기는 개수를 늘리고, 다른 종류는 지금보다 높은 등급일 때만 바꾼다.
+	// 아이템을 가진다. 지금보다 높은 등급일 때만 바꾼다.
 	void AddItem(ItemKind kind, std::uint8_t grade);
-	// 아이템을 모두 잃고 진행 중인 탐색과 기본 돋보기 재사용 대기시간을 없앤다.
+	// 아이템을 모두 잃는다.
 	void ResetItems();
-	// 탐색 중이 아니고, 기본 돋보기면 재사용 대기시간이 지났고 넓은 탐지 돋보기면 그 등급이 있을 때 지금 위치에서 탐색을 시작한다.
-	bool StartSearch(std::uint8_t grade, long long time_ms);
-	void CancelSearch() { search_end_ms_ = 0; }
-	bool IsSearchDue(long long time_ms) const { return search_end_ms_ != 0 && time_ms >= search_end_ms_; }
-	std::uint8_t GetSearchGrade() const { return search_grade_; }
-	const float* GetSearchLocation() const { return search_location_; }
-	// 진행 중인 탐색의 반경(cm). 기본 돋보기는 가진 아이템을 적용한 값이다.
-	float GetSearchRadius() const;
-	// 끝난 탐색을 마친다. 시작 위치에서 MAGNIFIER_MOVE_TOLERANCE 넘게 벗어나지 않았으면
-	// 넓은 탐지 돋보기는 하나 쓰고 기본 돋보기는 재사용 대기시간을 시작한 뒤 true를 돌려준다.
-	bool FinishSearch(long long time_ms);
 	// 블록을 하나 더 가진다. 같은 블록을 여러 개 가질 수 있다.
 	void AddBlock(std::uint8_t piece) { if (block_counts_[piece] < UINT8_MAX) ++block_counts_[piece]; }
 	bool CanUseBlock(std::uint8_t piece) const { return piece < BLOCK_PIECE_COUNT && block_counts_[piece] > 0; }

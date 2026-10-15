@@ -20,7 +20,7 @@ class UInputAction;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UPhysicsAsset;
-class USearchGaugeWidget;
+class UMagnifierCountWidget;
 class UStunGaugeWidget;
 class UHintPopupWidget;
 class UInteractPromptWidget;
@@ -107,20 +107,14 @@ public:
 	FOnEquipmentChanged on_equipment_changed_;
 	FOnHintsChanged on_hints_changed_;
 
-	// 상자에서 얻은 아이템을 가지고 아이템 획득 안내를 띄운다. 넓은 탐지 돋보기는 개수를 늘리고, 다른 종류는 지금보다 높은 등급일 때만 바꾼다.
+	// 상자에서 얻은 아이템을 가지고 아이템 획득 안내를 띄운다. 지금보다 높은 등급일 때만 바꾼다.
 	void AddItem(EItemKind kind, EHintGrade grade);
 	// 힌트·아이템·탄약·블록 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. 등급은 아이템만 넘긴다.
 	void ShowAcquirePopup(const FText& text, const FText& title, TOptional<EHintGrade> grade);
 	// 장비 표시(화면 아래 장비·에임, 인벤토리)를 지금 상태로 다시 그린다.
 	void UpdateEquipmentDisplay();
-	// 서버가 탐색을 마쳤다. 기본 돋보기(grade가 비어 있음)는 재사용 대기시간을 시작하고, 넓은 탐지 돋보기는 그 등급을 하나 쓴다.
-	// 들고 있는 넓은 탐지 돋보기가 다 떨어지면 기본 돋보기로 바꾼다.
-	void ConsumeMagnifier(TOptional<EHintGrade> grade);
-	// 가진 아이템을 인벤토리에 보일 순서(넓은 탐지 돋보기 먼저, 그다음 종류 순)로 돌려준다.
+	// 가진 아이템을 인벤토리에 보일 순서(종류 순)로 돌려준다.
 	TArray<FInventoryItem> GetInventoryItems() const;
-	int32 GetWideMagnifierCount(EHintGrade grade) const { return wide_magnifier_counts_[static_cast<int32>(grade)]; }
-	// 돋보기로 탐색 중인지. 탐색 중에는 움직이지 않고 고개도 탐색 동작을 따른다.
-	bool IsSearching() const { return is_searching_; }
 	FOnItemsChanged on_items_changed_;
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Weapon")
@@ -263,7 +257,7 @@ private:
 	TObjectPtr<UDamageDirectionWidget> damage_direction_widget_;
 
 	UPROPERTY(Transient)
-	TObjectPtr<USearchGaugeWidget> search_gauge_widget_;
+	TObjectPtr<UMagnifierCountWidget> magnifier_count_widget_;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInteractPromptWidget> interact_prompt_widget_;
@@ -317,16 +311,8 @@ private:
 	double protection_end_time_ = 0.0;
 	FTimerHandle protection_timer_;
 
-	// 넓은 탐지 돋보기 앞 아이템 종류마다 가진 가장 높은 등급. 없으면 비어 있다.
-	TOptional<EHintGrade> item_grades_[static_cast<int32>(EItemKind::WIDE_MAGNIFIER)];
-	// 등급마다 가진 넓은 탐지 돋보기 개수와, 클릭하면 쓸 돋보기. 비어 있으면 기본 돋보기, 등급이 있으면 그 등급의 넓은 탐지 돋보기다.
-	int32 wide_magnifier_counts_[static_cast<int32>(EHintGrade::A) + 1] = {};
-	TOptional<EHintGrade> magnifier_grade_;
-	// 기본 돋보기를 다시 쓸 수 있게 되는 월드 시각(초)과, 그때까지 남은 시간 표시를 고치는 타이머
-	double magnifier_ready_time_ = 0.0;
-	FTimerHandle magnifier_cooldown_timer_;
-	bool is_searching_ = false;
-	FTimerHandle search_timer_;
+	// 아이템 종류마다 가진 가장 높은 등급. 없으면 비어 있다.
+	TOptional<EHintGrade> item_grades_[static_cast<int32>(EItemKind::COUNT)];
 
 	// 키 설정의 키로 동작 입력을 묶는다. 이동은 입력 매핑으로 받아 여기서 묶지 않는다.
 	void BindGameKeys(UInputComponent* input);
@@ -353,13 +339,6 @@ private:
 	void EndProtection();
 	// 머리 위 상태 이펙트를 켜고 끈다.
 	void SetHeadEffectActive(const TSoftObjectPtr<UNiagaraSystem>& effect, TObjectPtr<UNiagaraComponent>& component, bool is_active);
-	// 들고 있는 돋보기로 탐색 동작을 시작하고 서버에 탐색을 요청한다. 기본 돋보기는 재사용 대기시간이 지나야 쓴다.
-	void SearchWithMagnifier();
-	// 기본 돋보기 남은 재사용 대기시간 표시를 고치고, 다 되면 표시 타이머를 멈춘다.
-	void UpdateMagnifierCooldown();
-	// 탐색 상태를 MAGNIFIER_SEARCH_MS 동안 둔다. 내 캐릭터면 화면 가운데에 탐색 게이지를 채운다.
-	void StartSearch();
-	void EndSearch();
 	// 화면 중앙이 가리키는 쪽으로 캐릭터 중심에서 1m 안에 있는, 아직 열리지 않은 상자. 없으면 nullptr이다.
 	const AHintBox* FindInteractBox() const;
 	// 열 수 있는 상자나 주울 수 있는 두루마리가 있으면 상호작용 안내를 보인다.
@@ -370,5 +349,4 @@ private:
 	double GetPickaxeChargeSeconds() const;
 	float GetStunGaugeDecayPerSecond() const;
 	float GetStunGaugeDecayDelay() const;
-	double GetMagnifierCooldownSeconds() const;
 };

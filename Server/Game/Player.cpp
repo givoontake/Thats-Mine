@@ -200,26 +200,9 @@ int Player::GetStunProtectionMs() const
 	return grade == NO_ITEM_GRADE ? STUN_PROTECTION_MS : ITEM_STUN_PROTECTIONS_MS[grade];
 }
 
-float Player::GetMagnifierRadius() const
-{
-	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::MAGNIFIER_RADIUS)];
-	return grade == NO_ITEM_GRADE ? MAGNIFIER_RADIUS : ITEM_MAGNIFIER_RADII[grade];
-}
-
-int Player::GetMagnifierCooldownMs() const
-{
-	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::MAGNIFIER_COOLDOWN)];
-	return grade == NO_ITEM_GRADE ? MAGNIFIER_COOLDOWN_MS : ITEM_MAGNIFIER_COOLDOWNS_MS[grade];
-}
-
 void Player::AddItem(ItemKind kind, std::uint8_t grade)
 {
-	if (grade >= wide_magnifier_counts_.size()) return;
-	if (kind == ItemKind::WIDE_MAGNIFIER) {
-		++wide_magnifier_counts_[grade];
-		return;
-	}
-	if (kind >= ItemKind::WIDE_MAGNIFIER) return;
+	if (grade >= std::size(ITEM_BOX_COUNTS) || kind >= ItemKind::COUNT) return;
 	// 등급 값은 높은 등급일수록 작다.
 	std::uint8_t& current = item_grades_[static_cast<std::size_t>(kind)];
 	if (current == NO_ITEM_GRADE || grade < current) current = grade;
@@ -228,9 +211,6 @@ void Player::AddItem(ItemKind kind, std::uint8_t grade)
 void Player::ResetItems()
 {
 	item_grades_.fill(NO_ITEM_GRADE);
-	wide_magnifier_counts_.fill(0);
-	magnifier_ready_ms_ = 0;
-	search_end_ms_ = 0;
 }
 
 void Player::UseBlock(std::uint8_t piece, std::uint64_t excluded_cells)
@@ -244,36 +224,6 @@ void Player::ResetBlocks()
 	block_counts_.fill(0);
 	kept_excluded_cells_ = 0;
 	sent_exclusion_board_ = 0;
-}
-
-bool Player::StartSearch(std::uint8_t grade, long long time_ms)
-{
-	if (search_end_ms_ != 0 || !HasMoveState()) return false;
-	if (grade == BASIC_MAGNIFIER_GRADE) {
-		// 클라이언트는 결과를 받은 순간부터 대기시간을 세므로, 늦게 받은 만큼 봐준다.
-		if (time_ms < magnifier_ready_ms_ - AMMO_LATENCY_ALLOWANCE_MS) return false;
-	}
-	else if (grade >= wide_magnifier_counts_.size() || wide_magnifier_counts_[grade] <= 0) return false;
-	search_grade_ = grade;
-	search_location_[0] = move_state_.location[0];
-	search_location_[1] = move_state_.location[1];
-	search_location_[2] = move_state_.location[2] - CHARACTER_CAPSULE_HALF_HEIGHT;
-	search_end_ms_ = time_ms + MAGNIFIER_SEARCH_MS;
-	return true;
-}
-
-float Player::GetSearchRadius() const
-{
-	return search_grade_ == BASIC_MAGNIFIER_GRADE ? GetMagnifierRadius() : WIDE_MAGNIFIER_RADII[search_grade_];
-}
-
-bool Player::FinishSearch(long long time_ms)
-{
-	search_end_ms_ = 0;
-	if (std::hypot(move_state_.location[0] - search_location_[0], move_state_.location[1] - search_location_[1]) > MAGNIFIER_MOVE_TOLERANCE) return false;
-	if (search_grade_ == BASIC_MAGNIFIER_GRADE) magnifier_ready_ms_ = time_ms + GetMagnifierCooldownMs();
-	else --wide_magnifier_counts_[search_grade_];
-	return true;
 }
 
 bool Player::ClaimShot(std::uint8_t weapon)
