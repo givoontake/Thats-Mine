@@ -17,6 +17,7 @@
 #include "Engine/GameInstance.h"
 #include "GameFramework/GameUserSettings.h"
 #include "CycleOptionRow.h"
+#include "Settings/AudioSettingsSubsystem.h"
 #include "Settings/FrameRateSettingsSubsystem.h"
 #include "Player/ControlSettingsSubsystem.h"
 #include "Settings/KeyBindingSubsystem.h"
@@ -224,6 +225,13 @@ void USettingsWidget::LoadSavedSettings()
 		zoom_sensitivity_->SetValue(settings->GetZoomSensitivity());
 	}
 	UpdateSensitivityLabels(0.0f);
+	if (const UAudioSettingsSubsystem* audio = GetGameInstance() ? GetGameInstance()->GetSubsystem<UAudioSettingsSubsystem>() : nullptr)
+	{
+		master_volume_->SetValue(audio->GetMasterVolume());
+		music_volume_->SetValue(audio->GetMusicVolume());
+		effects_volume_->SetValue(audio->GetEffectsVolume());
+	}
+	UpdateVolumeLabels(0.0f);
 	UpdateGraphicsRows();
 }
 
@@ -479,6 +487,11 @@ void USettingsWidget::ApplySettings()
 		control->SetZoomSensitivity(zoom_sensitivity_->GetValue());
 		control->SaveConfig();
 	}
+	if (UAudioSettingsSubsystem* audio = GetGameInstance() ? GetGameInstance()->GetSubsystem<UAudioSettingsSubsystem>() : nullptr)
+	{
+		audio->SetVolumes(master_volume_->GetValue(), music_volume_->GetValue(), effects_volume_->GetValue());
+		audio->SaveConfig();
+	}
 	capturing_action_ = INDEX_NONE;
 	GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>()->SetKeys(pending_keys_);
 	UpdateKeyTexts();
@@ -503,6 +516,11 @@ void USettingsWidget::ResetToDefaults()
 {
 	mouse_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
 	zoom_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
+	for (USlider* slider : { master_volume_.Get(), music_volume_.Get(), effects_volume_.Get() })
+	{
+		slider->SetValue(UAudioSettingsSubsystem::DEFAULT_VOLUME);
+	}
+	UpdateVolumeLabels(0.0f);
 	for (int32 action = 0; action < pending_keys_.Num(); ++action)
 	{
 		pending_keys_[action] = UKeyBindingSubsystem::GetDefaultKey(static_cast<EKeyAction>(action));

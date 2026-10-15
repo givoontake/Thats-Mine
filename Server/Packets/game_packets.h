@@ -244,10 +244,11 @@ struct C2S_BOX_OPEN_PACKET {
 	std::uint8_t weapon;
 };
 
-// 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보낸다.
+// 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보내고, 연 사람만 상자 여는 소리를 재생한다.
 struct S2C_BOX_OPEN_PACKET {
 	PACKET_HEADER header;
 	std::uint16_t box;
+	bool is_opener;
 };
 
 // 연 상자에 든 힌트. 연 사람에게만 상자 열림 패킷 뒤에 이어 보낸다. 탄약 상자는 힌트 대신 탄약 상태를 보낸다.

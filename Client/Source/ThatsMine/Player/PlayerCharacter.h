@@ -28,6 +28,7 @@ class UMinimapWidget;
 class UCoordinateWidget;
 class UPingMarkerWidget;
 class UDecalComponent;
+class USoundBase;
 class AHintBox;
 class UUserWidget;
 struct FInputActionValue;
@@ -46,6 +47,9 @@ class THATSMINE_API APlayerCharacter : public ACharacter
 	GENERATED_BODY()
 
 public:
+	// 무기를 바꾼 뒤 쓸 수 있을 때까지 시간(초). 장착 동작은 이 시간에 맞춰 재생하고, 장착 동작이 없는 무기도 이 시간 동안 쓸 수 없다.
+	static constexpr float EQUIP_DURATION = 0.5f;
+
 	APlayerCharacter();
 	virtual void PawnClientRestart() override;
 	virtual void UnPossessed() override;
@@ -145,6 +149,8 @@ public:
 	bool IsAiming() const;
 
 	void ProcessMeleeHit(int32 montage_instance_id);
+	// 발이 땅에 닿을 때 발밑 바닥 종류에 맞는 발소리를 재생한다. 이동 애니메이션의 발소리 알림이 부른다.
+	void PlayFootstep();
 
 	UPROPERTY(BlueprintAssignable, Category = "Player|Combat")
 	FOnMeleeHit on_melee_hit_;
@@ -272,6 +278,12 @@ private:
 	// 곡괭이를 든 내 캐릭터 발밑에 보물 발견 범위를 그리는 데칼
 	UPROPERTY(Transient)
 	TObjectPtr<UDecalComponent> pickaxe_range_decal_;
+
+	// 바닥 종류(풀·돌·나무) 순서로 종류마다 같은 수의 변형을 둔 발소리
+	UPROPERTY()
+	TArray<TObjectPtr<USoundBase>> footstep_sounds_;
+	// 같은 발소리가 연달아 나지 않게 기억하는 직전 변형 번호
+	int32 last_footstep_variation_ = INDEX_NONE;
 	FTimerHandle interact_prompt_timer_;
 
 	TMap<EWeaponType, FWeaponAmmoState> weapon_ammo_;
@@ -286,7 +298,7 @@ private:
 	int32 pickaxe_charges_ = 3;
 
 	bool is_equipping_ = false;
-	uint32 equip_id_ = 0;
+	FTimerHandle equip_timer_;
 	uint32 action_id_ = 0;
 	int32 active_montage_instance_id_ = INDEX_NONE;
 	bool has_pending_melee_hit_ = false;
@@ -325,6 +337,8 @@ private:
 	void FinishAction(uint32 action_id);
 	void FireHitscan(const FHitscanSettings& settings);
 	void PlayMuzzleEffect(const FHitscanSettings& settings);
+	void PlayFireSound(const FHitscanSettings& settings) const;
+	void PlayReloadSound(EWeaponType weapon) const;
 	void BeginReload(EWeaponType weapon);
 	void FinishReload(EWeaponType weapon);
 	void PlayReloadAnimation(EWeaponType weapon);

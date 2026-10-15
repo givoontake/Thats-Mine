@@ -16,11 +16,16 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "InputActionValue.h"
+#include "LandscapeProxy.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Sound/SoundBase.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Player/ControlSettingsSubsystem.h"
 #include "Settings/KeyBindingSubsystem.h"
 #include "Interaction/BoxLayoutSubsystem.h"
@@ -83,6 +88,33 @@ static constexpr float PICKAXE_CHARGE_DISPLAY_INTERVAL = 0.25f;
 static constexpr float SEARCH_GAUGE_CENTER_OFFSET = 90.0f;
 // 상호작용 안내를 보일지 다시 확인하는 간격(초)
 static constexpr float INTERACT_PROMPT_INTERVAL = 0.1f;
+// 들리는 거리 끝에서 듣는 총소리·재장전·발소리 크기 비율
+static constexpr float DISTANT_SOUND_MIN_VOLUME = 0.1f;
+// 다른 캐릭터 재장전 소리가 들리는 거리(cm)
+static constexpr float RELOAD_SOUND_DISTANCE = 3000.0f;
+// 다른 캐릭터 발소리가 들리는 거리(cm)
+static constexpr float FOOTSTEP_SOUND_DISTANCE = 5000.0f;
+// 발밑을 찾을 때 캡슐 바닥보다 더 내려가 보는 깊이(cm)
+static constexpr double FOOTSTEP_TRACE_DEPTH = 50.0;
+// 발소리 바닥 종류 이름. 물리 표면 SurfaceType1~3과 같은 순서이고, 에셋 이름에 쓴다.
+static constexpr const TCHAR* FOOTSTEP_SURFACES[] = { TEXT("Grass"), TEXT("Stone"), TEXT("Wood") };
+// 바닥 종류마다 발소리 변형 수
+static constexpr int32 FOOTSTEP_VARIATIONS = 3;
+
+DEFINE_LOG_CATEGORY_STATIC(LogFootstep, Log, All);
+
+// 듣는 내 캐릭터가 location에서 distance 안에 있으면 거리에 따라 100%에서 DISTANT_SOUND_MIN_VOLUME까지 줄인 소리 크기, 밖이면 0이다.
+static float GetHeardVolume(const UWorld* world, const FVector& location, float distance)
+{
+	const APlayerController* controller = world ? world->GetFirstPlayerController() : nullptr;
+	const APawn* listener = controller ? controller->GetPawn() : nullptr;
+	if (!listener)
+	{
+		return 0.0f;
+	}
+	const float ratio = static_cast<float>(FVector::Dist(location, listener->GetActorLocation())) / FMath::Max(1.0f, distance);
+	return ratio > 1.0f ? 0.0f : FMath::Lerp(1.0f, DISTANT_SOUND_MIN_VOLUME, ratio);
+}
 
 // 몽타주를 도중에 멈출 때도 다른 전환과 같은 관성 보간으로 잇는다.
 static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
@@ -95,6 +127,14 @@ static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
 APlayerCharacter::APlayerCharacter()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	for (const TCHAR* surface : FOOTSTEP_SURFACES)
+	{
+		for (int32 variation = 1; variation <= FOOTSTEP_VARIATIONS; ++variation)
+		{
+			ConstructorHelpers::FObjectFinder<USoundBase> sound(*FString::Printf(TEXT("/Game/Thats_Mine/Effects/Sounds/SW_Footstep%s%02d"), surface, variation));
+			footstep_sounds_.Add(sound.Object);
+		}
+	}
 	GetCharacterMovement()->AirControl = 0.5f;
 	GetCharacterMovement()->AirControlBoostMultiplier = 1.0f;
 
@@ -511,7 +551,6 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	const bool has_weapon_changed = current_weapon_ != weapon;
 	if (has_weapon_changed)
 	{
-		++equip_id_;
 		is_equipping_ = false;
 		has_pending_melee_hit_ = false;
 		const FWeaponSettings* previous_settings = GetCurrentWeaponSettings();
@@ -540,33 +579,25 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	{
 		anim_instance->RequestSlotGroupInertialization(TEXT("EquipGroup"), 0.2f);
 	}
-	if (has_weapon_changed && settings->equip_montage && anim_instance)
+	if (has_weapon_changed)
 	{
-		if (anim_instance->Montage_Play(settings->equip_montage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, false) > 0.0f)
+		if (settings->equip_montage && anim_instance)
 		{
-			is_equipping_ = true;
-			const uint32 equip_id = equip_id_;
-			FOnMontageEnded ended;
-			ended.BindWeakLambda(this, [this, equip_id](UAnimMontage*, bool is_interrupted)
-			{
-				// 빠른 무기 전환 시 이전 장착 동작의 종료가 새 장착 상태를 해제하지 않게 한다.
-				if (equip_id != equip_id_)
-				{
-					return;
-				}
-				is_equipping_ = false;
-				if (!is_interrupted)
-				{
-					if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_); ammo && ammo->rounds == 0)
-					{
-						BeginReload(current_weapon_);
-					}
-					PlayReloadAnimation(current_weapon_);
-					UpdateEquipmentDisplay();
-				}
-			});
-			anim_instance->Montage_SetEndDelegate(ended, settings->equip_montage);
+			anim_instance->Montage_Play(settings->equip_montage, settings->equip_montage->GetPlayLength() / EQUIP_DURATION, EMontagePlayReturnType::MontageLength, 0.0f, false);
 		}
+		// 빠르게 다시 바꾸면 타이머를 새로 걸어 이전 장착의 끝이 새 장착 상태를 해제하지 않는다.
+		is_equipping_ = true;
+		const FTimerDelegate equipped = FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			is_equipping_ = false;
+			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_); ammo && ammo->rounds == 0)
+			{
+				BeginReload(current_weapon_);
+			}
+			PlayReloadAnimation(current_weapon_);
+			UpdateEquipmentDisplay();
+		});
+		GetWorldTimerManager().SetTimer(equip_timer_, equipped, EQUIP_DURATION, false);
 	}
 	if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon); ammo && ammo->rounds == 0)
 	{
@@ -614,6 +645,14 @@ TArray<FSoftObjectPath> APlayerCharacter::GetPreloadAssets() const
 		{
 			assets.AddUnique(settings.hitscan.muzzle_effect.ToSoftObjectPath());
 		}
+		if (!settings.hitscan.fire_sound.IsNull())
+		{
+			assets.AddUnique(settings.hitscan.fire_sound.ToSoftObjectPath());
+		}
+		if (!settings.hitscan.reload_sound.IsNull())
+		{
+			assets.AddUnique(settings.hitscan.reload_sound.ToSoftObjectPath());
+		}
 	}
 	if (!stun_effect_.IsNull())
 	{
@@ -660,7 +699,7 @@ bool APlayerCharacter::IsAiming() const
 
 void APlayerCharacter::PrimaryAction()
 {
-	if (is_stunned_)
+	if (is_stunned_ || is_equipping_)
 	{
 		return;
 	}
@@ -890,6 +929,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	--ammo->rounds;
 	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
+	PlayFireSound(settings);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
 	// 지금 퍼짐 크기로 이번 발을 쏘고 연사 열기를 올린다. 빗나가는 방향은 판 시드·내 아이디·무기·발사 번호로 정한다.
@@ -1123,6 +1163,76 @@ void APlayerCharacter::PlayMuzzleEffect(const FHitscanSettings& settings)
 	{
 		component->SetUsingAbsoluteScale(true);
 	}
+}
+
+// 듣는 내 캐릭터가 총의 사거리 안에 있을 때만 총구에서 재생하고, 거리에 따라 크기를 줄인다.
+void APlayerCharacter::PlayFireSound(const FHitscanSettings& settings) const
+{
+	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
+	USoundBase* sound = settings.fire_sound.LoadSynchronous();
+	if (!sound || !IsValid(weapon_mesh))
+	{
+		return;
+	}
+	const FVector location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
+	if (const float volume = GetHeardVolume(GetWorld(), location, settings.distance); volume > 0.0f)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, sound, location, volume);
+	}
+}
+
+// 듣는 내 캐릭터가 RELOAD_SOUND_DISTANCE 안일 때만 캐릭터에 붙여 재생해 움직여도 따라오고, 거리에 따라 크기를 줄인다.
+void APlayerCharacter::PlayReloadSound(EWeaponType weapon) const
+{
+	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
+	USoundBase* sound = settings ? settings->hitscan.reload_sound.LoadSynchronous() : nullptr;
+	if (!sound)
+	{
+		return;
+	}
+	if (const float volume = GetHeardVolume(GetWorld(), GetActorLocation(), RELOAD_SOUND_DISTANCE); volume > 0.0f)
+	{
+		UGameplayStatics::SpawnSoundAttached(sound, GetMesh(), NAME_None, FVector::ZeroVector, EAttachLocation::KeepRelativeOffset, false, volume);
+	}
+}
+
+// 캡슐 아래로 발밑을 찾아 물리 재질의 바닥 종류로 소리를 고른다. 종류가 없으면 랜드스케이프는 풀, 그 밖은 돌로 본다.
+// 듣는 내 캐릭터가 FOOTSTEP_SOUND_DISTANCE 안일 때만 재생하고, 같은 소리가 연달아 나지 않게 직전과 다른 변형을 고른다.
+void APlayerCharacter::PlayFootstep()
+{
+	UWorld* world = GetWorld();
+	if (!world || GetCharacterMovement()->IsFalling() || footstep_sounds_.Num() != UE_ARRAY_COUNT(FOOTSTEP_SURFACES) * FOOTSTEP_VARIATIONS)
+	{
+		return;
+	}
+	const UCapsuleComponent* capsule = GetCapsuleComponent();
+	const FVector start = capsule->GetComponentLocation();
+	FCollisionQueryParams query(SCENE_QUERY_STAT(Footstep), true, this);
+	query.bReturnPhysicalMaterial = true;
+	FHitResult hit;
+	if (!world->LineTraceSingleByChannel(hit, start, start - FVector(0.0, 0.0, capsule->GetScaledCapsuleHalfHeight() + FOOTSTEP_TRACE_DEPTH), ECC_Visibility, query))
+	{
+		return;
+	}
+	const float volume = GetHeardVolume(world, hit.ImpactPoint, FOOTSTEP_SOUND_DISTANCE);
+	if (volume <= 0.0f)
+	{
+		return;
+	}
+	const EPhysicalSurface surface = UPhysicalMaterial::DetermineSurfaceType(hit.PhysMaterial.Get());
+	int32 surface_index = Cast<ALandscapeProxy>(hit.GetActor()) ? 0 : 1;
+	if (surface >= SurfaceType1 && surface < SurfaceType1 + UE_ARRAY_COUNT(FOOTSTEP_SURFACES))
+	{
+		surface_index = surface - SurfaceType1;
+	}
+	int32 variation = FMath::RandRange(0, FOOTSTEP_VARIATIONS - (last_footstep_variation_ == INDEX_NONE ? 1 : 2));
+	if (last_footstep_variation_ != INDEX_NONE && variation >= last_footstep_variation_)
+	{
+		++variation;
+	}
+	last_footstep_variation_ = variation;
+	UE_LOG(LogFootstep, Verbose, TEXT("%s footstep %s %d volume %.2f on %s physical material %s"), *GetName(), FOOTSTEP_SURFACES[surface_index], variation + 1, volume, hit.GetActor() ? *hit.GetActor()->GetName() : TEXT("none"), hit.PhysMaterial.IsValid() ? *hit.PhysMaterial->GetName() : TEXT("none"));
+	UGameplayStatics::PlaySoundAtLocation(this, footstep_sounds_[surface_index * FOOTSTEP_VARIATIONS + variation], hit.ImpactPoint, volume);
 }
 
 void APlayerCharacter::Jump()
@@ -1365,6 +1475,11 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 		}
 		return;
 	}
+	// 재장전 소리는 든 무기와 관계없이 재생한다.
+	if (action == EPlayerAction::RELOAD)
+	{
+		PlayReloadSound(weapon);
+	}
 	// 재장전은 무기를 바꾼 뒤에도 이어지므로 들고 있는 무기의 재장전만 재생한다. 발사와 휘두르기는 그 무기를 든 상태에서만 일어난다.
 	if (weapon != current_weapon_)
 	{
@@ -1390,6 +1505,7 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 	if (action == EPlayerAction::FIRE)
 	{
 		PlayMuzzleEffect(settings->hitscan);
+		PlayFireSound(settings->hitscan);
 	}
 	// 발사와 휘두르기는 들고 있는 무기의 기본 동작을 재생한다.
 	if (settings->primary_action.montage)
@@ -1705,6 +1821,7 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 	const FTimerDelegate completed = FTimerDelegate::CreateUObject(this, &APlayerCharacter::FinishReload, weapon);
 	GetWorldTimerManager().SetTimer(ammo->reload_timer, completed, FMath::Max(0.01f, settings->hitscan.reload_duration), false);
 	PlayReloadAnimation(weapon);
+	PlayReloadSound(weapon);
 	on_action_started_.Broadcast(EPlayerAction::RELOAD, weapon);
 }
 

@@ -7,8 +7,10 @@
 #include "Engine/World.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "Interaction/HintBox.h"
+#include "Kismet/GameplayStatics.h"
 #include "Network/GameNetworkSubsystem.h"
 #include "Network/game_protocol.h"
+#include "Sound/SoundBase.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBoxLayout, Log, All);
 
@@ -16,6 +18,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogBoxLayout, Log, All);
 static constexpr TCHAR CHEST_MESH_PATH[] = TEXT("/Game/Thats_Mine/Meshes/Props/Chests/SM_Chest_Closed.SM_Chest_Closed");
 static constexpr TCHAR GIFT_MESH_PATH[] = TEXT("/Game/Thats_Mine/Meshes/Props/Gifts/SM_Gift_D_Red.SM_Gift_D_Red");
 static constexpr float CHEST_SCALE = 0.7f;
+static constexpr TCHAR OPEN_SOUND_PATH[] = TEXT("/Game/Thats_Mine/Effects/Sounds/SW_ChestOpen.SW_ChestOpen");
 
 // 움직일 수 있는 정적 메시 액터를 만든다. 실행 중에 메시를 바꾸려면 등록 전에 이동 가능으로 바꿔 둬야 한다.
 template <typename T>
@@ -86,6 +89,7 @@ void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 		UE_LOG(LogBoxLayout, Error, TEXT("Box mesh not found."));
 		return;
 	}
+	open_sound_ = LoadObject<USoundBase>(nullptr, OPEN_SOUND_PATH);
 	for (int32 index = 0; index < box_count; ++index)
 	{
 		BOX_ENTRY entry;
@@ -124,7 +128,7 @@ void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box, bool is_shot, uint8 w
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BOX_OPEN, payload);
 }
 
-// 서버가 인정한 상자 열림. 플레이 중인 방 전체가 받는다.
+// 서버가 인정한 상자 열림. 플레이 중인 방 전체가 받고, 내가 연 상자면 여는 소리를 재생한다.
 void UBoxLayoutSubsystem::HandleBoxOpenPacket(const TArray<uint8>& payload)
 {
 	S2C_BOX_OPEN_PACKET packet;
@@ -138,5 +142,9 @@ void UBoxLayoutSubsystem::HandleBoxOpenPacket(const TArray<uint8>& payload)
 	if (boxes_.IsValidIndex(packet.box) && boxes_[packet.box])
 	{
 		boxes_[packet.box]->Open();
+	}
+	if (open_sound_ && packet.is_opener)
+	{
+		UGameplayStatics::PlaySound2D(this, open_sound_);
 	}
 }

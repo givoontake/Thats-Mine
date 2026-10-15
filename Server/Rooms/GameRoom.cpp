@@ -1197,8 +1197,11 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
 	open_p.box = request_p.box;
+	// 연 사람에게 보내는 열림만 연 사람 표시를 켠다.
+	open_p.is_opener = true;
 	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET), sizeof(S2C_BLOCK_PACKET) })];
 	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
+	open_p.is_opener = false;
 	int opener_size = sizeof(open_p);
 	const BoxContent& content = box_contents_[request_p.box];
 	if (content.kind == BoxContentKind::HINT) {
