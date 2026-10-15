@@ -371,7 +371,7 @@ void APlayerCharacter::PlacePing()
 	FHitResult hit;
 	if (GetWorld()->LineTraceSingleByChannel(hit, start, start + camera->GetForwardVector() * PING_TRACE_DISTANCE, ECC_Visibility, query))
 	{
-		GetWorld()->GetSubsystem<UPingSubsystem>()->SetPingLocation(hit.ImpactPoint);
+		GetWorld()->GetSubsystem<UPingSubsystem>()->PlacePing(hit);
 	}
 }
 

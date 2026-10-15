@@ -70,6 +70,7 @@ add_executable(GameServer
     Common/ConcurrentTaskQueue.h
     Common/enum_class.h
     Common/error_code.h
+    Common/hint_meshes.h
     Common/IndexRegistry.h
     Common/info_code.h
     Common/settings.h

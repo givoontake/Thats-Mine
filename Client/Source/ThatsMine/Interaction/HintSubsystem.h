@@ -53,10 +53,12 @@ public:
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;
 
+public:
+	// 키의 문장. 파일에 없으면 키를 그대로 돌려준다. 물체 종류 이름은 OBJECT_번호다.
+	FString FindText(const FString& key) const;
+
 private:
 	void LoadTexts();
-	// 키의 문장. 파일에 없으면 키를 그대로 돌려준다.
-	FString FindText(const FString& key) const;
 	FString BuildSentence(const HINT_ENTRY& hint) const;
 	void HandleHintPacket(const TArray<uint8>& payload);
 	void HandleHintLostPacket(const TArray<uint8>& payload);

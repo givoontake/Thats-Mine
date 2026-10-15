@@ -24,6 +24,8 @@ static constexpr int32 AREA_REMOVAL_NOTICE_SECONDS[] = { 60, 30, 10 };
 void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 {
 	Super::OnWorldBeginPlay(world);
+	// 문장은 핑의 물체 종류 이름에도 쓰므로 로컬 플레이에서도 읽는다.
+	LoadTexts();
 	UGameInstance* game_instance = world.GetGameInstance();
 	const UClientStateSubsystem* flow = game_instance ? game_instance->GetSubsystem<UClientStateSubsystem>() : nullptr;
 	// 온라인 게임 레벨은 로딩 상태에서 열린다.
@@ -31,7 +33,6 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 	{
 		return;
 	}
-	LoadTexts();
 	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
 	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
 		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket))

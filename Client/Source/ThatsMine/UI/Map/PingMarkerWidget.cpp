@@ -10,6 +10,7 @@
 #include "Components/TextBlock.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
+#include "Interaction/HintSubsystem.h"
 #include "Interaction/PingSubsystem.h"
 #include "Styling/CoreStyle.h"
 #include "UI/game_font.h"
@@ -65,7 +66,11 @@ void UPingMarkerWidget::NativeTick(const FGeometry& geometry, float delta_time)
 	marker_canvas_->SetVisibility(ESlateVisibility::HitTestInvisible);
 	const FVector ping = *pings->GetPingLocation();
 	const FVector feet = character->GetActorLocation() - FVector(0.0, 0.0, character->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
-	distance_text_->SetText(FText::AsCultureInvariant(FString::Printf(TEXT("%.1f m"), FVector::Dist(ping, feet) / 100.0)));
+	// 찍은 것이 힌트에 나오는 물체면 거리 앞에 종류 이름을 붙인다.
+	const FString distance = FString::Printf(TEXT("%.1f m"), FVector::Dist(ping, feet) / 100.0);
+	const UHintSubsystem* hints = GetWorld()->GetSubsystem<UHintSubsystem>();
+	const TOptional<HintObjectKind>& kind = pings->GetPingObjectKind();
+	distance_text_->SetText(FText::AsCultureInvariant(kind && hints ? hints->FindText(FString::Printf(TEXT("OBJECT_%d"), static_cast<int32>(*kind))) + TEXT(" · ") + distance : distance));
 
 	const FVector2D view_size = geometry.GetLocalSize();
 	const FVector2D center = view_size * 0.5;
