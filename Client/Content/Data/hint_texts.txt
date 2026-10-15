@@ -38,8 +38,7 @@ REGION_10 = Pyramid
 REGION_11 = Ring Ruins
 REGION_12 = Ship Peak
 REGION_13 = Star Peak
-REGION_14 = Start Dome
-REGION_15 = Pond
+REGION_14 = Pond
 
 OBJECT_0 = 큰 바위
 OBJECT_1 = 작은 바위

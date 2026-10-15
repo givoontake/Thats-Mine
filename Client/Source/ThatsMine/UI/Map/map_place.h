@@ -24,7 +24,6 @@ inline const TArray<FMapPlace>& GetMapPlaces()
 {
 	static const TArray<FMapPlace> places = {
 		{FText::AsCultureInvariant(TEXT("Dragon Ridge")), FVector2D(0.350, 0.151), 28},
-		{FText::AsCultureInvariant(TEXT("Start Dome")), FVector2D(0.841, 0.070), 14},
 		{FText::AsCultureInvariant(TEXT("Ring Ruins")), FVector2D(0.225, 0.269), 20},
 		{FText::AsCultureInvariant(TEXT("Daisy Meadow")), FVector2D(0.188, 0.416), 25},
 		{FText::AsCultureInvariant(TEXT("Bamboo\nGrove")), FVector2D(0.560, 0.309), 20},

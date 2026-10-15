@@ -7,7 +7,7 @@
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "Environment/StartDome.h"
+#include "Environment/StartBarrier.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "Interaction/TreasureChest.h"
 #include "GameFramework/PlayerController.h"
@@ -255,17 +255,10 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 	{
 		game_time_widget_->StartCountdown(remaining_ms / 1000.0f);
 	}
-	// 시작 돔을 위에서부터 벗겨 낸다. 게임이 시작된 뒤 합류했으면 연출 없이 바로 숨긴다.
-	for (TActorIterator<AStartDome> dome(GetWorld()); dome; ++dome)
+	// 시작 구역 입구 차단벽을 바로 없앤다.
+	for (TActorIterator<AStartBarrier> barrier(GetWorld()); barrier; ++barrier)
 	{
-		if (has_received_game_ready_)
-		{
-			dome->StartDissolve();
-		}
-		else
-		{
-			dome->HideDome();
-		}
+		barrier->HideBarrier();
 	}
 }
 
