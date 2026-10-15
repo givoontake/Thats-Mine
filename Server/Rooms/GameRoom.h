@@ -113,6 +113,8 @@ private:
 	long long next_area_removal_ms_ = 0;
 	// 보물을 발견해 게임이 끝나는 시각. 0이면 아직 발견하지 않았다.
 	long long game_end_ms_ = 0;
+	// 시상식이 끝나 방으로 돌아가는 시각. 0이면 시상식 중이 아니다.
+	long long award_end_ms_ = 0;
 
 	Session* FindSession(const Player& player) const;
 	Player* FindPlayer(SessionKey session_key);
@@ -133,7 +135,7 @@ private:
 	bool AcceptAction(Player& player, Session& session, const C2S_ACTION_PACKET& request_p);
 	void ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p);
 	void ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& request_p);
-	void AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p);
+	void AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
 	bool CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& request_p, const DirectX::XMFLOAT3& direction) const;
 	void ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
@@ -146,6 +148,8 @@ private:
 	void ProcessTimeLimit();
 	void ProcessSearchStart(Player& searcher, const C2S_SEARCH_PACKET& request_p);
 	void ProcessSearches();
+	// 게임이 끝나고 GAME_END_WAIT_MS가 지나면 기록이 있는 부문마다 순위를 보내고 시상식이 끝날 시각을 정한다. 기록이 있는 부문이 없으면 바로 방으로 돌려보낸다.
+	void StartAward();
 	// 배제 판(블록 결과·돋보기 탐색 결과로 배제된 칸과 영역 지우기로 지운 칸)이 마지막으로 보낸 것과 다르면 배제 판 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 같으면 쓰지 않고 0을 돌려준다.
 	int AppendExclusionBoard(char* buffer, Player& player) const;
 	void ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p);

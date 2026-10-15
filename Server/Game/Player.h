@@ -61,6 +61,9 @@ class Player
 	std::uint64_t kept_excluded_cells_ = 0;
 	// 마지막으로 보낸 배제 판
 	std::uint64_t sent_exclusion_board_ = 0;
+	// 이번 게임의 시상식 부문별 기록과 그 기록에 도달한 시각(ms). AwardCategory 순서다.
+	std::array<std::uint32_t, static_cast<std::size_t>(AwardCategory::COUNT)> award_counts_{};
+	std::array<long long, static_cast<std::size_t>(AwardCategory::COUNT)> award_reach_ms_{};
 
 	void ClearStun();
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채운다.
@@ -167,6 +170,10 @@ public:
 	void UseBlock(std::uint8_t piece, std::uint64_t excluded_cells);
 	void AddKeptExcludedCells(std::uint64_t cells) { kept_excluded_cells_ |= cells; }
 	std::uint64_t GetKeptExcludedCells() const { return kept_excluded_cells_; }
+	// 시상식 부문 기록을 1 늘리고 도달 시각을 남긴다.
+	void AddAwardCount(AwardCategory category, long long time_ms);
+	std::uint32_t GetAwardCount(AwardCategory category) const { return award_counts_[static_cast<std::size_t>(category)]; }
+	long long GetAwardReachMs(AwardCategory category) const { return award_reach_ms_[static_cast<std::size_t>(category)]; }
 	std::uint64_t GetSentExclusionBoard() const { return sent_exclusion_board_; }
 	void SetSentExclusionBoard(std::uint64_t board) { sent_exclusion_board_ = board; }
 	// 블록과 배제 판을 모두 잃는다.

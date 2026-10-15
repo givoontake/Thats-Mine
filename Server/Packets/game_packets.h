@@ -23,6 +23,10 @@ enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUG
 
 // 탐색 요청과 결과에서 기본 돋보기를 뜻하는 등급 값. 넓은 탐지 돋보기는 HintGrade 값을 쓴다.
 constexpr std::uint8_t BASIC_MAGNIFIER_GRADE = 0xFF;
+// 시상식 부문. 탐색왕은 상자를 가장 많이 연 사람, 기절왕은 다른 플레이어를 가장 많이 기절시킨 사람이다.
+enum class AwardCategory : std::uint8_t { BOX_OPEN, STUN, COUNT };
+// 부문마다 시상대에 세우는 최대 인원
+constexpr std::size_t AWARD_RANK_COUNT = 3;
 
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
 enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, OBJECT_COUNT };
@@ -371,6 +375,26 @@ struct S2C_TIME_OVER_PACKET {
 	PACKET_HEADER header;
 	float location[3];
 	float yaw;
+};
+
+// 시상식 순위 한 자리. count는 그 부문 기록(연 상자 수·기절시킨 수)이다.
+struct AWARD_ENTRY {
+	int player_id;
+	std::uint32_t count;
+};
+
+// 시상식 부문 하나의 순위. 1위부터 기록이 1 이상인 사람만 최대 AWARD_RANK_COUNT명이고, 기록이 같으면 그 기록에 먼저 도달한 사람이 위다.
+// 게임이 끝나고 GAME_END_WAIT_MS가 지나면 기록이 있는 부문만 부문 순서대로 플레이 중인 전원에게 보낸다.
+struct S2C_AWARD_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t category;
+	std::uint8_t entry_count;
+	AWARD_ENTRY entries[AWARD_RANK_COUNT];
+};
+
+// 시상식을 끝까지 봤거나 건너뛰었다. 그 사람만 먼저 방으로 돌려보낸다.
+struct C2S_AWARD_DONE_PACKET {
+	PACKET_HEADER header;
 };
 
 // 가진 블록 하나를 배제 판에 놓는다. piece는 BLOCK_PIECES 번호, rotation은 시계 방향 90도 회전 수이고, 돌린 모양의 가장 작은 열과 행이 (column, row) 칸에 온다.

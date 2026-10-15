@@ -262,7 +262,7 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고 보물 위치를 공개한다.
+// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고, 그 아래에 게임이 끝날 때까지 남은 초를 보이며 보물 위치를 공개한다.
 void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_TREASURE_FOUND_PACKET) - sizeof(PACKET_HEADER))
@@ -277,6 +277,7 @@ void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload
 	if (UMatchTimerWidget* timer = ShowTimerWidget())
 	{
 		timer->SetMessage(FText::Format(LOCTEXT("TreasureFound", "{0}님이 보물을 발견했습니다!"), finder ? FText::FromString(finder->nickname) : LOCTEXT("UnknownPlayer", "누군가")), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
+		timer->StartMessageCountdown(LOCTEXT("GameEndCountdown", "{0}초 후 게임이 종료됩니다"), GAME_END_WAIT_MS / 1000.0f);
 	}
 	RevealTreasure(packet.location, packet.yaw);
 }

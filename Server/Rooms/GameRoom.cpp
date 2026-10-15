@@ -375,6 +375,17 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		}
 		break;
 	}
+	case C2S_AWARD_DONE: {
+		// 시상식 중 끝까지 본 사람만 먼저 방으로 돌려보낸다. 방은 시상식이 끝날 때 게임 전 대기 상태로 돌아간다.
+		if (room_state_.load() != RoomState::PLAY || award_end_ms_ == 0) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		room_player->ResetGameData();
+		S2C_RETURN_TO_ROOM_PACKET return_p;
+		return_p.header = { static_cast<std::uint16_t>(sizeof(return_p)), S2C_RETURN_TO_ROOM };
+		request_session.SendPacket(reinterpret_cast<char*>(&return_p), return_p.header.size);
+		break;
+	}
 	case C2S_LOAD_COMPLETE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
@@ -493,6 +504,7 @@ void GameRoom::TryPostRoomDelete()
 }
 
 // 게임이 끝나 방을 게임 전 대기 상태로 되돌린다. 플레이어마다 게임 데이터를 지워 준비를 풀고, 방의 모든 플레이어에게 방 복귀를 보낸다.
+// 시상식을 먼저 끝내 방으로 돌아간 플레이어(게임 중인데 대기 상태)에게는 다시 보내지 않는다.
 // 그 사이 마지막 플레이어가 나가 방 삭제가 시작됐으면 아무것도 하지 않는다.
 void GameRoom::ClearGame()
 {
@@ -500,14 +512,16 @@ void GameRoom::ClearGame()
 	is_game_started_ = false;
 	game_start_ms_ = 0;
 	game_end_ms_ = 0;
+	award_end_ms_ = 0;
 	pending_action_count_ = 0;
 	S2C_RETURN_TO_ROOM_PACKET return_p;
 	return_p.header = { static_cast<std::uint16_t>(sizeof(return_p)), S2C_RETURN_TO_ROOM };
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
+		const bool has_returned = room_player.GetRoomPlayerState() == RoomPlayerState::WAIT;
 		room_player.ResetGameData();
-		session->SendPacket(reinterpret_cast<char*>(&return_p), return_p.header.size);
+		if (!has_returned) session->SendPacket(reinterpret_cast<char*>(&return_p), return_p.header.size);
 	}
 }
 
@@ -877,8 +891,13 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	ProcessAreaRemoval();
 	ProcessSearches();
 	ProcessTimeLimit();
+	// 시상식 중에는 게임 진행을 멈추고, 끝날 시각이 되면 방으로 돌려보낸다.
+	if (award_end_ms_ != 0) {
+		if (tick_time_ms >= award_end_ms_) ClearGame();
+		return;
+	}
 	if (game_end_ms_ != 0 && tick_time_ms >= game_end_ms_) {
-		ClearGame();
+		StartAward();
 		return;
 	}
 	// 플레이 중인 플레이어의 판정용 자세를 지난 틱 이후 시간만큼 진행한다.
@@ -1073,7 +1092,7 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 	for (const Player* receiver : { static_cast<const Player*>(&shooter), static_cast<const Player*>(target) }) {
 		if (auto session = FindSession(*receiver)) session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
 	}
-	AddStunGauge(*target, request_p);
+	AddStunGauge(shooter, *target, request_p);
 }
 
 // 인정한 발사 하나의 궤적을 쏜 사람을 뺀 플레이 중인 전원에게 보낸다. 탄이 끝난 곳은 쏜 사람 위치에서 사거리와 발사 시작점 여유 안이어야 한다.
@@ -1095,8 +1114,8 @@ void GameRoom::ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& re
 }
 
 // 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
-// 최대치에 닿으면 진행 중인 탐색을 취소하고 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
-void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
+// 최대치에 닿으면 진행 중인 탐색을 취소하고 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨리고, 쏜 사람의 기절왕 기록을 늘린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
+void GameRoom::AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p)
 {
 	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
 	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
@@ -1112,6 +1131,7 @@ void GameRoom::AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p)
 			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&stun_p), stun_p.header.size);
 		}
 		DropHint(target);
+		shooter.AddAwardCount(AwardCategory::STUN, tick_time_ms_);
 		return;
 	}
 	S2C_STUN_GAUGE_PACKET gauge_p;
@@ -1196,6 +1216,7 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 	if (request_p.is_shot && !opener.ClaimShot(request_p.weapon)) return;
 	if (!is_game_started_ || request_p.box >= is_box_opened_.size() || is_box_opened_[request_p.box] || !CheckBoxOpen(opener, request_p)) return;
 	is_box_opened_[request_p.box] = true;
+	opener.AddAwardCount(AwardCategory::BOX_OPEN, tick_time_ms_);
 
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
@@ -1463,6 +1484,40 @@ void GameRoom::ProcessTimeLimit()
 		auto session = FindSession(room_player);
 		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&over_p), over_p.header.size);
 	}
+}
+
+void GameRoom::StartAward()
+{
+	int scene_count = 0;
+	for (std::uint8_t category = 0; category < static_cast<std::uint8_t>(AwardCategory::COUNT); ++category) {
+		const AwardCategory award = static_cast<AwardCategory>(category);
+		std::vector<const Player*> ranked;
+		for (const auto& room_player : room_players_) {
+			if (FindSession(room_player) && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY && room_player.GetAwardCount(award) > 0) ranked.push_back(&room_player);
+		}
+		if (ranked.empty()) continue;
+		std::sort(ranked.begin(), ranked.end(), [award](const Player* a, const Player* b) {
+			if (a->GetAwardCount(award) != b->GetAwardCount(award)) return a->GetAwardCount(award) > b->GetAwardCount(award);
+			return a->GetAwardReachMs(award) < b->GetAwardReachMs(award);
+		});
+		S2C_AWARD_PACKET award_p{};
+		award_p.header = { static_cast<std::uint16_t>(sizeof(award_p)), S2C_AWARD };
+		award_p.category = category;
+		award_p.entry_count = static_cast<std::uint8_t>(std::min(ranked.size(), AWARD_RANK_COUNT));
+		for (std::uint8_t rank = 0; rank < award_p.entry_count; ++rank) {
+			award_p.entries[rank] = { ranked[rank]->GetSessionKey().player_id, ranked[rank]->GetAwardCount(award) };
+		}
+		for (auto& room_player : room_players_) {
+			auto session = FindSession(room_player);
+			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&award_p), award_p.header.size);
+		}
+		++scene_count;
+	}
+	if (scene_count == 0) {
+		ClearGame();
+		return;
+	}
+	award_end_ms_ = tick_time_ms_ + scene_count * AWARD_SCENE_MS + AWARD_END_MARGIN_MS;
 }
 
 void GameRoom::SendAreaRemovalTime(Session& session) const

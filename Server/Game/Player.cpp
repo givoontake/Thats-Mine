@@ -45,6 +45,8 @@ void Player::ClearPlayer()
 	ResetHints();
 	ResetItems();
 	ResetBlocks();
+	award_counts_.fill(0);
+	award_reach_ms_.fill(0);
 }
 
 void Player::ResetGameData()
@@ -59,6 +61,15 @@ void Player::ResetGameData()
 	ResetHints();
 	ResetItems();
 	ResetBlocks();
+	award_counts_.fill(0);
+	award_reach_ms_.fill(0);
+}
+
+void Player::AddAwardCount(AwardCategory category, long long time_ms)
+{
+	if (category >= AwardCategory::COUNT) return;
+	++award_counts_[static_cast<std::size_t>(category)];
+	award_reach_ms_[static_cast<std::size_t>(category)] = time_ms;
 }
 
 void Player::ResetAmmo(std::size_t weapon_count)

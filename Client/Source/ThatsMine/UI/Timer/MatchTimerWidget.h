@@ -27,6 +27,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Match Timer")
 	void SetMessage(const FText& message, int32 font_size = 20);
 
+	// 안내 글씨 아래에 seconds초부터 1초씩 줄어드는 문장을 보인다. format의 {0}에 남은 초(올림)를 넣는다.
+	void StartMessageCountdown(const FText& format, float seconds);
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeTick(const FGeometry& geometry, float delta_time) override;
@@ -53,6 +56,12 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> message_text_;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> countdown_text_;
+
+	FText countdown_format_;
+	double countdown_end_time_ = 0.0;
+	int32 shown_countdown_seconds_ = INDEX_NONE;
 	double end_time_ = 0.0;
 	int32 shown_seconds_ = INDEX_NONE;
 	bool is_counting_ = false;

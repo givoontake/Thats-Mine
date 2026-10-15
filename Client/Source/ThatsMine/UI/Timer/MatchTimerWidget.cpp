@@ -37,6 +37,17 @@ TSharedRef<SWidget> UMatchTimerWidget::RebuildWidget()
 		UVerticalBoxSlot* message_slot = content_->AddChildToVerticalBox(message_text_);
 		message_slot->SetHorizontalAlignment(HAlign_Center);
 
+		// 안내 글씨 아래에 줄어드는 초를 넣은 문장을 둔다.
+		countdown_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MatchTimerCountdown"));
+		countdown_text_->SetFont(GetGameFont(MESSAGE_FONT_SIZE));
+		countdown_text_->SetColorAndOpacity(FSlateColor(text_color_));
+		countdown_text_->SetShadowOffset(FVector2D(1.5, 1.5));
+		countdown_text_->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.75f));
+		countdown_text_->SetJustification(ETextJustify::Center);
+		UVerticalBoxSlot* countdown_slot = content_->AddChildToVerticalBox(countdown_text_);
+		countdown_slot->SetHorizontalAlignment(HAlign_Center);
+		countdown_slot->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 0.0f));
+
 		// 배경 없이 숫자만 보이므로, 밝은 배경에서도 읽히게 진한 갈색 외곽선과 그림자를 넣는다.
 		timer_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MatchTimerText"));
 		FSlateFontInfo timer_font = GetGameFont(36);
@@ -53,6 +64,7 @@ TSharedRef<SWidget> UMatchTimerWidget::RebuildWidget()
 
 		timer_text_->SetVisibility(ESlateVisibility::Collapsed);
 		message_text_->SetVisibility(ESlateVisibility::Collapsed);
+		countdown_text_->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	return Super::RebuildWidget();
@@ -91,12 +103,32 @@ void UMatchTimerWidget::SetMessage(const FText& message, int32 font_size)
 	}
 }
 
+void UMatchTimerWidget::StartMessageCountdown(const FText& format, float seconds)
+{
+	countdown_format_ = format;
+	countdown_end_time_ = GetWorld()->GetTimeSeconds() + FMath::Max(0.0f, seconds);
+	shown_countdown_seconds_ = INDEX_NONE;
+	if (countdown_text_)
+	{
+		countdown_text_->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
 void UMatchTimerWidget::NativeTick(const FGeometry& geometry, float delta_time)
 {
 	Super::NativeTick(geometry, delta_time);
 	if (is_counting_)
 	{
 		UpdateTimerText();
+	}
+	if (countdown_text_ && !countdown_format_.IsEmpty())
+	{
+		const int32 seconds = FMath::CeilToInt(FMath::Max(0.0, countdown_end_time_ - GetWorld()->GetTimeSeconds()));
+		if (seconds != shown_countdown_seconds_)
+		{
+			shown_countdown_seconds_ = seconds;
+			countdown_text_->SetText(FText::Format(countdown_format_, FText::AsNumber(seconds)));
+		}
 	}
 }
 
