@@ -115,7 +115,7 @@ constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 �
 constexpr long long AMMO_LATENCY_ALLOWANCE_MS = 150;
 // 곡괭이 사용 가능 횟수. 게임마다 최대치로 시작하고, 최대치보다 적으면 PICKAXE_CHARGE_MS마다 1번씩 찬다.
 constexpr int PICKAXE_MAX_CHARGES = 3;
-constexpr int PICKAXE_CHARGE_MS = 120000;
+constexpr int PICKAXE_CHARGE_MS = 60000;
 
 // 기절 게이지. 명중당하면 무기별 증가량에 맞은 부위 배율을 곱해 올리고, 마지막으로 오른 뒤 감소 대기 시간이 지나면 초당 감소량만큼 줄어든다. 최대치에 닿으면 기절한다.
 constexpr float STUN_GAUGE_MAX = 100.0f;
@@ -130,7 +130,7 @@ constexpr int STUN_PROTECTION_MS = 30000; // 기절이 끝난 뒤 보호 시간.
 // 넓은 탐지 돋보기 외의 아이템은 얻은 뒤 그 게임 동안 계속 적용되고 기절해도 잃지 않는다. 같은 종류를 또 얻으면 가장 높은 등급만 적용한다.
 // 넓은 탐지 돋보기는 가진 개수만큼 한 번씩 쓴다. 상자는 종류마다 등급별 개수 × 글로벌 배수만큼 만든다.
 constexpr int ITEM_BOX_COUNTS[] = { 1, 2 };
-constexpr int ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[] = { 60000, 30000 }; // 곡괭이 1번이 차는 시간에서 빼는 시간
+constexpr int ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[] = { 20000, 10000 }; // 곡괭이 1번이 차는 시간에서 빼는 시간
 constexpr float ITEM_STUN_GAUGE_DECAYS_PER_SECOND[] = { 6.0f, 5.0f }; // 기절 게이지 초당 감소량
 constexpr int ITEM_STUN_GAUGE_DECAY_DELAYS_MS[] = { 3000, 4000 }; // 기절 게이지 감소 대기 시간
 constexpr int ITEM_STUN_PROTECTIONS_MS[] = { 60000, 45000 }; // 기절이 끝난 뒤 보호 시간
