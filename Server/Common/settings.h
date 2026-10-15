@@ -33,7 +33,9 @@ constexpr int GAME_TIME_LIMIT_MS = 7200000; // 게임이 시작된 뒤 보물을
 constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
 
 // 탑 배치. 게임 시작 때 탑 후보 자리(tower_candidates.txt) 중 TOWER_COUNT곳을 미첼 최적 후보 방식으로 고르고, 고른 순서대로 종류를 번갈아 정한다.
+// TOWER_SPAWN_ENABLED가 거짓이면 탑을 놓지 않는다.
 // 탑(SM_tower_02, SM_tower_04)은 후보 자리의 높이(바닥에서 가장 높은 땅)에 놓고, 그 아래에 기초(SM_tower_foundation_03)를 붙여 땅까지 채운다.
+constexpr bool TOWER_SPAWN_ENABLED = false;
 constexpr int TOWER_KIND_COUNT = 2;
 constexpr int TOWER_COUNT_PER_KIND = 10; // 종류마다 놓는 탑 수
 constexpr int TOWER_COUNT = TOWER_KIND_COUNT * TOWER_COUNT_PER_KIND;
@@ -54,26 +56,16 @@ constexpr int AWARD_SCENE_MS = 5000; // 시상식에서 부문 하나를 보여 
 constexpr int AWARD_END_MARGIN_MS = 1000; // 시상식이 끝난 뒤 방으로 돌려보낼 때까지 더 기다리는 시간. 마지막 화면 전환이 끝나게 둔다.
 constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
 
-// 힌트 "보물에서 가까운 물체 종류" 순위에 담는 종류 수
-constexpr int HINT_NEAREST_KIND_COUNT = 3;
-// 개수 힌트. 판마다 물체 종류마다 등급마다 하나씩, 보물 바닥에서 그 등급 반경(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
-// 등급은 반경으로 정해지므로 배제 영역 순위로 정하는 등급에서 뺀다.
-constexpr float HINT_OBJECT_COUNT_RADII[] = { 1000.0f, 2000.0f, 3000.0f, 5000.0f }; // 등급별 반경(S, A, B, C 순서)
+// 개수 힌트. 판마다 물체 종류마다 반경마다 하나씩, 보물 바닥에서 그 반경(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
+constexpr float HINT_OBJECT_COUNT_RADII[] = { 3000.0f, 1000.0f };
 // 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
 constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
 // 보임 힌트("~에서 보물이 묻힌 곳이 보인다")를 만들지. 당분간 끈다.
 constexpr bool HINT_VIEW_ENABLED = false;
 // 힌트의 "보물이 묻힌 자리가 보인다" 판정. 영역의 판정 위치(발밑 땅 + 3인칭 카메라 높이 140cm)에서 보물 자리 지면까지 그은 선이 하나라도 막히지 않으면 보인다.
 constexpr float PLACE_VIEW_END_MARGIN = 30.0f; // 선을 보물 자리 지면 이만큼(cm) 앞에서 멈춘다. 목표 지면 자체에 걸리지 않게 하고, 등진 경사면에 묻힌 자리는 땅 속을 지나 막히게 한다.
-// 힌트 등급. 방향 힌트는 배제 영역 순으로 위 절반은 S, 나머지는 A다.
-// 방향·개수 힌트를 뺀 힌트는 배제 영역 순으로 정렬해 위에서 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
-// 배제 영역은 보물 가능 땅 중 그 힌트가 틀린 땅의 비율이고, 보물 가능 땅을 HINT_EXCLUSION_GRID_STEP 간격 격자 지점으로 세어 구한다.
-constexpr int HINT_GRADE_S_PERCENT = 10;
-constexpr int HINT_GRADE_A_PERCENT = 20;
-constexpr int HINT_GRADE_B_PERCENT = 30;
-constexpr float HINT_EXCLUSION_GRID_STEP = 5000.0f; // 배제 영역을 셀 격자 간격(cm)
-// 힌트 상자. 힌트마다 등급 배수 × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.
-constexpr int HINT_BOX_COPIES[] = { 1, 1, 2, 2 }; // 등급별 배수(S, A, B, C 순서)
+// 힌트 상자. 힌트마다 HINT_BOX_COPIES × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.
+constexpr int HINT_BOX_COPIES = 2;
 constexpr int HINT_BOX_PLAYERS_PER_MULTIPLIER = 5;
 // 탄약 상자. 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 만들고, 한 상자에는 한 무기의 탄만 든다. 열면 그 무기의 소지 탄이 늘어난다.
 constexpr int AMMO_BOX_COUNT = 50;

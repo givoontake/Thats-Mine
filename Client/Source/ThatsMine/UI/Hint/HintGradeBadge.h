@@ -7,8 +7,8 @@
 
 class UMaterialInterface;
 
-// 힌트 등급 칸. 둥근 테두리 안에 등급 글자를 그린다. 인벤토리와 힌트 획득 안내가 같이 쓴다.
-// 글자와 테두리 색은 떨어진 두루마리의 밴드 색과 같고, S·A는 위에서 아래로 바뀌는 재질로 그린다.
+// 아이템 등급 칸. 둥근 테두리 안에 등급 글자를 그린다. 인벤토리 아이템 탭과 아이템 획득 안내가 같이 쓴다.
+// S·A 글자와 테두리는 위에서 아래로 바뀌는 재질로 그린다.
 UCLASS()
 class THATSMINE_API UHintGradeBadge : public UUserWidget
 {

@@ -16,17 +16,13 @@ class HintObjectTree
 	bool is_loaded_ = false;
 
 	void BuildRange(std::size_t begin, std::size_t end, int depth);
-	// result는 재귀 전체가 같이 채우는 순위 목록이다. 아래 구간을 볼지 정할 때 지금까지의 세 번째 거리가 필요해서 넘겨 쓴다.
-	void SearchRange(std::size_t begin, std::size_t end, int depth, float x, float y, float z, NearestHintKinds& result) const;
-	// counts도 재귀 전체가 같이 채운다.
+	// counts는 재귀 전체가 같이 채운다.
 	void CountRange(std::size_t begin, std::size_t end, int depth, float x, float y, float z, float radius_sq, HintKindCounts& counts) const;
 
 public:
 	// 맵 데이터에서 힌트 종류 메시의 물체 중 맵 범위 안의 것을 모아 트리를 만든다. 대응표의 메시가 맵 데이터에 없으면 실패한다.
 	bool Build(const MapData& map);
 	bool IsLoaded() const { return is_loaded_; }
-	// (x, y, z)에서 가까운 종류를 서로 다른 종류로 최대 HINT_NEAREST_KIND_COUNT개, 가까운 순서로 돌려준다.
-	NearestHintKinds FindNearestKinds(float x, float y, float z) const;
 	// (x, y, z)에서 거리 radius(cm) 안에 있는 물체 수를 종류마다 센다.
 	HintKindCounts CountKinds(float x, float y, float z, float radius) const;
 };

@@ -50,31 +50,6 @@ static bool IsInsideMap(float x, float y)
 	return x >= MAP_MIN[0] && x <= MAP_MAX[0] && y >= MAP_MIN[1] && y <= MAP_MAX[1];
 }
 
-// 점 하나(종류 kind, 거리 제곱 distance_sq)를 순위에 반영한다. 색 데이지·버섯은 DAISY·MUSHROOM 종류로 반영한다. 순위가 정해질 때까지 kinds의 distance에는 거리 제곱을 둔다.
-// 이미 있는 종류면 더 가까울 때만 거리를 줄이고, 없는 종류면 순위가 덜 찼거나 마지막보다 가까울 때 마지막 자리에 넣는다. 그 뒤 가까운 순서로 올린다.
-static void ConsiderPoint(NearestHintKinds& result, HintObjectKind point_kind, float distance_sq)
-{
-	const HintObjectKind kind = GetBaseHintObjectKind(point_kind);
-	std::size_t index = 0;
-	while (index < result.count && result.kinds[index].kind != kind) ++index;
-	if (index < result.count) {
-		if (distance_sq >= result.kinds[index].distance) return;
-		result.kinds[index].distance = distance_sq;
-	}
-	else if (result.count < result.kinds.size()) {
-		index = result.count++;
-		result.kinds[index] = { kind, distance_sq };
-	}
-	else {
-		index = result.count - 1;
-		if (distance_sq >= result.kinds[index].distance) return;
-		result.kinds[index] = { kind, distance_sq };
-	}
-	for (; index > 0 && result.kinds[index].distance < result.kinds[index - 1].distance; --index) {
-		std::swap(result.kinds[index], result.kinds[index - 1]);
-	}
-}
-
 bool HintObjectTree::Build(const MapData& map)
 {
 	is_loaded_ = false;
@@ -118,40 +93,6 @@ void HintObjectTree::BuildRange(std::size_t begin, std::size_t end, int depth)
 	});
 	BuildRange(begin, middle, depth + 1);
 	BuildRange(middle + 1, end, depth + 1);
-}
-
-// 기준선인 가운데 점을 순위에 반영하고, 찾는 위치가 있는 쪽 구간을 먼저 본 뒤, 순위가 덜 찼거나 기준선까지 거리가 순위 마지막 거리보다 짧을 때만 반대쪽 구간도 본다.
-void HintObjectTree::SearchRange(std::size_t begin, std::size_t end, int depth, float x, float y, float z, NearestHintKinds& result) const
-{
-	const auto consider_point = [&](const HintPoint& point)
-	{
-		const float dx = point.x - x;
-		const float dy = point.y - y;
-		const float dz = point.z - z;
-		ConsiderPoint(result, point.kind, dx * dx + dy * dy + dz * dz);
-	};
-	if (end - begin <= HINT_TREE_LEAF_SIZE) {
-		for (std::size_t index = begin; index < end; ++index) consider_point(points_[index]);
-		return;
-	}
-	const std::size_t middle = begin + (end - begin) / 2;
-	const HintPoint& split = points_[middle];
-	consider_point(split);
-	const bool is_x = depth % 2 == 0;
-	const float gap = is_x ? x - split.x : y - split.y;
-	const bool is_left = gap < 0.0f;
-	SearchRange(is_left ? begin : middle + 1, is_left ? middle : end, depth + 1, x, y, z, result);
-	const float worst = result.count < result.kinds.size() ? std::numeric_limits<float>::infinity() : result.kinds[result.count - 1].distance;
-	if (gap * gap < worst) SearchRange(is_left ? middle + 1 : begin, is_left ? end : middle, depth + 1, x, y, z, result);
-}
-
-NearestHintKinds HintObjectTree::FindNearestKinds(float x, float y, float z) const
-{
-	NearestHintKinds result{};
-	if (!is_loaded_ || points_.empty()) return result;
-	SearchRange(0, points_.size(), 0, x, y, z, result);
-	for (std::size_t index = 0; index < result.count; ++index) result.kinds[index].distance = std::sqrt(result.kinds[index].distance);
-	return result;
 }
 
 // 기준선인 가운데 점을 세고, 찾는 구가 기준선 양쪽에 걸치는 쪽 구간만 내려간다.

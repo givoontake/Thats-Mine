@@ -25,6 +25,7 @@
 #include "Settings/KeyBindingSubsystem.h"
 #include "UI/Hint/HintGradeBadge.h"
 #include "UI/Inventory/BlockBoardWidget.h"
+#include "UI/Inventory/HintFavoriteButton.h"
 #include "Styling/CoreStyle.h"
 #include "UI/game_font.h"
 
@@ -174,7 +175,25 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		UCanvasPanelSlot* item_slot = item_page->AddChildToCanvas(item_list_);
 		item_slot->SetPosition(FVector2D(100.0, 248.0));
 		item_slot->SetSize(FVector2D(1000.0, 560.0));
-		hint_count_ = AddText(hint_page, FText::GetEmpty(), 28, FVector2D(100.0, 196.0), FVector2D(980.0, 44.0));
+		hint_count_ = AddText(hint_page, FText::GetEmpty(), 28, FVector2D(100.0, 196.0), FVector2D(640.0, 44.0));
+		// 힌트 수 오른쪽에 분류 필터 버튼을 둔다.
+		const FText filter_names[] = { NSLOCTEXT("Inventory", "AllHints", "전체"), NSLOCTEXT("Inventory", "LocationHints", "위치"), NSLOCTEXT("Inventory", "ClueHints", "단서") };
+		for (int32 filter = 0; filter < UE_ARRAY_COUNT(filter_names); ++filter)
+		{
+			UButton* button = WidgetTree->ConstructWidget<UButton>();
+			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
+			label->SetText(filter_names[filter]);
+			label->SetFont(GetGameFont(20));
+			label->SetColorAndOpacity(FSlateColor::UseForeground());
+			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(2.0f, 0.5f, 2.0f, 2.5f));
+			UCanvasPanelSlot* button_slot = hint_page->AddChildToCanvas(button);
+			button_slot->SetPosition(FVector2D(760.0 + filter * 110.0, 198.0));
+			button_slot->SetSize(FVector2D(100.0, 40.0));
+			filter_buttons_.Add(button);
+		}
+		filter_buttons_[0]->OnClicked.AddDynamic(this, &UInventoryWidget::ShowAllHints);
+		filter_buttons_[1]->OnClicked.AddDynamic(this, &UInventoryWidget::ShowLocationHints);
+		filter_buttons_[2]->OnClicked.AddDynamic(this, &UInventoryWidget::ShowClueHints);
 		hint_list_ = WidgetTree->ConstructWidget<UScrollBox>();
 		hint_list_->SetConsumeMouseWheel(EConsumeMouseWheel::Always);
 		hint_list_->SetScrollbarThickness(FVector2D(10.0, 10.0));
@@ -205,22 +224,62 @@ void UInventoryWidget::SelectBlockTab()
 	SelectTab(BLOCK_TAB);
 }
 
+void UInventoryWidget::ApplyButtonStyle(UButton* button, bool is_selected)
+{
+	FButtonStyle style = tab_style_;
+	if (is_selected)
+	{
+		style.SetNormal(selected_tab_brush_);
+		style.SetHovered(selected_tab_brush_);
+		style.SetNormalForeground(tab_style_.PressedForeground);
+		style.SetHoveredForeground(tab_style_.PressedForeground);
+	}
+	button->SetStyle(style);
+}
+
 // 고른 탭 버튼은 선택 배경과 눌림 글자색으로 칠하고, 그 탭 화면을 보인다.
 void UInventoryWidget::SelectTab(int32 tab)
 {
 	for (int32 index = 0; index < tab_buttons_.Num(); ++index)
 	{
-		FButtonStyle style = tab_style_;
-		if (index == tab)
-		{
-			style.SetNormal(selected_tab_brush_);
-			style.SetHovered(selected_tab_brush_);
-			style.SetNormalForeground(tab_style_.PressedForeground);
-			style.SetHoveredForeground(tab_style_.PressedForeground);
-		}
-		tab_buttons_[index]->SetStyle(style);
+		ApplyButtonStyle(tab_buttons_[index], index == tab);
 	}
 	pages_->SetActiveWidgetIndex(tab);
+}
+
+void UInventoryWidget::ShowAllHints()
+{
+	SelectHintFilter({});
+}
+
+void UInventoryWidget::ShowLocationHints()
+{
+	SelectHintFilter(EHintCategory::LOCATION);
+}
+
+void UInventoryWidget::ShowClueHints()
+{
+	SelectHintFilter(EHintCategory::CLUE);
+}
+
+// 필터 버튼 순서는 전체, 위치, 단서이고 분류 값 순서와 같다.
+void UInventoryWidget::SelectHintFilter(TOptional<EHintCategory> filter)
+{
+	hint_filter_ = filter;
+	const int32 selected = filter ? static_cast<int32>(*filter) + 1 : 0;
+	for (int32 index = 0; index < filter_buttons_.Num(); ++index)
+	{
+		ApplyButtonStyle(filter_buttons_[index], index == selected);
+	}
+	RefreshHints();
+}
+
+void UInventoryWidget::ToggleFavorite(int32 hint_index)
+{
+	if (APlayerCharacter* character = character_.Get())
+	{
+		character->ToggleHintFavorite(hint_index);
+	}
 }
 
 void UInventoryWidget::NativeConstruct()
@@ -235,7 +294,7 @@ void UInventoryWidget::NativeConstruct()
 	}
 	RefreshEquipment();
 	RefreshItems();
-	RefreshHints();
+	SelectHintFilter({});
 	SelectTab(HINT_TAB);
 }
 
@@ -292,12 +351,12 @@ void UInventoryWidget::RefreshItems()
 	{
 		USizeBox* size = WidgetTree->ConstructWidget<USizeBox>();
 		size->SetWidthOverride(490.0f);
-		size->AddChild(CreateGradeRow(item.grade, item.text, false, 20));
+		size->AddChild(CreateGradeRow(item.grade, item.text, 20));
 		item_list_->AddChildToWrapBox(size);
 	}
 }
 
-UBorder* UInventoryWidget::CreateGradeRow(EHintGrade grade, const FText& text, bool is_new, int32 font_size)
+UBorder* UInventoryWidget::CreateGradeRow(EHintGrade grade, const FText& text, int32 font_size)
 {
 	UBorder* row = WidgetTree->ConstructWidget<UBorder>();
 	row->SetBrush(FSlateRoundedBoxBrush(FLinearColor(0.04f, 0.03f, 0.02f, 0.85f), 4.0f, FLinearColor(0.18f, 0.12f, 0.075f), 1.0f));
@@ -316,7 +375,60 @@ UBorder* UInventoryWidget::CreateGradeRow(EHintGrade grade, const FText& text, b
 	label_slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	label_slot->SetPadding(FMargin(22.0f, 5.0f, 16.0f, 5.0f));
 	label_slot->SetVerticalAlignment(VAlign_Center);
-	if (is_new)
+	return row;
+}
+
+UBorder* UInventoryWidget::CreateHintRow(int32 hint_index, const FInventoryHint& hint)
+{
+	UBorder* row = WidgetTree->ConstructWidget<UBorder>();
+	row->SetBrush(FSlateRoundedBoxBrush(FLinearColor(0.04f, 0.03f, 0.02f, 0.85f), 4.0f, FLinearColor(0.18f, 0.12f, 0.075f), 1.0f));
+	row->SetPadding(FMargin(8.0f, 8.0f, 14.0f, 8.0f));
+	UHorizontalBox* content = WidgetTree->ConstructWidget<UHorizontalBox>();
+	row->AddChild(content);
+	// 즐겨찾기 별. 버튼 바탕은 그리지 않고 별 글자색으로 켜짐을 보인다.
+	UHintFavoriteButton* favorite = WidgetTree->ConstructWidget<UHintFavoriteButton>();
+	FButtonStyle favorite_style;
+	favorite_style.SetNormal(FSlateNoResource());
+	favorite_style.SetHovered(FSlateRoundedBoxBrush(FLinearColor(1.0f, 1.0f, 1.0f, 0.08f), 4.0f));
+	favorite_style.SetPressed(FSlateRoundedBoxBrush(FLinearColor(1.0f, 1.0f, 1.0f, 0.14f), 4.0f));
+	favorite_style.SetNormalPadding(FMargin(0.0f));
+	favorite_style.SetPressedPadding(FMargin(0.0f));
+	favorite->SetStyle(favorite_style);
+	favorite->hint_index_ = hint_index;
+	favorite->on_favorite_clicked_.BindUObject(this, &UInventoryWidget::ToggleFavorite);
+	favorite->OnClicked.AddDynamic(favorite, &UHintFavoriteButton::HandleClicked);
+	UTextBlock* star = WidgetTree->ConstructWidget<UTextBlock>();
+	star->SetText(FText::AsCultureInvariant(hint.is_favorite ? TEXT("\u2605") : TEXT("\u2606")));
+	star->SetFont(GetGameFont(26));
+	star->SetColorAndOpacity(hint.is_favorite ? FLinearColor(1.0f, 0.76f, 0.2f) : FLinearColor(0.55f, 0.50f, 0.42f));
+	UButtonSlot* star_slot = Cast<UButtonSlot>(favorite->AddChild(star));
+	star_slot->SetPadding(FMargin(6.0f, 0.0f));
+	star_slot->SetHorizontalAlignment(HAlign_Center);
+	star_slot->SetVerticalAlignment(VAlign_Center);
+	content->AddChildToHorizontalBox(favorite)->SetVerticalAlignment(VAlign_Center);
+	// 분류 표시. 위치는 파랑, 단서는 초록 바탕이다.
+	const bool is_clue = GetHintCategory(hint.entry) == EHintCategory::CLUE;
+	UBorder* tag = WidgetTree->ConstructWidget<UBorder>();
+	tag->SetBrush(FSlateRoundedBoxBrush(is_clue ? FLinearColor(0.10f, 0.32f, 0.17f) : FLinearColor(0.09f, 0.22f, 0.42f), 4.0f));
+	tag->SetPadding(FMargin(10.0f, 3.0f));
+	UTextBlock* tag_text = WidgetTree->ConstructWidget<UTextBlock>();
+	tag_text->SetText(is_clue ? NSLOCTEXT("Inventory", "ClueTag", "단서") : NSLOCTEXT("Inventory", "LocationTag", "위치"));
+	tag_text->SetFont(GetGameFont(17));
+	tag_text->SetColorAndOpacity(FLinearColor(0.92f, 0.94f, 0.96f));
+	tag->AddChild(tag_text);
+	UHorizontalBoxSlot* tag_slot = content->AddChildToHorizontalBox(tag);
+	tag_slot->SetPadding(FMargin(6.0f, 0.0f, 0.0f, 0.0f));
+	tag_slot->SetVerticalAlignment(VAlign_Center);
+	UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
+	label->SetText(hint.text);
+	label->SetFont(GetGameFont(22));
+	label->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
+	label->SetAutoWrapText(true);
+	UHorizontalBoxSlot* label_slot = content->AddChildToHorizontalBox(label);
+	label_slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	label_slot->SetPadding(FMargin(18.0f, 5.0f, 16.0f, 5.0f));
+	label_slot->SetVerticalAlignment(VAlign_Center);
+	if (hint.is_new)
 	{
 		UTextBlock* fresh = WidgetTree->ConstructWidget<UTextBlock>();
 		fresh->SetText(FText::AsCultureInvariant(TEXT("NEW")));
@@ -327,16 +439,25 @@ UBorder* UInventoryWidget::CreateGradeRow(EHintGrade grade, const FText& text, b
 	return row;
 }
 
+// 고른 분류의 힌트만 즐겨찾기를 먼저, 그 안에서는 얻은 순서로 보인다.
 void UInventoryWidget::RefreshHints()
 {
 	const APlayerCharacter* character = character_.Get();
 	if (!character) { return; }
-	TArray<FInventoryHint> hints = character->GetAcquiredHints();
-	hints.StableSort([](const FInventoryHint& left, const FInventoryHint& right) { return left.grade < right.grade; });
+	const TArray<FInventoryHint>& hints = character->GetAcquiredHints();
+	TArray<int32> order;
+	for (int32 index = 0; index < hints.Num(); ++index)
+	{
+		if (!hint_filter_ || GetHintCategory(hints[index].entry) == *hint_filter_)
+		{
+			order.Add(index);
+		}
+	}
+	order.StableSort([&hints](int32 left, int32 right) { return hints[left].is_favorite && !hints[right].is_favorite; });
 	hint_count_->SetText(FText::Format(NSLOCTEXT("Inventory", "HintCount", "획득한 힌트 · {0}개"), FText::AsNumber(hints.Num())));
 	const float offset = hint_list_->GetScrollOffset();
 	hint_list_->ClearChildren();
-	if (hints.IsEmpty())
+	if (order.IsEmpty())
 	{
 		UTextBlock* empty = WidgetTree->ConstructWidget<UTextBlock>();
 		empty->SetText(NSLOCTEXT("Inventory", "Empty", "획득한 힌트가 없습니다."));
@@ -345,9 +466,9 @@ void UInventoryWidget::RefreshHints()
 		empty->SetJustification(ETextJustify::Center);
 		Cast<UScrollBoxSlot>(hint_list_->AddChild(empty))->SetPadding(FMargin(20.0f, 240.0f));
 	}
-	for (const FInventoryHint& hint : hints)
+	for (const int32 index : order)
 	{
-		UScrollBoxSlot* row_slot = Cast<UScrollBoxSlot>(hint_list_->AddChild(CreateGradeRow(hint.grade, hint.text, hint.is_new, 22)));
+		UScrollBoxSlot* row_slot = Cast<UScrollBoxSlot>(hint_list_->AddChild(CreateHintRow(index, hints[index])));
 		row_slot->SetPadding(FMargin(0.0f, 0.0f, 12.0f, 5.0f));
 	}
 	hint_list_->SetScrollOffset(offset);

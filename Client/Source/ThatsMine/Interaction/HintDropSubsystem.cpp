@@ -15,10 +15,10 @@ DEFINE_LOG_CATEGORY_STATIC(LogHintDrop, Log, All);
 static constexpr TCHAR SCROLL_MESH_PATH[] = TEXT("/Game/Thats_Mine/Meshes/Props/Scrolls/SM_Scroll_Rolled.SM_Scroll_Rolled");
 // 바닥을 찾을 때 서버가 보낸 위치에서 아래로 내려 보는 거리(cm)
 static constexpr double SCROLL_GROUND_TRACE_DISTANCE = 100000.0;
-// 등급별 밴드 색. 두루마리 재질은 밴드가 쓰는 색 견본 칸(4행 1열)의 UV만 앞의 두 값만큼 옮긴다. S, A, B, C 순서다.
+// 밴드 색. 힌트 등급이 있던 때의 A 등급 색이다. 두루마리 재질은 밴드가 쓰는 색 견본 칸(4행 1열)의 UV만 앞의 두 값만큼 옮긴다.
 // 세 번째 값이 1이면 옮긴 칸의 위에서 아래까지 색을 두루마리 앞뒤 방향으로 펼쳐 그라데이션으로 보인다.
-// 네 번째 값이 0보다 크면 옮긴 칸의 위에서 그 비율 지점 색 하나로 밴드를 칠한다. S·A는 그라데이션이다.
-static constexpr float SCROLL_BAND_DATA[][4] = { { 0.875f, -0.5f, 1.0f, 0.0f }, { 0.0f, -0.5f, 1.0f, 0.0f }, { 0.375f, 0.0f, 0.0f, 0.0f }, { 0.25f, -0.75f, 0.0f, 0.0f } };
+// 네 번째 값이 0보다 크면 옮긴 칸의 위에서 그 비율 지점 색 하나로 밴드를 칠한다.
+static constexpr float SCROLL_BAND_DATA[] = { 0.0f, -0.5f, 1.0f, 0.0f };
 
 void UHintDropSubsystem::OnWorldBeginPlay(UWorld& world)
 {
@@ -92,7 +92,7 @@ int32 UHintDropSubsystem::FindPickupDrop(const FVector& capsule_location) const
 }
 
 // 떨어진 힌트. 플레이 중인 방 전체가 받고, 게임 도중 들어오면 아직 줍지 않은 것을 받는다.
-// 서버 위치에서 아래로 내려 처음 닿는 고정 물체(땅·건물) 위에 눕힌다. 방향은 드랍 번호로 정해 모든 화면에서 같고, 밴드 색은 힌트 등급을 따른다.
+// 서버 위치에서 아래로 내려 처음 닿는 고정 물체(땅·건물) 위에 눕힌다. 방향은 드랍 번호로 정해 모든 화면에서 같다.
 void UHintDropSubsystem::HandleHintDropPacket(const TArray<uint8>& payload)
 {
 	S2C_HINT_DROP_PACKET packet;
@@ -119,12 +119,9 @@ void UHintDropSubsystem::HandleHintDropPacket(const TArray<uint8>& payload)
 	AStaticMeshActor* scroll = GetWorld()->SpawnActorDeferred<AStaticMeshActor>(AStaticMeshActor::StaticClass(), transform);
 	scroll->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
 	scroll->GetStaticMeshComponent()->SetStaticMesh(mesh);
-	if (packet.grade < UE_ARRAY_COUNT(SCROLL_BAND_DATA))
+	for (int32 index = 0; index < UE_ARRAY_COUNT(SCROLL_BAND_DATA); ++index)
 	{
-		for (int32 index = 0; index < UE_ARRAY_COUNT(SCROLL_BAND_DATA[0]); ++index)
-		{
-			scroll->GetStaticMeshComponent()->SetCustomPrimitiveDataFloat(index, SCROLL_BAND_DATA[packet.grade][index]);
-		}
+		scroll->GetStaticMeshComponent()->SetCustomPrimitiveDataFloat(index, SCROLL_BAND_DATA[index]);
 	}
 	// 줍기는 거리로 정하므로 충돌은 없다. 밟고 지나가도 걸리지 않는다.
 	scroll->SetActorEnableCollision(false);

@@ -86,6 +86,13 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UScrollBox> hint_list_;
 
+	// 힌트 필터 버튼. 전체, 위치, 단서 순서다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UButton>> filter_buttons_;
+
+	// 보이는 힌트 분류. 비어 있으면 전부 보인다.
+	TOptional<EHintCategory> hint_filter_;
+
 	TWeakObjectPtr<APlayerCharacter> character_;
 	FDelegateHandle equipment_changed_handle_;
 	FDelegateHandle hints_changed_handle_;
@@ -100,11 +107,23 @@ private:
 	UFUNCTION()
 	void SelectBlockTab();
 	void SelectTab(int32 tab);
+	UFUNCTION()
+	void ShowAllHints();
+	UFUNCTION()
+	void ShowLocationHints();
+	UFUNCTION()
+	void ShowClueHints();
+	void SelectHintFilter(TOptional<EHintCategory> filter);
+	void ToggleFavorite(int32 hint_index);
+	// 버튼에 고른 모양(선택 배경과 눌림 글자색)이나 기본 모양을 입힌다.
+	void ApplyButtonStyle(UButton* button, bool is_selected);
 	UTextBlock* AddText(UCanvasPanel* canvas, const FText& text, int32 size, const FVector2D& position, const FVector2D& dimensions);
 	UImage* AddPanel(UCanvasPanel* canvas, const FVector2D& position, const FVector2D& dimensions);
 	void RefreshEquipment();
 	void RefreshItems();
 	void RefreshHints();
-	// 등급 배지와 문장을 담은 한 줄을 만든다. 힌트와 아이템 줄이 같은 모양이고, 두 줄로 나란히 놓는 아이템은 글자를 조금 작게 쓴다.
-	UBorder* CreateGradeRow(EHintGrade grade, const FText& text, bool is_new, int32 font_size);
+	// 아이템 한 줄. 등급 배지와 문장을 담는다.
+	UBorder* CreateGradeRow(EHintGrade grade, const FText& text, int32 font_size);
+	// 힌트 한 줄. 즐겨찾기 별, 분류 표시, 문장, 새 힌트 표시를 담는다. 줄 모양은 아이템 줄과 같다.
+	UBorder* CreateHintRow(int32 hint_index, const FInventoryHint& hint);
 };

@@ -59,9 +59,9 @@ TSharedRef<SWidget> UHintPopupWidget::RebuildWidget()
 	return Super::RebuildWidget();
 }
 
-void UHintPopupWidget::Enqueue(const FInventoryHint& hint, const FText& title, bool has_badge)
+void UHintPopupWidget::Enqueue(const FText& text, const FText& title, TOptional<EHintGrade> grade)
 {
-	queue_.Add({ hint, title, has_badge });
+	queue_.Add({ text, title, grade });
 	if (elapsed_ < 0.0f)
 	{
 		ShowNext();
@@ -75,25 +75,25 @@ void UHintPopupWidget::ShowNext()
 		elapsed_ = -1.0f;
 		return;
 	}
-	const FInventoryHint hint = queue_[0].hint;
-	const bool has_badge = queue_[0].has_badge;
+	const FText message = queue_[0].text;
+	const TOptional<EHintGrade> grade = queue_[0].grade;
 	title_->SetText(queue_[0].title);
 	queue_.RemoveAt(0);
 	content_->ClearChildren();
-	if (has_badge)
+	if (grade)
 	{
 		UHintGradeBadge* badge = WidgetTree->ConstructWidget<UHintGradeBadge>();
-		badge->SetGrade(hint.grade);
+		badge->SetGrade(*grade);
 		content_->AddChildToHorizontalBox(badge)->SetVerticalAlignment(VAlign_Center);
 	}
 	UTextBlock* text = WidgetTree->ConstructWidget<UTextBlock>();
-	text->SetText(hint.text);
+	text->SetText(message);
 	text->SetFont(GetGameFont(22));
 	text->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
 	text->SetAutoWrapText(true);
 	UHorizontalBoxSlot* text_slot = content_->AddChildToHorizontalBox(text);
 	text_slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	text_slot->SetPadding(FMargin(has_badge ? 22.0f : 8.0f, 5.0f, 8.0f, 5.0f));
+	text_slot->SetPadding(FMargin(grade ? 22.0f : 8.0f, 5.0f, 8.0f, 5.0f));
 	text_slot->SetVerticalAlignment(VAlign_Center);
 	elapsed_ = 0.0f;
 	layout_wait_frames_ = LAYOUT_WAIT_FRAMES;

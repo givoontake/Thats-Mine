@@ -29,10 +29,10 @@ enum class AwardCategory : std::uint8_t { BOX_OPEN, STUN, COUNT };
 constexpr std::size_t AWARD_RANK_COUNT = 3;
 
 // 힌트 종류. 클라이언트는 종류마다 문장 틀을 갖고, 힌트 항목의 값으로 빈칸을 채운다.
-enum class HintKind : std::uint8_t { DIRECTION, VIEW, NEAREST_OBJECT, NEAREST_TOWER, OBJECT_COUNT };
+enum class HintKind : std::uint8_t { DIRECTION, VIEW, OBJECT_COUNT };
 
 // 힌트가 말하는 물체 종류. 메시 여러 개를 한 종류로 묶는다.
-// "보물에서 가까운 물체" 힌트는 MUSHROOM까지만 쓰고, 색 데이지·버섯은 DAISY·MUSHROOM으로 본다. 개수 힌트는 모든 종류를 쓰고, DAISY·MUSHROOM은 모든 색을 합친 수다.
+// 개수 힌트는 모든 종류를 쓰고, DAISY·MUSHROOM은 모든 색을 합친 수다.
 enum class HintObjectKind : std::uint8_t {
 	LARGE_ROCK,
 	SMALL_ROCK,
@@ -58,7 +58,7 @@ enum class HintObjectKind : std::uint8_t {
 // 방향 힌트의 방위. 지도 기준으로 북쪽이 x가 작은 쪽, 동쪽이 y가 작은 쪽이다.
 enum class HintDirection : std::uint8_t { NORTH, EAST, SOUTH, WEST, COUNT };
 
-// 힌트 등급. A가 가장 높다.
+// 아이템 등급. S가 가장 높다.
 enum class HintGrade : std::uint8_t { S, A, B, C };
 
 #pragma pack(push, 1)
@@ -212,17 +212,15 @@ struct S2C_BOX_LAYOUT_PACKET {
 // 힌트 하나. 문장은 클라이언트가 kind의 문장 틀에 값을 채워 만들고, 영역 번호는 서버 맵 영역 파일의 순서다.
 // DIRECTION: target은 영역 번호, detail은 HintDirection, is_true면 보물이 그 영역보다 그 방위에 있다.
 // VIEW: target은 영역 번호, is_true면 그 영역에서 보물이 묻힌 자리가 보인다.
-// NEAREST_OBJECT: target은 HintObjectKind, detail은 순위(0이 가장 가깝다), is_true는 항상 참이다.
-// NEAREST_TOWER: target은 TowerKind, is_true는 항상 참이다.
-// OBJECT_COUNT: target은 HintObjectKind, detail은 보물 바닥에서 등급 반경(HINT_OBJECT_COUNT_RADII) 안에 있는 그 종류 물체 수(최대 255)다. is_true는 항상 참이다.
+// OBJECT_COUNT: target은 HintObjectKind, detail은 보물 바닥에서 반경(HINT_OBJECT_COUNT_RADII의 radius번째) 안에 있는 그 종류 물체 수(최대 255)다. is_true는 항상 참이다.
 // 거리는 모두 높이까지 넣은 3차원 거리다.
-// grade는 HintGrade다.
+// radius는 OBJECT_COUNT만 쓴다.
 struct HINT_ENTRY {
 	std::uint8_t kind;
 	std::uint8_t target;
 	std::uint8_t detail;
 	bool is_true;
-	std::uint8_t grade;
+	std::uint8_t radius;
 };
 
 // 서버가 아는 무기 하나의 탄약 상태(탄창의 탄, 소지 탄). 서버가 발사나 재장전을 인정하지 않았을 때와 탄약 상자를 열었을 때 그 사람에게만 보낸다.
@@ -263,12 +261,10 @@ struct S2C_HINT_PACKET {
 
 // 기절한 플레이어가 힌트 하나를 떨어뜨렸다. 플레이 중인 방 전체에 보내고, 게임 도중 들어온 플레이어에게는 아직 줍지 않은 것만 보낸다.
 // 드랍 번호는 이번 게임에서 떨어뜨린 순서다. 위치는 떨어뜨린 플레이어의 캡슐 중심(cm)이고, 클라이언트가 그 아래 바닥에 놓는다.
-// 등급은 떨어진 힌트의 등급이며 누구나 두루마리 모습으로 알 수 있다.
 struct S2C_HINT_DROP_PACKET {
 	PACKET_HEADER header;
 	std::uint16_t drop;
 	float location[3];
-	std::uint8_t grade;
 };
 
 // 기절해서 떨어뜨린 힌트. 떨어뜨린 사람에게만 드랍 패킷 뒤에 이어 보낸다. 받은 클라이언트는 같은 힌트를 인벤토리와 지도 배제에서 뺀다.

@@ -99,9 +99,7 @@ void UBlockSubsystem::HandleBlockPacket(const TArray<uint8>& payload)
 	on_blocks_changed_.Broadcast();
 	if (APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
 	{
-		FInventoryHint entry;
-		entry.text = FText::Format(NSLOCTEXT("Block", "BlockText", "{0}칸 블록 · 블록 탭에서 지도에 놓아 쓸 수 있습니다"), FText::AsNumber(BLOCK_PIECES[packet.piece].cell_count));
-		character->ShowAcquirePopup(entry, NSLOCTEXT("Block", "NewBlock", "블록 획득!"), false);
+		character->ShowAcquirePopup(FText::Format(NSLOCTEXT("Block", "BlockText", "{0}칸 블록 · 블록 탭에서 지도에 놓아 쓸 수 있습니다"), FText::AsNumber(BLOCK_PIECES[packet.piece].cell_count)), NSLOCTEXT("Block", "NewBlock", "블록 획득!"), {});
 	}
 }
 

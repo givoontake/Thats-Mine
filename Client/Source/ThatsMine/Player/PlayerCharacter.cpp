@@ -1288,9 +1288,7 @@ void APlayerCharacter::SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rou
 	// 소지 탄이 늘었으면 탄약 상자를 연 것이므로 획득 안내를 띄운다. 서버가 발사·재장전을 인정하지 않아 맞출 때는 소지 탄이 늘지 않는다.
 	if (spare_rounds > ammo->spare_rounds)
 	{
-		FInventoryHint entry;
-		entry.text = FText::Format(NSLOCTEXT("Item", "AmmoText", "{0} 탄약 {1}발"), weapon_settings_[weapon].display_name, spare_rounds - ammo->spare_rounds);
-		ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewAmmo", "탄약 획득!"), false);
+		ShowAcquirePopup(FText::Format(NSLOCTEXT("Item", "AmmoText", "{0} 탄약 {1}발"), weapon_settings_[weapon].display_name, spare_rounds - ammo->spare_rounds), NSLOCTEXT("Item", "NewAmmo", "탄약 획득!"), {});
 	}
 	ammo->rounds = rounds;
 	ammo->spare_rounds = spare_rounds;
@@ -1636,10 +1634,10 @@ void APlayerCharacter::AddHint(const FInventoryHint& hint)
 		acquired_hints_.Add(hint);
 		on_hints_changed_.Broadcast();
 	}
-	ShowAcquirePopup(hint, NSLOCTEXT("Hint", "NewHint", "새 힌트 획득!"), true);
+	ShowAcquirePopup(hint.text, NSLOCTEXT("Hint", "NewHint", "새 힌트 획득!"), {});
 }
 
-void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge)
+void APlayerCharacter::ShowAcquirePopup(const FText& text, const FText& title, TOptional<EHintGrade> grade)
 {
 	APlayerController* controller = Cast<APlayerController>(GetController());
 	if (!hint_popup_widget_ && controller && controller->IsLocalController())
@@ -1652,7 +1650,7 @@ void APlayerCharacter::ShowAcquirePopup(const FInventoryHint& entry, const FText
 	}
 	if (hint_popup_widget_)
 	{
-		hint_popup_widget_->Enqueue(entry, title, has_badge);
+		hint_popup_widget_->Enqueue(text, title, grade);
 	}
 }
 
@@ -1698,10 +1696,7 @@ void APlayerCharacter::AddItem(EItemKind kind, EHintGrade grade)
 	}
 	on_items_changed_.Broadcast();
 	UpdateEquipmentDisplay();
-	FInventoryHint entry;
-	entry.grade = grade;
-	entry.text = GetItemText(kind, grade);
-	ShowAcquirePopup(entry, NSLOCTEXT("Item", "NewItem", "새 아이템 획득!"), true);
+	ShowAcquirePopup(GetItemText(kind, grade), NSLOCTEXT("Item", "NewItem", "새 아이템 획득!"), grade);
 }
 
 void APlayerCharacter::ConsumeMagnifier(TOptional<EHintGrade> grade)
@@ -1792,6 +1787,15 @@ void APlayerCharacter::MarkHintsRead()
 	for (FInventoryHint& hint : acquired_hints_)
 	{
 		hint.is_new = false;
+	}
+}
+
+void APlayerCharacter::ToggleHintFavorite(int32 index)
+{
+	if (acquired_hints_.IsValidIndex(index))
+	{
+		acquired_hints_[index].is_favorite = !acquired_hints_[index].is_favorite;
+		on_hints_changed_.Broadcast();
 	}
 }
 

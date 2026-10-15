@@ -109,13 +109,9 @@ FString UHintSubsystem::BuildSentence(const HINT_ENTRY& hint) const
 		return FString::Format(*FindText(hint.is_true ? TEXT("DIRECTION_TRUE") : TEXT("DIRECTION_FALSE")), { FindText(TEXT("REGION_") + target), FindText(TEXT("DIRECTION_") + detail) });
 	case HintKind::VIEW:
 		return FString::Format(*FindText(hint.is_true ? TEXT("VIEW_TRUE") : TEXT("VIEW_FALSE")), { FindText(TEXT("REGION_") + target) });
-	case HintKind::NEAREST_OBJECT:
-		return FString::Format(*FindText(TEXT("NEAREST_OBJECT")), { FindText(TEXT("RANK_") + detail), FindText(TEXT("OBJECT_") + target) });
-	case HintKind::NEAREST_TOWER:
-		return FString::Format(*FindText(TEXT("NEAREST_TOWER")), { FindText(TEXT("TOWER_") + target) });
 	case HintKind::OBJECT_COUNT:
 	{
-		const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADII[hint.grade] / 100.0f));
+		const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADII[hint.radius] / 100.0f));
 		const FString name = FindText(TEXT("OBJECT_") + target);
 		if (hint.detail > 0)
 		{
@@ -143,12 +139,13 @@ void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
-	if (!character || packet.hint.grade > static_cast<uint8>(EHintGrade::C))
+	const bool is_count = packet.hint.kind == static_cast<uint8>(HintKind::OBJECT_COUNT);
+	if (!character || (is_count && packet.hint.radius >= UE_ARRAY_COUNT(HINT_OBJECT_COUNT_RADII)))
 	{
 		return;
 	}
 	FInventoryHint hint;
-	hint.grade = static_cast<EHintGrade>(packet.hint.grade);
+	hint.entry = packet.hint;
 	hint.text = FText::FromString(BuildSentence(packet.hint));
 	character->AddHint(hint);
 }

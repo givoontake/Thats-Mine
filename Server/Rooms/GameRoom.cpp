@@ -696,8 +696,9 @@ void GameRoom::StartGame(int requester_id)
 	is_game_started_ = false;
 	last_pose_tick_ms_ = 0;
 	// 이번 게임의 탑 자리를 후보 중에서 고르게 퍼뜨려 고른다. 고른 순서대로 종류를 번갈아 정해 종류마다 고르게 퍼지게 한다. 보물은 놓인 탑을 피한다.
+	// TOWER_SPAWN_ENABLED가 거짓이면 탑 없이 빈 배치를 보낸다.
 	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
-	const std::vector<std::size_t> tower_indices = SelectSpreadIndices(tower_candidates, TOWER_COUNT, TOWER_MIN_DISTANCE);
+	const std::vector<std::size_t> tower_indices = TOWER_SPAWN_ENABLED ? SelectSpreadIndices(tower_candidates, TOWER_COUNT, TOWER_MIN_DISTANCE) : std::vector<std::size_t>{};
 	tower_placements_.clear();
 	tower_layout_p_ = {};
 	for (std::size_t order = 0; order < tower_indices.size(); ++order) {
@@ -743,67 +744,27 @@ void GameRoom::PlaceTreasure()
 	std::cerr << "Treasure place fail.. " << std::endl;
 }
 
-// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 가까운 물체 종류, 가장 가까운 탑, 물체 종류마다 등급마다 개수 순서다. 보임은 HINT_VIEW_ENABLED일 때만 만든다.
-// 거리는 보물 바닥에서 잰다. 개수 힌트의 등급은 반경으로 정해져 있고, 방향 힌트는 배제 영역 순으로 위 절반은 S, 나머지는 A다.
-// 나머지 힌트는 배제 영역 순으로 위 HINT_GRADE_S_PERCENT%는 S, 다음 HINT_GRADE_A_PERCENT%는 A, 다음 HINT_GRADE_B_PERCENT%는 B, 나머지는 C로 정한다.
+// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 물체 종류마다 반경마다 개수 순서다. 보임은 HINT_VIEW_ENABLED일 때만 만든다.
+// 거리는 보물 바닥에서 잰다.
 void GameRoom::GenerateHints()
 {
 	const float x = treasure_placement_.location.x;
 	const float y = treasure_placement_.location.y;
 	const float z = treasure_placement_.location.z;
 	hints_ = server_->GetDirectionHintData().JudgeDirections(x, y);
-	const std::size_t direction_hint_count = hints_.size();
 	if (HINT_VIEW_ENABLED) {
 		const std::vector<HINT_ENTRY> view_hints = server_->GetViewHintData().JudgeViews(server_->GetMapData(), x, y);
 		hints_.insert(hints_.end(), view_hints.begin(), view_hints.end());
 	}
-	const NearestHintKinds nearest_kinds = server_->GetHintObjectTree().FindNearestKinds(x, y, z);
-	for (std::size_t rank = 0; rank < nearest_kinds.count; ++rank) {
-		hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_OBJECT), static_cast<std::uint8_t>(nearest_kinds.kinds[rank].kind), static_cast<std::uint8_t>(rank), true, 0 });
-	}
-	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
-	const TowerPlacement* nearest_tower = FindNearestTower(tower_placements_, tower_candidates, x, y, z);
-	if (nearest_tower) hints_.push_back({ static_cast<std::uint8_t>(HintKind::NEAREST_TOWER), static_cast<std::uint8_t>(nearest_tower->kind), 0, true, 0 });
-	const std::size_t graded_hint_count = hints_.size();
-	for (std::uint8_t grade = 0; grade < std::size(HINT_OBJECT_COUNT_RADII); ++grade) {
-		const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, z, HINT_OBJECT_COUNT_RADII[grade]);
+	for (std::uint8_t radius = 0; radius < std::size(HINT_OBJECT_COUNT_RADII); ++radius) {
+		const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, z, HINT_OBJECT_COUNT_RADII[radius]);
 		for (std::size_t kind = 0; kind < object_counts.size(); ++kind) {
-			hints_.push_back({ static_cast<std::uint8_t>(HintKind::OBJECT_COUNT), static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)), true, grade });
+			hints_.push_back({ static_cast<std::uint8_t>(HintKind::OBJECT_COUNT), static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)), true, radius });
 		}
-	}
-
-	// 힌트 번호 [begin, end)를 배제 영역이 큰 순서로 정렬해 돌려준다.
-	const HintExclusionData& exclusion_data = server_->GetHintExclusionData();
-	const auto sort_by_exclusion = [&](std::size_t begin, std::size_t end)
-	{
-		std::vector<std::pair<float, std::size_t>> scores; // 배제 영역, 힌트 번호
-		scores.reserve(end - begin);
-		for (std::size_t index = begin; index < end; ++index) {
-			const HINT_ENTRY& hint = hints_[index];
-			const float exclusion = hint.kind == static_cast<std::uint8_t>(HintKind::NEAREST_TOWER)
-				? exclusion_data.GetNearestTowerExclusion(static_cast<TowerKind>(hint.target), tower_placements_, tower_candidates)
-				: exclusion_data.GetExclusion(hint);
-			scores.push_back({ exclusion, index });
-		}
-		std::sort(scores.begin(), scores.end(), [](const std::pair<float, std::size_t>& a, const std::pair<float, std::size_t>& b) { return a.first > b.first; });
-		return scores;
-	};
-	const std::vector<std::pair<float, std::size_t>> direction_scores = sort_by_exclusion(0, direction_hint_count);
-	for (std::size_t order = 0; order < direction_scores.size(); ++order) {
-		const HintGrade grade = order < (direction_scores.size() + 1) / 2 ? HintGrade::S : HintGrade::A;
-		hints_[direction_scores[order].second].grade = static_cast<std::uint8_t>(grade);
-	}
-	const std::vector<std::pair<float, std::size_t>> scores = sort_by_exclusion(direction_hint_count, graded_hint_count);
-	const std::size_t s_end = scores.size() * HINT_GRADE_S_PERCENT / 100;
-	const std::size_t a_end = scores.size() * (HINT_GRADE_S_PERCENT + HINT_GRADE_A_PERCENT) / 100;
-	const std::size_t b_end = scores.size() * (HINT_GRADE_S_PERCENT + HINT_GRADE_A_PERCENT + HINT_GRADE_B_PERCENT) / 100;
-	for (std::size_t order = 0; order < scores.size(); ++order) {
-		const HintGrade grade = order < s_end ? HintGrade::S : order < a_end ? HintGrade::A : order < b_end ? HintGrade::B : HintGrade::C;
-		hints_[scores[order].second].grade = static_cast<std::uint8_t>(grade);
 	}
 }
 
-// 힌트마다 등급 배수 × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를,
+// 힌트마다 HINT_BOX_COPIES × 글로벌 배수만큼 힌트 상자를, 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 탄약 상자를, 아이템 종류마다 등급별 ITEM_BOX_COUNTS × 글로벌 배수만큼 아이템 상자를,
 // 블록마다 BLOCK_BOX_COUNT × 칸 수별 배수 × 글로벌 배수만큼 블록 상자를 만들어 섞고,
 // 그 수만큼 상자 자리를 골라 상자마다 하나씩 넣는다.
 // 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오른다. 배치 패킷은 상자 수에 맞춘 크기로 만든다.
@@ -812,7 +773,7 @@ void GameRoom::PlaceBoxes(int player_count)
 	const int global_multiplier = std::max(1, (player_count + HINT_BOX_PLAYERS_PER_MULTIPLIER - 1) / HINT_BOX_PLAYERS_PER_MULTIPLIER);
 	box_contents_.clear();
 	for (std::uint32_t index = 0; index < hints_.size(); ++index) {
-		box_contents_.insert(box_contents_.end(), HINT_BOX_COPIES[hints_[index].grade] * global_multiplier, BoxContent{ BoxContentKind::HINT, index });
+		box_contents_.insert(box_contents_.end(), HINT_BOX_COPIES * global_multiplier, BoxContent{ BoxContentKind::HINT, index });
 	}
 	for (std::uint32_t weapon = 0; weapon < std::size(AMMO_BOX_ROUNDS); ++weapon) {
 		if (AMMO_BOX_ROUNDS[weapon] > 0) box_contents_.insert(box_contents_.end(), AMMO_BOX_COUNT * global_multiplier, BoxContent{ BoxContentKind::AMMO, weapon });
@@ -944,7 +905,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	flush();
 }
 
-static S2C_HINT_DROP_PACKET MakeHintDropPacket(std::uint16_t drop, const HintDrop& hint_drop, std::uint8_t grade)
+static S2C_HINT_DROP_PACKET MakeHintDropPacket(std::uint16_t drop, const HintDrop& hint_drop)
 {
 	S2C_HINT_DROP_PACKET drop_p;
 	drop_p.header = { static_cast<std::uint16_t>(sizeof(drop_p)), S2C_HINT_DROP };
@@ -952,7 +913,6 @@ static S2C_HINT_DROP_PACKET MakeHintDropPacket(std::uint16_t drop, const HintDro
 	drop_p.location[0] = hint_drop.location.x;
 	drop_p.location[1] = hint_drop.location.y;
 	drop_p.location[2] = hint_drop.location.z;
-	drop_p.grade = grade;
 	return drop_p;
 }
 
@@ -1009,7 +969,7 @@ void GameRoom::ProcessLoadedPlayers()
 				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
 				for (std::size_t index = 0; index < hint_drops_.size(); ++index) {
 					if (hint_drops_[index].is_picked) continue;
-					const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(index), hint_drops_[index], hints_[hint_drops_[index].hint].grade);
+					const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(index), hint_drops_[index]);
 					session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
 				}
 			}
@@ -1312,7 +1272,7 @@ void GameRoom::DropHint(Player& target)
 	if (!hint) return;
 	const float* location = target.GetMoveState().location;
 	const HintDrop& hint_drop = hint_drops_.emplace_back(HintDrop{ *hint, { location[0], location[1], location[2] }, false });
-	const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(hint_drops_.size() - 1), hint_drop, hints_[*hint].grade);
+	const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(hint_drops_.size() - 1), hint_drop);
 	S2C_HINT_LOST_PACKET lost_p;
 	lost_p.header = { static_cast<std::uint16_t>(sizeof(lost_p)), S2C_HINT_LOST };
 	lost_p.hint = hints_[*hint];

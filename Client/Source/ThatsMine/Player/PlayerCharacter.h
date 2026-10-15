@@ -102,13 +102,15 @@ public:
 	void RemoveHint(const FText& text);
 
 	void MarkHintsRead();
+	// 가진 힌트 목록의 index번째 힌트의 즐겨찾기를 켜거나 끈다.
+	void ToggleHintFavorite(int32 index);
 	FOnEquipmentChanged on_equipment_changed_;
 	FOnHintsChanged on_hints_changed_;
 
 	// 상자에서 얻은 아이템을 가지고 아이템 획득 안내를 띄운다. 넓은 탐지 돋보기는 개수를 늘리고, 다른 종류는 지금보다 높은 등급일 때만 바꾼다.
 	void AddItem(EItemKind kind, EHintGrade grade);
-	// 힌트·아이템·탄약·블록 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. has_badge가 false면 등급 없이 보인다.
-	void ShowAcquirePopup(const FInventoryHint& entry, const FText& title, bool has_badge);
+	// 힌트·아이템·탄약·블록 획득 안내를 띄운다. 내 캐릭터에만 안내 위젯을 만든다. 등급은 아이템만 넘긴다.
+	void ShowAcquirePopup(const FText& text, const FText& title, TOptional<EHintGrade> grade);
 	// 장비 표시(화면 아래 장비·에임, 인벤토리)를 지금 상태로 다시 그린다.
 	void UpdateEquipmentDisplay();
 	// 서버가 탐색을 마쳤다. 기본 돋보기(grade가 비어 있음)는 재사용 대기시간을 시작하고, 넓은 탐지 돋보기는 그 등급을 하나 쓴다.

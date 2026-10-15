@@ -9,7 +9,7 @@ class UBorder;
 class UHorizontalBox;
 class UTextBlock;
 
-// 힌트·아이템·탄약 획득 안내. 화면 오른쪽 아래 탄 표시 위에 "새 힌트 획득!" 같은 제목을 띄우고, 그 아래로 등급과 문장을 담은 패널이 오른쪽에서 밀려 들어온다.
+// 힌트·아이템·탄약 획득 안내. 화면 오른쪽 아래 탄 표시 위에 "새 힌트 획득!" 같은 제목을 띄우고, 그 아래로 문장(아이템은 등급도)을 담은 패널이 오른쪽에서 밀려 들어온다.
 // 받은 안내는 줄을 세워 하나씩 DISPLAY_SECONDS 동안 보이고, 끝날 때 패널은 다시 오른쪽으로 밀려 나가고 제목은 흐려진 뒤 다음 안내를 보인다.
 UCLASS()
 class THATSMINE_API UHintPopupWidget : public UUserWidget
@@ -17,8 +17,8 @@ class THATSMINE_API UHintPopupWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	// has_badge가 false면 등급 없이 문장만 보인다.
-	void Enqueue(const FInventoryHint& hint, const FText& title, bool has_badge);
+	// 등급이 없으면 문장만 보인다.
+	void Enqueue(const FText& text, const FText& title, TOptional<EHintGrade> grade);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -45,9 +45,9 @@ private:
 
 	struct FPopupEntry
 	{
-		FInventoryHint hint;
+		FText text;
 		FText title;
-		bool has_badge;
+		TOptional<EHintGrade> grade;
 	};
 	TArray<FPopupEntry> queue_;
 	// 지금 안내를 보인 시간. 보이는 안내가 없으면 음수다.
