@@ -360,8 +360,8 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		break;
 	}
 	case C2S_TREASURE_REVEAL: {
-		// 시험용이라 혼자 하는 방에서만 보물 위치를 알려 준다.
-		if (room_state_.load() != RoomState::PLAY || current_player_count_.load() != 1) break;
+		// 시험용이라 방장이 요청할 때만 플레이 중인 전원에게 보물 위치를 알려 준다. 혼자 하는 방에서는 그 사람이 방장이다.
+		if (room_state_.load() != RoomState::PLAY || request_session.GetSessionKey().player_id != host_id_) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		S2C_TREASURE_REVEAL_PACKET reveal_p;
@@ -369,7 +369,10 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 		reveal_p.location[0] = treasure_placement_.location.x;
 		reveal_p.location[1] = treasure_placement_.location.y;
 		reveal_p.location[2] = treasure_placement_.location.z;
-		request_session.SendPacket(reinterpret_cast<char*>(&reveal_p), reveal_p.header.size);
+		for (auto& player : room_players_) {
+			auto session = FindSession(player);
+			if (session && player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&reveal_p), reveal_p.header.size);
+		}
 		break;
 	}
 	case C2S_LOAD_COMPLETE: {

@@ -6,10 +6,10 @@
 
 class UBorder;
 class UCanvasPanel;
+class UMapViewWidget;
 class UTextBlock;
-class UTexture2D;
 
-// 인벤토리 블록 탭의 블록 칸. 왼쪽은 지도 사진을 8×8칸으로 나눈 배제 판이고, 오른쪽은 가졌고 아직 쓰지 않은 블록이다. 같은 블록은 한 칸에 두고 2개 이상이면 개수를 적는다.
+// 인벤토리 블록 탭의 블록 칸. 왼쪽은 게임 지도(UMapViewWidget) 전체를 8×8칸으로 나눈 배제 판이고, 오른쪽은 가졌고 아직 쓰지 않은 블록이다. 같은 블록은 한 칸에 두고 2개 이상이면 개수를 적는다.
 // 블록을 마우스 왼쪽 버튼으로 끌어 판에 놓으면 칸에 맞춰 붙고, 놓을 수 있는 자리(모든 칸이 판 안이고 배제되지 않음)면 초록, 아니면 빨강으로 보인다.
 // 끄는 중 오른쪽 버튼·휠·R키로 시계 방향으로 돌린다. 놓을 수 있는 자리에서 버튼을 떼면 사용할지 묻고, 사용을 누르면 서버에 보낸다.
 UCLASS()
@@ -57,12 +57,9 @@ private:
 		int32 row = 0;
 	};
 
+	// 판 아래에 깔아 지도 전체를 보이는 게임 지도
 	UPROPERTY(Transient)
-	TObjectPtr<UTexture2D> map_texture_;
-
-	// 힌트 서브시스템의 배제 칸 텍스처. 배제된 곳은 알파 255, 나머지는 0이다.
-	UPROPERTY(Transient)
-	TObjectPtr<UTexture2D> exclusion_texture_;
+	TObjectPtr<UMapViewWidget> map_view_;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> block_count_;

@@ -1581,7 +1581,7 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 	{
 		display.name = settings->display_name;
 		display.uses_ammo = settings->hitscan.is_enabled || weapon == EWeaponType::PICKAXE;
-		// ESC 메뉴가 떠 있으면 에임을 숨긴다.
+		// ESC 메뉴나 지도·인벤토리 같은 창이 떠 있으면 에임을 숨긴다.
 		const AThatsMinePlayerController* controller = Cast<AThatsMinePlayerController>(GetController());
 		display.should_show_crosshair = settings->hitscan.is_enabled && !is_aiming_ && !(controller && controller->IsMenuOpen());
 		if (display.uses_ammo)

@@ -159,6 +159,12 @@ void USettingsWidget::BuildKeyRows()
 	scroll_slot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
 	scroll_slot->SetOffsets(FMargin(0.0f));
 	scroll->AddChild(sensitivity_size);
+	// 키 칸은 테두리·배경 없이 글자만 두고, 마우스를 올리면 탭 버튼과 같은 글자색으로 바꾼다.
+	FButtonStyle key_style = tab_button_style_;
+	key_style.Normal.DrawAs = ESlateBrushDrawType::NoDrawType;
+	key_style.Hovered.DrawAs = ESlateBrushDrawType::NoDrawType;
+	key_style.Pressed.DrawAs = ESlateBrushDrawType::NoDrawType;
+	key_style.Disabled.DrawAs = ESlateBrushDrawType::NoDrawType;
 	for (int32 action = 0; action < static_cast<int32>(EKeyAction::COUNT); ++action)
 	{
 		UHorizontalBox* row = WidgetTree->ConstructWidget<UHorizontalBox>();
@@ -170,7 +176,7 @@ void USettingsWidget::BuildKeyRows()
 		label_size->AddChild(label);
 		row->AddChildToHorizontalBox(label_size)->SetVerticalAlignment(VAlign_Center);
 		UButton* button = WidgetTree->ConstructWidget<UButton>();
-		button->SetStyle(tab_button_style_);
+		button->SetStyle(key_style);
 		button->OnClicked.AddDynamic(this, &USettingsWidget::StartKeyCapture);
 		UTextBlock* key = WidgetTree->ConstructWidget<UTextBlock>();
 		key->SetFont(option_level_font_);
@@ -200,6 +206,8 @@ void USettingsWidget::UpdateKeyTexts()
 	for (int32 action = 0; action < key_texts_.Num() && action < pending_keys_.Num(); ++action)
 	{
 		key_texts_[action]->SetText(action == capturing_action_ ? NSLOCTEXT("Settings", "PressKey", "키 입력") : pending_keys_[action].GetDisplayName());
+		// 키 입력을 기다리는 칸은 누른 버튼 글자색으로 표시한다.
+		key_texts_[action]->SetColorAndOpacity(action == capturing_action_ ? tab_button_style_.PressedForeground : FSlateColor::UseForeground());
 	}
 }
 

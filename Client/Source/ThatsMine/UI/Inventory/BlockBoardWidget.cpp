@@ -8,7 +8,6 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
-#include "Engine/Texture2D.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Interaction/BlockSubsystem.h"
@@ -16,6 +15,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
+#include "UI/Map/MapViewWidget.h"
 #include "block_pieces.h"
 #include "UI/game_font.h"
 
@@ -23,9 +23,10 @@ static const FLinearColor TEXT_COLOR(0.96f, 0.90f, 0.78f);
 static const FLinearColor PIECE_COLOR(1.0f, 0.61f, 0.12f);
 static const FLinearColor VALID_COLOR(0.30f, 0.90f, 0.40f, 0.65f);
 static const FLinearColor INVALID_COLOR(0.95f, 0.25f, 0.20f, 0.65f);
-// 배제 칸 텍스처와 배제 판 칸에 곱하는 어둡기. 배제 판 칸은 두 번 어두워진다.
-static constexpr float EXCLUSION_SHADE_OPACITY = 0.3f;
+// 배제 판 칸에 곱하는 어둡기. 지도가 배제 칸을 이미 어둡게 덮어 배제 판 칸은 두 번 어두워진다.
 static constexpr float BOARD_SHADE_OPACITY = 0.4f;
+// 판에 그리는 지도 표시 크기 배율
+static constexpr float MAP_MARKER_SCALE = 0.7f;
 
 // 나무 버튼 재질 하나로 버튼 크기의 그림 붓을 만든다.
 static FSlateBrush MakeButtonBrush(const TCHAR* material_path)
@@ -59,10 +60,14 @@ TSharedRef<SWidget> UBlockBoardWidget::RebuildWidget()
 {
 	if (!WidgetTree->RootWidget)
 	{
-		map_texture_ = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Thats_Mine/UI/Map/T_WorldMap.T_WorldMap"));
 		UCanvasPanel* root = WidgetTree->ConstructWidget<UCanvasPanel>();
 		root->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		WidgetTree->RootWidget = root;
+		// 직접 그리는 배제 판 칸·블록은 자식 위젯 위에 그려져 지도를 덮는다.
+		map_view_ = WidgetTree->ConstructWidget<UMapViewWidget>();
+		map_view_->SetMarkerScale(MAP_MARKER_SCALE);
+		map_view_->SetPlacesVisible(true);
+		root->AddChildToCanvas(map_view_)->SetSize(FVector2D(BOARD_SIZE));
 		const auto add_text = [this](UCanvasPanel* canvas, const FText& text, int32 size, const FLinearColor& color, const FVector2D& position, const FVector2D& dimensions)
 		{
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
@@ -180,12 +185,11 @@ void UBlockBoardWidget::RefreshBlocks()
 	}
 }
 
-// 힌트 서브시스템의 배제 텍스처와 배제 판을 받아 둔다.
+// 힌트 서브시스템의 배제 판을 받아 둔다.
 void UBlockBoardWidget::RefreshExclusion()
 {
 	const UHintSubsystem* hints = GetWorld()->GetSubsystem<UHintSubsystem>();
 	exclusion_board_ = hints ? hints->GetExclusionBoard() : 0;
-	exclusion_texture_ = hints ? hints->GetExclusionTexture() : nullptr;
 	// 사용할지 묻는 중에 그 자리가 배제되면 묻기를 그만둔다.
 	if (pending_.piece != INDEX_NONE && !CanPlace(pending_))
 	{
@@ -248,32 +252,13 @@ int32 UBlockBoardWidget::NativePaint(const FPaintArgs& args, const FGeometry& ge
 	};
 	constexpr double cell_size = BOARD_SIZE / BLOCK_GRID_SIZE;
 
-	// 판: 지도 사진, 배제된 곳 그늘, 배제 판 칸 그늘, 격자
-	FSlateBrush map_brush;
-	map_brush.SetResourceObject(map_texture_);
-	draw_box(&map_brush, FVector2D::ZeroVector, FVector2D(BOARD_SIZE), FLinearColor::White);
-	++layer;
-	if (exclusion_texture_)
-	{
-		FSlateBrush exclusion_brush;
-		exclusion_brush.SetResourceObject(exclusion_texture_);
-		draw_box(&exclusion_brush, FVector2D::ZeroVector, FVector2D(BOARD_SIZE), FLinearColor(1.0f, 1.0f, 1.0f, EXCLUSION_SHADE_OPACITY));
-		++layer;
-	}
+	// 판: 지도 위에 배제 판 칸 그늘과 판 테두리
 	for (int32 index = 0; index < BLOCK_GRID_SIZE * BLOCK_GRID_SIZE; ++index)
 	{
 		if ((exclusion_board_ >> index & 1) != 0)
 		{
 			draw_box(white_brush, FVector2D(index % BLOCK_GRID_SIZE, index / BLOCK_GRID_SIZE) * cell_size, FVector2D(cell_size), FLinearColor(0.0f, 0.0f, 0.0f, BOARD_SHADE_OPACITY));
 		}
-	}
-	++layer;
-	for (int32 line = 0; line <= BLOCK_GRID_SIZE; ++line)
-	{
-		const float position = static_cast<float>(line * cell_size);
-		const FLinearColor line_color(0.96f, 0.90f, 0.78f, 0.55f);
-		FSlateDrawElement::MakeLines(draw_elements, layer, geometry.ToPaintGeometry(), { FVector2f(position, 0.0f), FVector2f(position, static_cast<float>(BOARD_SIZE)) }, ESlateDrawEffect::None, line_color * tint, true, 1.0f);
-		FSlateDrawElement::MakeLines(draw_elements, layer, geometry.ToPaintGeometry(), { FVector2f(0.0f, position), FVector2f(static_cast<float>(BOARD_SIZE), position) }, ESlateDrawEffect::None, line_color * tint, true, 1.0f);
 	}
 	++layer;
 	draw_box(&frame_brush, FVector2D(-2.0), FVector2D(BOARD_SIZE + 4.0), FLinearColor::White);

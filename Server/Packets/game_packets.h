@@ -323,12 +323,12 @@ struct S2C_SHOT_TRACE_PACKET {
 	float end[3];
 };
 
-// 시험용 보물 위치 요청. 방에 플레이어가 혼자일 때만 답한다.
+// 시험용 보물 위치 요청. 방장이 요청할 때만 답한다.
 struct C2S_TREASURE_REVEAL_PACKET {
 	PACKET_HEADER header;
 };
 
-// 시험용 보물 위치 요청의 답. 보물 바닥 가운데 위치(cm)다. 요청한 사람에게만 보낸다.
+// 시험용 보물 위치 요청의 답. 보물 바닥 가운데 위치(cm)다. 플레이 중인 전원에게 보낸다.
 struct S2C_TREASURE_REVEAL_PACKET {
 	PACKET_HEADER header;
 	float location[3];

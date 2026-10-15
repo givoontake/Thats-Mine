@@ -196,6 +196,10 @@ void AThatsMinePlayerController::ToggleHelp()
 	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	input_mode.SetHideCursorDuringCapture(false);
 	SetInputMode(input_mode);
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 void AThatsMinePlayerController::CloseHelp()
@@ -208,6 +212,10 @@ void AThatsMinePlayerController::CloseHelp()
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 bool AThatsMinePlayerController::ShouldUseTouchControls() const
@@ -270,6 +278,10 @@ void AThatsMinePlayerController::ToggleMap()
 	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	input_mode.SetHideCursorDuringCapture(false);
 	SetInputMode(input_mode);
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 void AThatsMinePlayerController::CloseMap()
@@ -282,6 +294,10 @@ void AThatsMinePlayerController::CloseMap()
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 void AThatsMinePlayerController::ToggleInventory()
@@ -313,6 +329,10 @@ void AThatsMinePlayerController::ToggleInventory()
 	input_mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	input_mode.SetHideCursorDuringCapture(false);
 	SetInputMode(input_mode);
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 void AThatsMinePlayerController::CloseInventory()
@@ -325,6 +345,10 @@ void AThatsMinePlayerController::CloseInventory()
 	SetIgnoreLookInput(false);
 	bShowMouseCursor = was_mouse_cursor_visible_;
 	SetInputMode(FInputModeGameOnly());
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->UpdateEquipmentDisplay();
+	}
 }
 
 // 로비 설정 메뉴와 같은 크기(1600x900 화면 기준 885x630)로 화면 가운데에 띄운다. 지도·인벤토리가 열려 있으면 그쪽이 ESC를 받아 닫는다.
@@ -387,7 +411,8 @@ void AThatsMinePlayerController::ToggleSettings()
 
 bool AThatsMinePlayerController::IsMenuOpen() const
 {
-	return (pause_menu_widget_ && pause_menu_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport());
+	return (pause_menu_widget_ && pause_menu_widget_->IsInViewport()) || (settings_frame_ && settings_frame_->IsInViewport())
+		|| (map_widget_ && map_widget_->IsInViewport()) || (inventory_widget_ && inventory_widget_->IsInViewport()) || (help_widget_ && help_widget_->IsInViewport());
 }
 
 // 메뉴를 열고 닫을 때마다 내 캐릭터의 장비 표시를 다시 그려 에임을 숨기거나 보인다.

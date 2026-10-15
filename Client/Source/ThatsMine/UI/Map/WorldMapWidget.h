@@ -2,15 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "map_place.h"
 #include "WorldMapWidget.generated.h"
 
 class UCanvasPanel;
-class UImage;
-class UMapGridWidget;
-class UMapPlayerMarkerWidget;
-class UTexture2D;
-class UTextBlock;
+class UMapViewWidget;
 
 DECLARE_DELEGATE(FOnWorldMapCloseRequested);
 
@@ -36,59 +31,18 @@ protected:
 	virtual FReply NativeOnMouseMove(const FGeometry& geometry, const FPointerEvent& event) override;
 	virtual void NativeOnMouseCaptureLost(const FCaptureLostEvent& event) override;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Map")
-	TSoftObjectPtr<UTexture2D> map_texture_ = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/Thats_Mine/UI/Map/T_WorldMap.T_WorldMap")));
-
-	UPROPERTY(EditDefaultsOnly, Category = "Map")
-	TArray<FMapPlace> places_;
-
-	// 보물을 발견하면 그 자리에 놓는 주황 별
-	UPROPERTY(EditDefaultsOnly, Category = "Map")
-	TSoftObjectPtr<UTexture2D> treasure_marker_texture_ = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/Thats_Mine/UI/Map/T_TreasureMarker.T_TreasureMarker")));
-
-	// 지도 촬영 시 사용한 경계. 이미지 위쪽은 -X, 오른쪽은 -Y이다.
-	UPROPERTY(EditDefaultsOnly, Category = "Map|Coordinates")
-	FVector2D world_min_ = FVector2D(-100750.0, -100700.0);
-
-	UPROPERTY(EditDefaultsOnly, Category = "Map|Coordinates")
-	FVector2D world_max_ = FVector2D(100650.0, 100700.0);
-
 private:
 	static constexpr double MAP_SIZE = 1000.0;
 	static constexpr double MAX_ZOOM = 4.0;
 	static constexpr double WHEEL_ZOOM_FACTOR = 1.2;
 	static constexpr double ZOOM_SPEED = 18.0;
-	static constexpr float EXCLUSION_SHADE_OPACITY = 0.3f;
-	static constexpr double TREASURE_MARKER_SIZE = 36.0;
-	static constexpr double PING_MARKER_SIZE = 14.0;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanel> map_canvas_;
 
+	// 지도 사진·배제 그늘·격자·지명·표시를 그리는 게임 지도. 확대·이동한 범위를 보인다.
 	UPROPERTY(Transient)
-	TObjectPtr<UImage> map_image_;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UMapPlayerMarkerWidget> player_marker_;
-
-	// 보물 별. 보물이 발견되기 전에는 숨긴다.
-	UPROPERTY(Transient)
-	TObjectPtr<UImage> treasure_marker_;
-
-	// 내가 찍은 핑. 핑이 없으면 숨긴다.
-	UPROPERTY(Transient)
-	TObjectPtr<UImage> ping_marker_;
-
-	// 힌트로 배제한 곳을 어둡게 덮는 이미지 하나. 배제 칸은 불투명, 나머지는 투명한 텍스처를 반투명 검정으로 그려 어느 곳이든 한 번만 어두워진다.
-	UPROPERTY(Transient)
-	TObjectPtr<UImage> exclusion_image_;
-
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UTextBlock>> place_labels_;
-
-	// 배제 판(block_pieces.h)과 같은 8×8 칸 격자선과 50m 작은 격자선
-	UPROPERTY(Transient)
-	TObjectPtr<UMapGridWidget> grid_;
+	TObjectPtr<UMapViewWidget> map_view_;
 
 	double zoom_ = 1.0;
 	double target_zoom_ = 1.0;
@@ -99,13 +53,6 @@ private:
 
 	void ChangeZoom(float wheel_delta, const FVector2D& anchor);
 	void UpdateMap();
-	void UpdatePlayerMarker();
-	void UpdateTreasureMarker();
-	void UpdatePingMarker();
-	// 힌트 서브시스템의 배제 텍스처를 다시 가져온다.
-	void UpdateExclusionTexture();
-
-	void ResetView();
 
 	void Close();
 };

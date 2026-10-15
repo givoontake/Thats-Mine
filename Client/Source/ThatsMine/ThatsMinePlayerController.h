@@ -30,7 +30,7 @@ public:
 	/** Constructor */
 	AThatsMinePlayerController();
 	virtual void FlushPressedKeys() override;
-	// ESC 메뉴나 거기서 연 설정 창이 떠 있는지. 떠 있으면 에임을 숨긴다.
+	// ESC 메뉴, 거기서 연 설정 창, 지도, 인벤토리, 도움말 중 하나가 떠 있는지. 떠 있으면 에임을 숨긴다.
 	bool IsMenuOpen() const;
 
 protected:
@@ -118,6 +118,6 @@ private:
 	// 게임에서 나가 로비로 돌아간다.
 	void LeaveToLobby();
 	void QuitGame();
-	// 시험용. F9를 누르면 서버에 보물 위치를 요청한다. 서버는 혼자 하는 방에서만 답한다.
+	// 시험용. F9를 누르면 서버에 보물 위치를 요청한다. 서버는 방장의 요청에만 답해 플레이 중인 전원에게 알린다.
 	void RequestTreasureReveal();
 };
