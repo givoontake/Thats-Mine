@@ -7,6 +7,9 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Camera/PlayerCameraManager.h"
+#include "GameFramework/PlayerController.h"
+#include "Player/PlayerCharacter.h"
 #include "Styling/CoreStyle.h"
 #include "UI/game_font.h"
 
@@ -27,9 +30,14 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		for (int32 layer = 0; layer < 2; ++layer)
 		{
 			const double outline = layer == 0 ? 1.0 : 0.0;
-			for (const FVector4& segment : segments)
+			for (int32 index = 0; index < UE_ARRAY_COUNT(segments); ++index)
 			{
+				const FVector4& segment = segments[index];
 				UImage* line = WidgetTree->ConstructWidget<UImage>();
+				if (index < 4)
+				{
+					crosshair_arms_.Add(line);
+				}
 				line->SetBrush(FSlateColorBrush(layer == 0 ? FLinearColor(0.0f, 0.0f, 0.0f, 0.85f) : FLinearColor::White));
 				UCanvasPanelSlot* line_slot = crosshair_->AddChildToCanvas(line);
 				line_slot->SetPosition(FVector2D(segment.X - outline, segment.Y - outline));
@@ -89,6 +97,26 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 	TSharedRef<SWidget> widget = Super::RebuildWidget();
 	SetEquipment(display_);
 	return widget;
+}
+
+void UEquipmentWidget::NativeTick(const FGeometry& geometry, float delta_time)
+{
+	Super::NativeTick(geometry, delta_time);
+	const APlayerCharacter* character = Cast<APlayerCharacter>(GetOwningPlayerPawn());
+	const APlayerController* controller = GetOwningPlayer();
+	if (!crosshair_ || !crosshair_->IsVisible() || !character || !controller || !controller->PlayerCameraManager)
+	{
+		return;
+	}
+	// 퍼짐 각도가 화면 가로 시야각에서 차지하는 비율로 화면 가운데에서 벌어질 거리를 구한다.
+	const float half_fov = FMath::DegreesToRadians(controller->PlayerCameraManager->GetFOVAngle() * 0.5f);
+	const float spread = FMath::DegreesToRadians(character->GetCurrentShotSpread());
+	const float gap = FMath::Tan(spread) / FMath::Max(FMath::Tan(half_fov), UE_KINDA_SMALL_NUMBER) * geometry.GetLocalSize().X * 0.5f;
+	const FVector2D directions[] = { FVector2D(-1.0, 0.0), FVector2D(1.0, 0.0), FVector2D(0.0, -1.0), FVector2D(0.0, 1.0) };
+	for (int32 index = 0; index < crosshair_arms_.Num(); ++index)
+	{
+		crosshair_arms_[index]->SetRenderTranslation(directions[index % 4] * gap);
+	}
 }
 
 void UEquipmentWidget::SetEquipment(const FEquipmentDisplay& display)

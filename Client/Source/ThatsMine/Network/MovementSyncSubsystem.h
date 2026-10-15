@@ -27,6 +27,8 @@ public:
 	virtual TStatId GetStatId() const override;
 	// 다른 플레이어 캐릭터를 조종자 없이 만든다. 이미 있으면 그 캐릭터를 돌려준다.
 	APlayerCharacter* SpawnRemotePlayer(int32 player_id, const FTransform& transform);
+	// 이번 게임의 탄 퍼짐 시드. 받기 전이나 로컬 게임에서는 0이다.
+	uint64 GetShotSeed() const { return shot_seed_; }
 
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;
@@ -39,6 +41,9 @@ private:
 	void HandleHitPacket(const TArray<uint8>& payload);
 	void HandleStunGaugePacket(const TArray<uint8>& payload);
 	void HandleAmmoPacket(const TArray<uint8>& payload);
+	void HandleShotSeedPacket(const TArray<uint8>& payload);
+	void HandleFireRejectedPacket(const TArray<uint8>& payload);
+	void HandleShotTracePacket(const TArray<uint8>& payload);
 	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
 	void HandleStunPacket(const TArray<uint8>& payload);
 	void HandleMoveCorrectionPacket(const TArray<uint8>& payload);
@@ -54,4 +59,5 @@ private:
 	double last_send_time_ = 0.0;
 	bool has_sent_state_ = false;
 	bool is_active_ = false;
+	uint64 shot_seed_ = 0;
 };

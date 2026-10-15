@@ -74,6 +74,7 @@ add_executable(GameServer
     Common/info_code.h
     Common/settings.h
     Common/random_seed.h
+    Common/shot_spread.h
     Common/spawn_points.h
     Common/spread_selection.h
     Common/types.h

@@ -61,6 +61,12 @@ public:
 	void SetStunGauge(float gauge);
 	// 서버가 아는 탄약 상태로 맞춘다. 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면 재장전한다.
 	void SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rounds);
+	// 다른 플레이어 캐릭터의 발사 궤적을 지금 든 총의 총구에서 end까지 그린다.
+	void ShowShotTracer(const FVector& end);
+	// 서버가 인정하지 않은 발사의 발사 번호를 되돌린다.
+	void CancelShot(EWeaponType weapon);
+	// 들고 있는 총으로 지금 쏘면 쓰는 퍼짐 크기(도). 총이 아니면 0이다.
+	float GetCurrentShotSpread() const;
 	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다.
 	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.

@@ -29,6 +29,13 @@ struct FShotResult
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	bool has_hit = false;
 
+	// 퍼지기 전 조준 방향과 이 발에 쓴 퍼짐 크기(도). 서버가 같은 빗나감을 다시 계산해 확인한다.
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	FVector aim_direction = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float spread = 0.0f;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FHitResult hit;
 };

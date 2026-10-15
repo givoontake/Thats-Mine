@@ -101,6 +101,15 @@ constexpr float MOVE_TOLERANCE = 20.0f;
 constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)
 constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여유에 더하는 지연 허용 시간(초)
 constexpr float HIT_ORIGIN_MAX_OFFSET = 200.0f; // 발사 시작점이 쏜 사람 위치에서 벗어날 수 있는 기본 거리(cm)
+// 탄 퍼짐 검증(shot_spread.h). 다시 계산한 탄 방향과 받은 광선 방향 사이 허용 각도(도), 퍼짐 크기 반올림 오차(도),
+// 조준 방향과 이동 상태의 시선 방향 사이 허용 각도(도). 시선 허용은 3인칭 카메라와 총구 사이 시차까지 덮는다.
+// 퍼짐 크기 최소치는 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정하고,
+// 공중이나 조준하지 않은 상태는 이동 상태에서 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 퍼짐을 요구한다. 상태가 막 바뀐 것은 지연으로 보고 봐준다.
+constexpr float SHOT_SPREAD_DIRECTION_TOLERANCE_DEGREES = 0.1f;
+constexpr float SHOT_SPREAD_EPSILON_DEGREES = 0.01f;
+constexpr float SHOT_AIM_TOLERANCE_DEGREES = 45.0f;
+constexpr float SHOT_SPREAD_TIME_ALLOWANCE_SECONDS = 0.2f;
+constexpr long long SHOT_SPREAD_STATE_ALLOWANCE_MS = 300;
 constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.
 
 // 탄약 검증. 재장전 완료와 발사 간격, 곡괭이 충전은 클라이언트보다 늦게 받은 만큼 이 시간(ms)을 봐준다.

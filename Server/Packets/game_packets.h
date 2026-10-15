@@ -141,6 +141,7 @@ struct S2C_GAME_START_PACKET {
 };
 
 // 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 시작점(cm)·단위 방향·맞은 곳까지의 거리(cm)이고, 부위는 클라이언트가 판정한 값이다.
+// aim_direction은 퍼지기 전 조준 방향(단위 벡터), spread는 그 발에 쓴 퍼짐 크기(도)다. 서버는 같은 빗나감을 다시 계산해 광선 방향과 맞춰 본다(shot_spread.h).
 struct C2S_HIT_PACKET {
 	PACKET_HEADER header;
 	int target_player_id;
@@ -149,6 +150,8 @@ struct C2S_HIT_PACKET {
 	float origin[3];
 	float direction[3];
 	float distance;
+	float aim_direction[3];
+	float spread;
 };
 
 // 서버가 인정한 명중. 쏜 사람과 맞은 사람에게만 보낸다.
@@ -291,6 +294,32 @@ struct S2C_AREA_REMOVAL_TIME_PACKET {
 struct S2C_AREA_REMOVAL_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t cell;
+};
+
+// 이번 게임의 탄 퍼짐 시드. 게임 레벨에 들어오는 플레이어에게 탑 배치 뒤에 보낸다. 발사 번호는 게임마다 무기별로 0부터 센다.
+struct S2C_SHOT_SEED_PACKET {
+	PACKET_HEADER header;
+	std::uint64_t seed;
+};
+
+// 서버가 인정하지 않은 총 발사. 쏜 사람에게만 보내고, 클라이언트는 그 무기의 발사 번호를 하나 되돌린다.
+struct S2C_FIRE_REJECTED_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t weapon;
+};
+
+// 인정받은 총 발사의 탄이 끝난 곳(cm). 맞힌 것이 없으면 사거리 끝이다. 쏜 사람이 발사마다 한 번 보낸다.
+struct C2S_SHOT_TRACE_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t weapon;
+	float end[3];
+};
+
+// 다른 플레이어의 발사 궤적. 쏜 사람을 뺀 플레이 중인 전원에게 보내고, 받은 쪽은 쏜 캐릭터의 총구에서 끝난 곳까지 궤적을 그린다.
+struct S2C_SHOT_TRACE_PACKET {
+	PACKET_HEADER header;
+	int player_id;
+	float end[3];
 };
 
 // 시험용 보물 위치 요청. 방에 플레이어가 혼자일 때만 답한다.

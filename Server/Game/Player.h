@@ -24,6 +24,9 @@ class Player
 	// 중계 간격 안에 여러 번 받으면 최신 이동 상태만 남긴다. 입력 변화가 섞여 있으면 간격을 기다리지 않고 다음 틱에 중계한다.
 	MOVE_STATE move_state_{};
 	long long move_time_ms_ = 0;
+	// 이동 상태의 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
+	long long aim_change_ms_ = 0;
+	long long fall_change_ms_ = 0;
 	long long last_move_relay_ms_ = 0;
 	bool has_new_move_state_ = false;
 	bool has_input_change_ = false;
@@ -125,12 +128,14 @@ public:
 	// 무기 수만큼 탄약 상태를 탄과 탄창 없이 만든다.
 	void ResetAmmo(std::size_t weapon_count);
 	const WeaponAmmo* GetAmmo(std::uint8_t weapon) const { return weapon < ammo_.size() ? &ammo_[weapon] : nullptr; }
-	// 재장전 중이 아니고 탄이 있고 발사 간격이 지났으면 탄 하나를 쓰고 인정한다.
+	// 재장전 중이 아니고 탄이 있고 발사 간격이 지났으면 탄 하나를 쓰고 인정한다. 인정하면 발사 번호와 그 발의 퍼짐 크기 최소치를 정하고 연사 누적을 늘린다.
 	bool TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
 	// 재장전 중이 아니고 탄창이 가득 차 있지 않고 소지 탄이 있으면 재장전을 시작한다.
 	bool TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
 	// 인정한 발사 하나를 명중이나 선물 열기에 쓴다. 쓸 발사가 없으면 false다.
 	bool ClaimShot(std::uint8_t weapon);
+	// 인정한 발사 하나의 궤적을 받는다. 받을 발사가 없으면 false다.
+	bool ClaimShotTrace(std::uint8_t weapon);
 	// 소지 탄을 count발 늘린다.
 	void AddSpareRounds(std::uint8_t weapon, int count, const WeaponInfo& info, long long time_ms);
 	// 곡괭이 사용 가능 횟수를 최대치로 채운다.

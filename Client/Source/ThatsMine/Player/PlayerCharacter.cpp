@@ -29,6 +29,7 @@
 #include "Interaction/ItemSubsystem.h"
 #include "Interaction/PingSubsystem.h"
 #include "RemoteMovementComponent.h"
+#include "ShotTracer.h"
 #include "UI/EquipmentWidget.h"
 #include "UI/InteractPromptWidget.h"
 #include "UI/Map/CoordinateWidget.h"
@@ -39,6 +40,10 @@
 #include "UI/Effects/StunGaugeWidget.h"
 #include "UI/Hint/HintPopupWidget.h"
 #include "settings.h"
+#include "shot_spread.h"
+#include "Network/MovementSyncSubsystem.h"
+#include "Network/OnlineSessionSubsystem.h"
+#include "Network/game_protocol.h"
 #include "ThatsMinePlayerController.h"
 
 #if !UE_BUILD_SHIPPING && __has_include("LocalDebug/Combat/CombatDebug.h")
@@ -111,6 +116,8 @@ APlayerCharacter::APlayerCharacter()
 	sniper.selection_key = EKeys::One;
 	sniper.mesh.ComponentProperty = TEXT("Sniper");
 	sniper.hitscan.is_enabled = true;
+	// 유효 사거리 500m
+	sniper.hitscan.distance = 50000.0f;
 	sniper.can_aim = true;
 	sniper.uses_rifle_pose = true;
 	sniper.left_hand_grip_socket = TEXT("LeftHandGrip");
@@ -121,6 +128,8 @@ APlayerCharacter::APlayerCharacter()
 	pistol.selection_key = EKeys::Two;
 	pistol.mesh.ComponentProperty = TEXT("Pistol");
 	pistol.hitscan.is_enabled = true;
+	// 유효 사거리 100m
+	pistol.hitscan.distance = 10000.0f;
 	pistol.hitscan.magazine_capacity = 7;
 	pistol.hitscan.fire_interval = 0.2f;
 	pistol.primary_action.play_rate = (14.0f / 30.0f) / 0.18f;
@@ -883,6 +892,14 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
+	// 지금 퍼짐 크기로 이번 발을 쏘고 연사 열기를 올린다. 빗나가는 방향은 판 시드·내 아이디·무기·발사 번호로 정한다.
+	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
+	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), settings.fire_interval);
+	shot.spread = GetShotSpread(spread_settings, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
+	const UMovementSyncSubsystem* movement_sync = world->GetSubsystem<UMovementSyncSubsystem>();
+	const uint64 spread_hash = GetShotSpreadHash(movement_sync ? movement_sync->GetShotSeed() : 0, static_cast<int32>(GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey()), static_cast<uint8>(current_weapon_), ammo->shot_count++);
+	ammo->spread_heat = AddShotHeat(spread_settings, heat);
+	ammo->spread_time = now;
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
 	shot.trace_start = shot.muzzle_location;
 	const float distance = FMath::Max(1.0f, settings.distance);
@@ -917,7 +934,9 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		FHitResult aim_hit;
 		const bool has_aim_hit = world->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, settings.trace_channel, query);
 		const FVector aim_point = has_aim_hit ? aim_hit.ImpactPoint : aim_end;
-		const FVector shot_direction = (aim_point - shot.muzzle_location).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
+		shot.aim_direction = (aim_point - shot.muzzle_location).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
+		const ShotSpreadDirection spread_direction = ApplyShotSpread(static_cast<float>(shot.aim_direction.X), static_cast<float>(shot.aim_direction.Y), static_cast<float>(shot.aim_direction.Z), shot.spread, spread_hash);
+		const FVector shot_direction(spread_direction.x, spread_direction.y, spread_direction.z);
 		shot.trace_end = shot.muzzle_location + shot_direction * distance;
 		shot.has_hit = world->LineTraceSingleByChannel(shot.hit, shot.trace_start, shot.trace_end, settings.trace_channel, query);
 		if (shot.has_hit)
@@ -1112,6 +1131,41 @@ void APlayerCharacter::Jump()
 	{
 		Super::Jump();
 	}
+}
+
+void APlayerCharacter::ShowShotTracer(const FVector& end)
+{
+	const FWeaponSettings* settings = GetCurrentWeaponSettings();
+	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
+	if (!GetWorld() || !settings || !IsValid(weapon_mesh) || !weapon_mesh->DoesSocketExist(settings->hitscan.muzzle_socket))
+	{
+		return;
+	}
+	if (AShotTracer* tracer = GetWorld()->SpawnActor<AShotTracer>(weapon_mesh->GetSocketLocation(settings->hitscan.muzzle_socket), FRotator::ZeroRotator))
+	{
+		tracer->FollowMuzzle(weapon_mesh, settings->hitscan.muzzle_socket, end);
+	}
+}
+
+void APlayerCharacter::CancelShot(EWeaponType weapon)
+{
+	if (FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon); ammo && ammo->shot_count > 0)
+	{
+		--ammo->shot_count;
+	}
+}
+
+float APlayerCharacter::GetCurrentShotSpread() const
+{
+	const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_);
+	const FWeaponSettings* settings = GetCurrentWeaponSettings();
+	if (!ammo || !settings || !GetWorld())
+	{
+		return 0.0f;
+	}
+	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
+	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->spread_time), settings->hitscan.fire_interval);
+	return GetShotSpread(spread_settings, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
 }
 
 void APlayerCharacter::SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rounds)

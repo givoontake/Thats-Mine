@@ -106,6 +106,8 @@ private:
 	std::vector<BoxContent> box_contents_;
 	// 이번 게임에서 떨어진 힌트. 드랍 번호 순서이고, 주워도 지우지 않고 주웠다고만 표시한다.
 	std::vector<HintDrop> hint_drops_;
+	// 이번 게임의 탄 퍼짐 시드(shot_spread.h). 게임마다 새로 정한다.
+	std::uint64_t shot_seed_ = 0;
 	// 이번 게임에서 영역 지우기로 지운 배제 판 칸 모음과 다음 지우기 시각. 지운 칸은 플레이 중인 전원의 배제 판에 들어간다.
 	std::uint64_t removed_cells_ = 0;
 	long long next_area_removal_ms_ = 0;
@@ -130,8 +132,10 @@ private:
 	void ProcessGameStart();
 	bool AcceptAction(Player& player, Session& session, const C2S_ACTION_PACKET& request_p);
 	void ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p);
+	void ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& request_p);
 	void AddStunGauge(Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
+	bool CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& request_p, const DirectX::XMFLOAT3& direction) const;
 	void ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
 	int AppendHintPacket(char* buffer, std::uint32_t hint) const;

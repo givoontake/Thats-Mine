@@ -4,6 +4,7 @@
 #include <random>
 #include "Player.h"
 #include "random_seed.h"
+#include "shot_spread.h"
 
 Player::Player()
 {
@@ -83,6 +84,18 @@ bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time
 	--ammo.rounds;
 	ammo.next_fire_ms = time_ms + static_cast<long long>(info.fire_interval * 1000.0f) - AMMO_LATENCY_ALLOWANCE_MS;
 	ammo.has_unclaimed_shot = true;
+	ammo.has_untraced_shot = true;
+	// 서버가 받은 발사 간격과 상태 변화는 지연 때문에 실제와 다를 수 있어, 최소치는 연사 열기를 더 회복하고 막 바뀐 상태는 유리한 쪽으로 본다.
+	// 조준한 채 움직이는 퍼짐은 요구하지 않는다.
+	const ShotSpreadSettings& spread = GetShotSpreadSettings(weapon);
+	const float elapsed_seconds = (time_ms - ammo.spread_time_ms) / 1000.0f;
+	const bool has_state = HasMoveState();
+	const bool is_falling = has_state && move_state_.is_falling && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
+	const bool is_unaimed = !has_state || (!move_state_.is_aiming && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
+	ammo.last_shot_min_spread = GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), !is_unaimed, 0.0f, is_falling);
+	ammo.last_shot_index = ammo.shot_count++;
+	ammo.spread_heat = AddShotHeat(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds, info.fire_interval));
+	ammo.spread_time_ms = time_ms;
 	return true;
 }
 
@@ -259,8 +272,17 @@ bool Player::ClaimShot(std::uint8_t weapon)
 	return true;
 }
 
+bool Player::ClaimShotTrace(std::uint8_t weapon)
+{
+	if (weapon >= ammo_.size() || !ammo_[weapon].has_untraced_shot) return false;
+	ammo_[weapon].has_untraced_shot = false;
+	return true;
+}
+
 void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change)
 {
+	if (move_state.is_aiming != move_state_.is_aiming) aim_change_ms_ = time_ms;
+	if (move_state.is_falling != move_state_.is_falling) fall_change_ms_ = time_ms;
 	move_state_ = move_state;
 	move_time_ms_ = time_ms;
 	has_new_move_state_ = true;
