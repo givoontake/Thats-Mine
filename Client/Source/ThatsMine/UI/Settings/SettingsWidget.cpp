@@ -17,6 +17,7 @@
 #include "Engine/GameInstance.h"
 #include "GameFramework/GameUserSettings.h"
 #include "CycleOptionRow.h"
+#include "Settings/FoliageShadowSubsystem.h"
 #include "Settings/AudioSettingsSubsystem.h"
 #include "Settings/FrameRateSettingsSubsystem.h"
 #include "Player/ControlSettingsSubsystem.h"
@@ -38,7 +39,7 @@ struct GraphicsQualityOption
 static const GraphicsQualityOption GRAPHICS_QUALITY_OPTIONS[] = {
 	{ TEXT("시야 거리"), TEXT("멀리 있는 물체가 보이는 거리와 먼 곳의 세밀함을 정합니다."), &UGameUserSettings::GetViewDistanceQuality, &UGameUserSettings::SetViewDistanceQuality },
 	{ TEXT("안티앨리어싱"), TEXT("물체 가장자리의 계단 모양을 매끄럽게 다듬는 품질입니다."), &UGameUserSettings::GetAntiAliasingQuality, &UGameUserSettings::SetAntiAliasingQuality },
-	{ TEXT("그림자"), TEXT("그림자의 선명도와 그림자가 보이는 거리입니다."), &UGameUserSettings::GetShadowQuality, &UGameUserSettings::SetShadowQuality },
+	{ TEXT("그림자"), TEXT("그림자의 선명도와 그림자가 보이는 거리입니다. 끔은 낮음에서 나무·풀 같은 폴리지 그림자까지 그리지 않습니다."), &UGameUserSettings::GetShadowQuality, &UGameUserSettings::SetShadowQuality },
 	{ TEXT("전역 조명"), TEXT("빛이 주변에 튕겨 그늘을 밝히는 간접광 품질입니다."), &UGameUserSettings::GetGlobalIlluminationQuality, &UGameUserSettings::SetGlobalIlluminationQuality },
 	{ TEXT("반사"), TEXT("물과 매끈한 표면에 비치는 반사의 품질입니다."), &UGameUserSettings::GetReflectionQuality, &UGameUserSettings::SetReflectionQuality },
 	{ TEXT("후처리"), TEXT("빛 번짐, 움직임 흐림, 안개 같은 화면 효과의 품질입니다."), &UGameUserSettings::GetPostProcessingQuality, &UGameUserSettings::SetPostProcessingQuality },
@@ -48,6 +49,8 @@ static const GraphicsQualityOption GRAPHICS_QUALITY_OPTIONS[] = {
 	{ TEXT("지형"), TEXT("땅 표면의 세밀함입니다."), &UGameUserSettings::GetLandscapeQuality, &UGameUserSettings::SetLandscapeQuality },
 };
 static constexpr int32 GRAPHICS_QUALITY_OPTION_COUNT = UE_ARRAY_COUNT(GRAPHICS_QUALITY_OPTIONS);
+// 그림자 항목은 낮음 앞에 "끔"(폴리지 그림자 끔) 단계가 하나 더 있다.
+static constexpr int32 SHADOW_OPTION = 2;
 // 품질 단계 수와 렌더 해상도 단계마다의 화면 비율(%).
 static constexpr int32 QUALITY_LEVEL_COUNT = 3;
 static constexpr float RESOLUTION_SCALES[QUALITY_LEVEL_COUNT] = { 50.0f, 75.0f, 100.0f };
@@ -55,6 +58,11 @@ static constexpr int32 ENGINE_QUALITY_OFFSET = 1;
 // 기본값 단계. 품질은 높음, 렌더 해상도는 100%다.
 static constexpr int32 DEFAULT_QUALITY_LEVEL = QUALITY_LEVEL_COUNT - 1;
 static constexpr int32 DEFAULT_RESOLUTION_LEVEL = QUALITY_LEVEL_COUNT - 1;
+// 품질 항목 줄의 단계 번호에서 낮음 앞에 붙은 단계 수. 그림자 줄만 1이다.
+static int32 GetLeadingSteps(int32 option)
+{
+	return option == SHADOW_OPTION ? 1 : 0;
+}
 static const TCHAR* DESCRIPTION_HINT = TEXT("항목에 마우스를 올리면 설명이 표시됩니다.");
 // 조작 탭에서 감도 칸이 차지하는 높이와 키 줄 크기
 static constexpr float SENSITIVITY_AREA_HEIGHT = 190.0f;
@@ -100,7 +108,12 @@ void USettingsWidget::NativeOnInitialized()
 	overall_quality_row_->on_option_stepped_.BindUObject(this, &USettingsWidget::StepOverallQuality);
 	for (int32 option = 0; option < GRAPHICS_QUALITY_OPTION_COUNT; ++option)
 	{
-		UCycleOptionRow* row = AddOptionRow(FText::FromString(GRAPHICS_QUALITY_OPTIONS[option].label), quality_names, FText::FromString(GRAPHICS_QUALITY_OPTIONS[option].description));
+		TArray<FText> row_names = quality_names;
+		if (option == SHADOW_OPTION)
+		{
+			row_names.Insert(FText::FromString(TEXT("끔")), 0);
+		}
+		UCycleOptionRow* row = AddOptionRow(FText::FromString(GRAPHICS_QUALITY_OPTIONS[option].label), row_names, FText::FromString(GRAPHICS_QUALITY_OPTIONS[option].description));
 		row->on_option_stepped_.BindUObject(this, &USettingsWidget::StepQuality, option);
 		quality_rows_.Add(row);
 	}
@@ -408,7 +421,12 @@ void USettingsWidget::UpdateGraphicsRows()
 	const UGameUserSettings* settings = UGameUserSettings::GetGameUserSettings();
 	for (int32 option = 0; option < GRAPHICS_QUALITY_OPTION_COUNT; ++option)
 	{
-		quality_rows_[option]->SetOption((settings->*GRAPHICS_QUALITY_OPTIONS[option].get)() - ENGINE_QUALITY_OFFSET);
+		quality_rows_[option]->SetOption((settings->*GRAPHICS_QUALITY_OPTIONS[option].get)() - ENGINE_QUALITY_OFFSET + GetLeadingSteps(option));
+	}
+	const UFoliageShadowSubsystem* foliage_shadow = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFoliageShadowSubsystem>() : nullptr;
+	if (foliage_shadow && foliage_shadow->IsFoliageShadowOff())
+	{
+		quality_rows_[SHADOW_OPTION]->SetOption(0);
 	}
 	UpdateOverallQualityRow();
 	// 해상도 값 0은 엔진 기본(100%)이다. 가장 가까운 단계로 보여 준다.
@@ -428,10 +446,11 @@ void USettingsWidget::UpdateGraphicsRows()
 
 void USettingsWidget::UpdateOverallQualityRow()
 {
+	// 그림자 "끔"은 다른 항목의 어느 단계와도 같지 않아 사용자 지정이 된다.
 	bool is_same = true;
-	for (const UCycleOptionRow* row : quality_rows_)
+	for (int32 option = 0; option < quality_rows_.Num(); ++option)
 	{
-		is_same &= row->GetOption() == quality_rows_[0]->GetOption();
+		is_same &= quality_rows_[option]->GetOption() - GetLeadingSteps(option) == quality_rows_[0]->GetOption();
 	}
 	if (is_same)
 	{
@@ -465,25 +484,26 @@ void USettingsWidget::StepOverallQuality(int32 step)
 	if (level == INDEX_NONE)
 	{
 		level = step < 0 ? QUALITY_LEVEL_COUNT - 1 : 0;
-		for (const UCycleOptionRow* row : quality_rows_)
+		for (int32 option = 0; option < quality_rows_.Num(); ++option)
 		{
-			level = step < 0 ? FMath::Min(level, row->GetOption()) : FMath::Max(level, row->GetOption());
+			const int32 row_level = FMath::Max(quality_rows_[option]->GetOption() - GetLeadingSteps(option), 0);
+			level = step < 0 ? FMath::Min(level, row_level) : FMath::Max(level, row_level);
 		}
 	}
 	else
 	{
 		level = FMath::Clamp(level + step, 0, QUALITY_LEVEL_COUNT - 1);
 	}
-	for (UCycleOptionRow* row : quality_rows_)
+	for (int32 option = 0; option < quality_rows_.Num(); ++option)
 	{
-		row->SetOption(level);
+		quality_rows_[option]->SetOption(level + GetLeadingSteps(option));
 	}
 	UpdateOverallQualityRow();
 }
 
 void USettingsWidget::StepQuality(int32 step, int32 option)
 {
-	quality_rows_[option]->SetOption(FMath::Clamp(quality_rows_[option]->GetOption() + step, 0, QUALITY_LEVEL_COUNT - 1));
+	quality_rows_[option]->SetOption(FMath::Clamp(quality_rows_[option]->GetOption() + step, 0, QUALITY_LEVEL_COUNT - 1 + GetLeadingSteps(option)));
 	UpdateOverallQualityRow();
 }
 
@@ -504,9 +524,14 @@ void USettingsWidget::ApplySettings()
 	GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>()->SetKeys(pending_keys_);
 	UpdateKeyTexts();
 	UGameUserSettings* settings = UGameUserSettings::GetGameUserSettings();
+	// 그림자 "끔"은 엔진 그림자 품질을 낮음으로 두고 폴리지 그림자를 끈다.
 	for (int32 option = 0; option < GRAPHICS_QUALITY_OPTION_COUNT; ++option)
 	{
-		(settings->*GRAPHICS_QUALITY_OPTIONS[option].set)(quality_rows_[option]->GetOption() + ENGINE_QUALITY_OFFSET);
+		(settings->*GRAPHICS_QUALITY_OPTIONS[option].set)(FMath::Max(quality_rows_[option]->GetOption() - GetLeadingSteps(option), 0) + ENGINE_QUALITY_OFFSET);
+	}
+	if (UFoliageShadowSubsystem* foliage_shadow = GetGameInstance() ? GetGameInstance()->GetSubsystem<UFoliageShadowSubsystem>() : nullptr)
+	{
+		foliage_shadow->SetFoliageShadowOff(quality_rows_[SHADOW_OPTION]->GetOption() == 0);
 	}
 	settings->SetResolutionScaleValueEx(RESOLUTION_SCALES[resolution_row_->GetOption()]);
 	settings->ApplyNonResolutionSettings();
@@ -538,9 +563,13 @@ void USettingsWidget::ResetToDefaults()
 	lobby_frame_row_->SetOption(UFrameRateSettingsSubsystem::DEFAULT_LOBBY_OPTION);
 	game_frame_row_->SetOption(UFrameRateSettingsSubsystem::DEFAULT_GAME_OPTION);
 	resolution_row_->SetOption(DEFAULT_RESOLUTION_LEVEL);
-	for (UCycleOptionRow* row : quality_rows_)
+	for (int32 option = 0; option < quality_rows_.Num(); ++option)
 	{
-		row->SetOption(DEFAULT_QUALITY_LEVEL);
+		quality_rows_[option]->SetOption(DEFAULT_QUALITY_LEVEL + GetLeadingSteps(option));
+	}
+	if (UFoliageShadowSubsystem::DEFAULT_IS_FOLIAGE_SHADOW_OFF)
+	{
+		quality_rows_[SHADOW_OPTION]->SetOption(0);
 	}
 	UpdateOverallQualityRow();
 }
