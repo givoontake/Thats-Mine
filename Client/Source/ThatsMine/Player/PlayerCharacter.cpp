@@ -393,16 +393,20 @@ const AHintBox* APlayerCharacter::FindInteractBox() const
 	const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(start - view_location, view_direction));
 	const FVector aim_end = aim_start + view_direction * 10000.0;
 	FHitResult aim_hit;
-	const bool has_aim_hit = GetWorld()->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, ECC_Visibility, query);
-	const FVector direction = ((has_aim_hit ? aim_hit.ImpactPoint : aim_end) - start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
-	FHitResult hit;
-	// 카메라는 목표만 정하고, 실제 거리는 캐릭터 중심에서 최대 1m로 제한한다.
-	if (!GetWorld()->LineTraceSingleByChannel(hit, start, start + direction * 100.0, ECC_Visibility, query))
+	if (!GetWorld()->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, AHintBox::INTERACT_CHANNEL, query))
 	{
 		return nullptr;
 	}
-	const AHintBox* box = Cast<AHintBox>(hit.GetActor());
-	return box && !box->IsActivated() ? box : nullptr;
+	const AHintBox* box = Cast<AHintBox>(aim_hit.GetActor());
+	if (!box || box->IsActivated())
+	{
+		return nullptr;
+	}
+	// 카메라는 목표만 정하고, 거리는 서버와 같이 캐릭터 중심에서 상자 중심까지 HINT_BOX_OPEN_DISTANCE로 제한한다.
+	// 상자 중심은 서버처럼 상자 바닥 가운데에서 상자 위쪽 방향으로 종류별 높이만큼 올린 점이다.
+	const BoxKind kind = box->ActorHasTag(TEXT("HintGift")) ? BoxKind::GIFT : BoxKind::TREASURE;
+	const FVector box_center = box->GetActorLocation() + box->GetActorUpVector() * HINT_BOX_CENTER_HEIGHTS[static_cast<int32>(kind)];
+	return FVector::Dist(start, box_center) <= HINT_BOX_OPEN_DISTANCE ? box : nullptr;
 }
 
 void APlayerCharacter::UpdateInteractPrompt()

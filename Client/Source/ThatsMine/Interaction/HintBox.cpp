@@ -1,6 +1,7 @@
 #include "HintBox.h"
 
 #include "Animation/AnimSequence.h"
+#include "Components/BoxComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
@@ -20,6 +21,25 @@ AHintBox::AHintBox()
 	open_animation_ = open_animation.Object;
 	open_mesh_ = open_mesh.Object;
 	open_effect_ = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Thats_Mine/Effects/Chest/NS_ChestGoldBurst.NS_ChestGoldBurst")));
+	interact_box_ = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractBox"));
+	interact_box_->SetupAttachment(GetStaticMeshComponent());
+	interact_box_->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	interact_box_->SetCollisionResponseToAllChannels(ECR_Ignore);
+	interact_box_->SetCollisionResponseToChannel(INTERACT_CHANNEL, ECR_Block);
+	interact_box_->SetGenerateOverlapEvents(false);
+	interact_box_->SetCanEverAffectNavigation(false);
+}
+
+// 상호작용 박스를 메시 경계 상자와 같은 가운데에 INTERACT_BOX_SCALE배 크기로 맞춘다. 메시는 생성이 끝나기 전에 정해진다.
+void AHintBox::BeginPlay()
+{
+	Super::BeginPlay();
+	if (const UStaticMesh* mesh = GetStaticMeshComponent()->GetStaticMesh())
+	{
+		const FBoxSphereBounds bounds = mesh->GetBounds();
+		interact_box_->SetRelativeLocation(bounds.Origin);
+		interact_box_->SetBoxExtent(bounds.BoxExtent * INTERACT_BOX_SCALE);
+	}
 }
 
 void AHintBox::Open()
@@ -30,6 +50,7 @@ void AHintBox::Open()
 		return;
 	}
 	is_activated_ = true;
+	interact_box_->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	UStaticMeshComponent* mesh = GetStaticMeshComponent();
 	const FBoxSphereBounds bounds = mesh->GetStaticMesh()->GetBounds();
 	const FVector effect_origin = mesh->GetComponentTransform().TransformPosition(bounds.Origin + FVector(0.0, 0.0, is_gift ? 0.0 : bounds.BoxExtent.Z * 0.25));
@@ -61,6 +82,7 @@ void AHintBox::Open()
 void AHintBox::ShowOpened()
 {
 	is_activated_ = true;
+	interact_box_->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetStaticMeshComponent()->SetStaticMesh(open_mesh_);
 }
 

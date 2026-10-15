@@ -339,7 +339,7 @@ private:
 	void EndProtection();
 	// 머리 위 상태 이펙트를 켜고 끈다.
 	void SetHeadEffectActive(const TSoftObjectPtr<UNiagaraSystem>& effect, TObjectPtr<UNiagaraComponent>& component, bool is_active);
-	// 화면 중앙이 가리키는 쪽으로 캐릭터 중심에서 1m 안에 있는, 아직 열리지 않은 상자. 없으면 nullptr이다.
+	// 화면 중앙이 가리키는, 아직 열리지 않은 상자 중 캐릭터 중심에서 상자 중심까지 서버의 F키 열기 거리 안인 것. 없으면 nullptr이다.
 	const AHintBox* FindInteractBox() const;
 	// 열 수 있는 상자나 주울 수 있는 두루마리가 있으면 상호작용 안내를 보인다.
 	void UpdateInteractPrompt();
