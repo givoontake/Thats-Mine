@@ -51,6 +51,7 @@ void GameServer::StartServer()
 	if (!map_data_.Load("Data/map_data.bin", tower_candidate_data_.GetCandidates())) std::cerr << "Map data load fail.. " << std::endl;
 	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt")) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!map_region_data_.Load("Data/map_regions.txt")) std::cerr << "Map region data load fail.. " << std::endl;
+	if (!map_region_data_.LoadTreasureExclusions("Data/treasure_exclusions.txt")) std::cerr << "Treasure exclusion data load fail.. " << std::endl;
 	if (!hint_object_tree_.Build(map_data_)) std::cerr << "Hint object tree build fail.. " << std::endl;
 	if (!direction_hint_data_.Build(map_region_data_)) std::cerr << "Direction hint data build fail.. " << std::endl;
 	if (!view_hint_data_.Load("Data/view_points.txt", map_region_data_)) std::cerr << "View hint data load fail.. " << std::endl;

@@ -45,10 +45,40 @@ bool MapRegionData::Load(const std::string& region_path)
 	return is_loaded_;
 }
 
+// 줄: 점수 x1 y1 x2 y2 ... 이름. 이름은 줄 끝까지(띄어쓰기 포함)이고 파일을 읽는 사람을 위한 것이다.
+bool MapRegionData::LoadTreasureExclusions(const std::string& exclusion_path)
+{
+	treasure_exclusions_.clear();
+	std::ifstream file(exclusion_path);
+	if (!file) return false;
+
+	std::string line;
+	while (std::getline(file, line))
+	{
+		if (line.empty() || line[0] == '#') continue;
+
+		std::istringstream stream(line);
+		int count = 0;
+		stream >> count;
+		if (!stream || count < 3) return false;
+		MapRegion exclusion{};
+		exclusion.is_treasure_excluded = true;
+		exclusion.points.resize(count);
+		for (DirectX::XMFLOAT2& point : exclusion.points) stream >> point.x >> point.y;
+		std::getline(stream >> std::ws, exclusion.name);
+		if (!stream || exclusion.name.empty()) return false;
+		treasure_exclusions_.push_back(std::move(exclusion));
+	}
+	return true;
+}
+
 bool MapRegionData::IsTreasureExcluded(float x, float y) const
 {
 	for (const MapRegion& region : regions_) {
 		if (region.is_treasure_excluded && IsInsidePolygon(region.points, x, y)) return true;
+	}
+	for (const MapRegion& exclusion : treasure_exclusions_) {
+		if (IsInsidePolygon(exclusion.points, x, y)) return true;
 	}
 	return false;
 }

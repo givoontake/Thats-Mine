@@ -1,10 +1,11 @@
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include "DirectionHintData.h"
 #include "MapRegionData.h"
 
-// 보물 제외에만 쓰는 영역. 장소 이름이 아니라서 방향 힌트 기준으로 쓰지 않는다.
-static constexpr const char* DIRECTION_EXCLUDED_REGION = "Asian Village Cliff";
+// 방향 힌트 기준으로 쓰지 않는 영역. Asian Village Cliff는 보물 제외에만 쓰는 영역이고, Daisy Meadow는 보물을 놓지 않는 꽃밭이라 힌트에서도 뺀다.
+static constexpr const char* DIRECTION_EXCLUDED_REGIONS[] = { "Asian Village Cliff", "Daisy Meadow" };
 
 bool DirectionHintData::Build(const MapRegionData& regions)
 {
@@ -14,7 +15,7 @@ bool DirectionHintData::Build(const MapRegionData& regions)
 	const std::vector<MapRegion>& map_regions = regions.GetRegions();
 	for (std::size_t index = 0; index < map_regions.size(); ++index) {
 		const MapRegion& region = map_regions[index];
-		if (region.name == DIRECTION_EXCLUDED_REGION) continue;
+		if (std::find(std::begin(DIRECTION_EXCLUDED_REGIONS), std::end(DIRECTION_EXCLUDED_REGIONS), region.name) != std::end(DIRECTION_EXCLUDED_REGIONS)) continue;
 		DirectionArea area{ static_cast<std::uint8_t>(index), INF, -INF, INF, -INF };
 		for (const DirectX::XMFLOAT2& point : region.points) {
 			area.min_x = std::min(area.min_x, point.x);
