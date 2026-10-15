@@ -17,6 +17,7 @@
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 #include "block_pieces.h"
+#include "UI/game_font.h"
 
 static const FLinearColor TEXT_COLOR(0.96f, 0.90f, 0.78f);
 static const FLinearColor PIECE_COLOR(1.0f, 0.61f, 0.12f);
@@ -66,7 +67,7 @@ TSharedRef<SWidget> UBlockBoardWidget::RebuildWidget()
 		{
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 			label->SetText(text);
-			label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), size));
+			label->SetFont(GetGameFont(size));
 			label->SetColorAndOpacity(color);
 			label->SetVisibility(ESlateVisibility::HitTestInvisible);
 			UCanvasPanelSlot* slot = canvas->AddChildToCanvas(label);
@@ -105,7 +106,7 @@ TSharedRef<SWidget> UBlockBoardWidget::RebuildWidget()
 			button->SetStyle(style);
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 			label->SetText(button_names[index]);
-			label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24));
+			label->SetFont(GetGameFont(24));
 			label->SetColorAndOpacity(FSlateColor::UseForeground());
 			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
 			UCanvasPanelSlot* button_slot = confirm_panel_->AddChildToCanvas(button);
@@ -294,7 +295,7 @@ int32 UBlockBoardWidget::NativePaint(const FPaintArgs& args, const FGeometry& ge
 	}
 	++layer;
 	// 같은 블록이 2개 이상이면 칸 오른쪽 아래에 개수를 적는다.
-	const FSlateFontInfo count_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), SLOT_COUNT_FONT_SIZE);
+	const FSlateFontInfo count_font = GetGameFont(SLOT_COUNT_FONT_SIZE);
 	for (int32 index = 0; index < slot_count; ++index)
 	{
 		if (usable_block_counts_[index] < 2)

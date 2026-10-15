@@ -14,6 +14,7 @@
 #include "Engine/GameInstance.h"
 #include "Settings/KeyBindingSubsystem.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 UHelpWidget::UHelpWidget(const FObjectInitializer& object_initializer)
 	: Super(object_initializer)
@@ -55,7 +56,7 @@ TSharedRef<SWidget> UHelpWidget::RebuildWidget()
 		panel->AddChildToCanvas(frame)->SetSize(FVector2D(1200.0, 900.0));
 		UTextBlock* title = WidgetTree->ConstructWidget<UTextBlock>();
 		title->SetText(NSLOCTEXT("Help", "Title", "도움말"));
-		title->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 38));
+		title->SetFont(GetGameFont(38));
 		title->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
 		UCanvasPanelSlot* title_slot = panel->AddChildToCanvas(title);
 		title_slot->SetPosition(FVector2D(100.0, 43.0));
@@ -80,7 +81,7 @@ void UHelpWidget::AddHeading(const FText& text)
 {
 	UTextBlock* heading = WidgetTree->ConstructWidget<UTextBlock>();
 	heading->SetText(text);
-	heading->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 26));
+	heading->SetFont(GetGameFont(26));
 	heading->SetColorAndOpacity(FLinearColor(1.0f, 0.75f, 0.30f));
 	Cast<UScrollBoxSlot>(content_->AddChild(heading))->SetPadding(FMargin(0.0f, 14.0f, 0.0f, 6.0f));
 }
@@ -89,7 +90,7 @@ void UHelpWidget::AddLine(const FText& text)
 {
 	UTextBlock* line = WidgetTree->ConstructWidget<UTextBlock>();
 	line->SetText(FText::Format(NSLOCTEXT("Help", "Bullet", "·  {0}"), text));
-	line->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 20));
+	line->SetFont(GetGameFont(20));
 	line->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
 	line->SetAutoWrapText(true);
 	Cast<UScrollBoxSlot>(content_->AddChild(line))->SetPadding(FMargin(12.0f, 3.0f, 16.0f, 3.0f));

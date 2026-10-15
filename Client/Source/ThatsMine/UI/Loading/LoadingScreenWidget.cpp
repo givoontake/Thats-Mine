@@ -12,6 +12,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
+#include "UI/game_font.h"
 
 void SLoadingScreenWidget::Construct(const FArguments& args)
 {
@@ -24,9 +25,9 @@ void SLoadingScreenWidget::Construct(const FArguments& args)
 		.SetBackgroundImage(FSlateRoundedBoxBrush(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), 5.0f))
 		.SetFillImage(FSlateRoundedBoxBrush(FLinearColor(1.0f, 0.72f, 0.25f, 1.0f), 5.0f))
 		.SetMarqueeImage(FSlateRoundedBoxBrush(FLinearColor(1.0f, 0.72f, 0.25f, 1.0f), 5.0f));
-	const FSlateFontInfo status_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 22);
-	const FSlateFontInfo percent_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 26);
-	const FSlateFontInfo tip_font = FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 20);
+	const FSlateFontInfo status_font = GetGameFont(22);
+	const FSlateFontInfo percent_font = GetGameFont(26);
+	const FSlateFontInfo tip_font = GetGameFont(20);
 
 	ChildSlot
 	[

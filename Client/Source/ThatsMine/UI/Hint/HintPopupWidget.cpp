@@ -13,6 +13,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Styling/CoreStyle.h"
 #include "UI/Hint/HintGradeBadge.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> UHintPopupWidget::RebuildWidget()
 {
@@ -30,7 +31,7 @@ TSharedRef<SWidget> UHintPopupWidget::RebuildWidget()
 
 		title_ = WidgetTree->ConstructWidget<UTextBlock>();
 		// 밝은 바닥 위에서도 읽히게 진한 외곽선을 두른다.
-		FSlateFontInfo title_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24);
+		FSlateFontInfo title_font = GetGameFont(24);
 		title_font.OutlineSettings.OutlineSize = 2;
 		title_font.OutlineSettings.OutlineColor = FLinearColor(0.03f, 0.02f, 0.01f, 0.9f);
 		title_->SetFont(title_font);
@@ -87,7 +88,7 @@ void UHintPopupWidget::ShowNext()
 	}
 	UTextBlock* text = WidgetTree->ConstructWidget<UTextBlock>();
 	text->SetText(hint.text);
-	text->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 22));
+	text->SetFont(GetGameFont(22));
 	text->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
 	text->SetAutoWrapText(true);
 	UHorizontalBoxSlot* text_slot = content_->AddChildToHorizontalBox(text);

@@ -8,6 +8,7 @@
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 {
@@ -45,7 +46,7 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		panel_slot->SetSize(FVector2D(400.0, 88.0));
 
 		name_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentName"));
-		name_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24));
+		name_text_->SetFont(GetGameFont(24));
 		name_text_->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.94f, 0.79f)));
 		UCanvasPanelSlot* name_slot = panel->AddChildToCanvas(name_text_);
 		name_slot->SetAutoSize(true);
@@ -59,7 +60,7 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		divider_slot->SetPosition(FVector2D::ZeroVector);
 
 		ammo_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentAmmo"));
-		ammo_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 36));
+		ammo_text_->SetFont(GetGameFont(36));
 		UCanvasPanelSlot* ammo_slot = panel->AddChildToCanvas(ammo_text_);
 		ammo_slot->SetAnchors(FAnchors(DIVIDER_ANCHOR, 0.5f));
 		ammo_slot->SetAlignment(FVector2D(0.0, 0.5));
@@ -68,7 +69,7 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 
 		slash_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentSlash"));
 		slash_text_->SetText(FText::AsCultureInvariant(TEXT("/")));
-		slash_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 27));
+		slash_text_->SetFont(GetGameFont(27));
 		slash_text_->SetColorAndOpacity(FSlateColor(FLinearColor(0.34f, 0.36f, 0.37f)));
 		UCanvasPanelSlot* slash_slot = panel->AddChildToCanvas(slash_text_);
 		slash_slot->SetAnchors(FAnchors(0.72f, 0.52f));
@@ -77,7 +78,7 @@ TSharedRef<SWidget> UEquipmentWidget::RebuildWidget()
 		slash_slot->SetAutoSize(true);
 
 		total_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("EquipmentTotal"));
-		total_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 27));
+		total_text_->SetFont(GetGameFont(27));
 		total_text_->SetColorAndOpacity(FSlateColor(FLinearColor(0.71f, 0.70f, 0.65f)));
 		UCanvasPanelSlot* total_slot = panel->AddChildToCanvas(total_text_);
 		total_slot->SetAnchors(FAnchors(0.80f, 0.52f));

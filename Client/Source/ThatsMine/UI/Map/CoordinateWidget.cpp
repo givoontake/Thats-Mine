@@ -6,6 +6,7 @@
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> UCoordinateWidget::RebuildWidget()
 {
@@ -15,7 +16,7 @@ TSharedRef<SWidget> UCoordinateWidget::RebuildWidget()
 		WidgetTree->RootWidget = root;
 		coordinate_text_ = WidgetTree->ConstructWidget<UTextBlock>();
 		// 남은 시간 표시와 같이 밝은 하늘이나 바닥 위에서도 읽히게 진한 외곽선을 두른다.
-		FSlateFontInfo font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), FONT_SIZE);
+		FSlateFontInfo font = GetGameFont(FONT_SIZE);
 		font.OutlineSettings.OutlineSize = 2;
 		font.OutlineSettings.OutlineColor = FLinearColor(0.03f, 0.02f, 0.01f, 0.9f);
 		coordinate_text_->SetFont(font);

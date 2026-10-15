@@ -9,6 +9,7 @@
 #include "Rendering/DrawElementTypes.h"
 #include "Rendering/SlateRenderer.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> UStunGaugeWidget::RebuildWidget()
 {
@@ -120,7 +121,7 @@ int32 UStunGaugeWidget::NativePaint(const FPaintArgs& args, const FGeometry& geo
 		draw_box(icon_brush, FVector2f(content_left, icon_top), FVector2f(icon_width, ICON_HEIGHT), FLinearColor::White);
 		if (is_protected)
 		{
-			FSlateFontInfo font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 10);
+			FSlateFontInfo font = GetGameFont(10);
 			font.OutlineSettings.OutlineSize = 1;
 			font.OutlineSettings.OutlineColor = FLinearColor::FromSRGBColor(FColor(16, 40, 90, 255));
 			const FString text = FString::FromInt(protection_seconds_);

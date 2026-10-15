@@ -26,6 +26,7 @@
 #include "UI/Hint/HintGradeBadge.h"
 #include "UI/Inventory/BlockBoardWidget.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 // 나무 버튼 재질 하나로 탭 버튼 크기의 그림 붓을 만든다.
 static FSlateBrush MakeTabBrush(const TCHAR* material_path)
@@ -53,7 +54,7 @@ UTextBlock* UInventoryWidget::AddText(UCanvasPanel* canvas, const FText& text, i
 {
 	UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 	label->SetText(text);
-	label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), size));
+	label->SetFont(GetGameFont(size));
 	label->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
 	label->SetVisibility(ESlateVisibility::HitTestInvisible);
 	UCanvasPanelSlot* slot = canvas->AddChildToCanvas(label);
@@ -120,7 +121,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 			UButton* button = WidgetTree->ConstructWidget<UButton>();
 			UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 			label->SetText(tab_names[tab]);
-			label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24));
+			label->SetFont(GetGameFont(24));
 			label->SetColorAndOpacity(FSlateColor::UseForeground());
 			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
 			UCanvasPanelSlot* button_slot = panel->AddChildToCanvas(button);
@@ -283,7 +284,7 @@ void UInventoryWidget::RefreshItems()
 	{
 		UTextBlock* empty = WidgetTree->ConstructWidget<UTextBlock>();
 		empty->SetText(NSLOCTEXT("Inventory", "EmptyItems", "획득한 아이템이 없습니다."));
-		empty->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 22));
+		empty->SetFont(GetGameFont(22));
 		empty->SetColorAndOpacity(FLinearColor(0.65f, 0.60f, 0.51f));
 		item_list_->AddChildToWrapBox(empty)->SetPadding(FMargin(20.0f, 8.0f));
 	}
@@ -308,7 +309,7 @@ UBorder* UInventoryWidget::CreateGradeRow(EHintGrade grade, const FText& text, b
 	content->AddChildToHorizontalBox(badge)->SetVerticalAlignment(VAlign_Center);
 	UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 	label->SetText(text);
-	label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), font_size));
+	label->SetFont(GetGameFont(font_size));
 	label->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
 	label->SetAutoWrapText(true);
 	UHorizontalBoxSlot* label_slot = content->AddChildToHorizontalBox(label);
@@ -319,7 +320,7 @@ UBorder* UInventoryWidget::CreateGradeRow(EHintGrade grade, const FText& text, b
 	{
 		UTextBlock* fresh = WidgetTree->ConstructWidget<UTextBlock>();
 		fresh->SetText(FText::AsCultureInvariant(TEXT("NEW")));
-		fresh->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 17));
+		fresh->SetFont(GetGameFont(17));
 		fresh->SetColorAndOpacity(FLinearColor(1.0f, 0.64f, 0.17f));
 		content->AddChildToHorizontalBox(fresh)->SetVerticalAlignment(VAlign_Center);
 	}
@@ -339,7 +340,7 @@ void UInventoryWidget::RefreshHints()
 	{
 		UTextBlock* empty = WidgetTree->ConstructWidget<UTextBlock>();
 		empty->SetText(NSLOCTEXT("Inventory", "Empty", "획득한 힌트가 없습니다."));
-		empty->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Regular"), 22));
+		empty->SetFont(GetGameFont(22));
 		empty->SetColorAndOpacity(FLinearColor(0.65f, 0.60f, 0.51f));
 		empty->SetJustification(ETextJustify::Center);
 		Cast<UScrollBoxSlot>(hint_list_->AddChild(empty))->SetPadding(FMargin(20.0f, 240.0f));

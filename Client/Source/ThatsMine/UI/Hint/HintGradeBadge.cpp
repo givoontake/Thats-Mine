@@ -7,6 +7,7 @@
 #include "Components/TextBlock.h"
 #include "Materials/MaterialInterface.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 UHintGradeBadge::UHintGradeBadge(const FObjectInitializer& object_initializer)
 	: Super(object_initializer)
@@ -50,7 +51,7 @@ TSharedRef<SWidget> UHintGradeBadge::RebuildWidget()
 		badge->SetVerticalAlignment(VAlign_Center);
 		badge_size->AddChild(badge);
 		UTextBlock* grade = WidgetTree->ConstructWidget<UTextBlock>();
-		FSlateFontInfo grade_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 26);
+		FSlateFontInfo grade_font = GetGameFont(26);
 		if (is_gradient)
 		{
 			grade_font.FontMaterial = grade_text_materials_[grade_index].LoadSynchronous();
@@ -58,6 +59,8 @@ TSharedRef<SWidget> UHintGradeBadge::RebuildWidget()
 		grade->SetFont(grade_font);
 		grade->SetColorAndOpacity(grade_color);
 		grade->SetText(FText::AsCultureInvariant(grade_ == EHintGrade::S ? TEXT("S") : grade_ == EHintGrade::A ? TEXT("A") : grade_ == EHintGrade::B ? TEXT("B") : TEXT("C")));
+		// 게임 글꼴의 영문 글자는 글자 칸 가운데에 두어도 아래로 치우쳐 보여 칸 가운데로 올린다.
+		grade->SetRenderTranslation(FVector2D(0.0, -GLYPH_RAISE));
 		badge->AddChild(grade);
 	}
 	return Super::RebuildWidget();

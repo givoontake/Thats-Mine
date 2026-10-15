@@ -10,6 +10,7 @@
 #include "Engine/GameInstance.h"
 #include "Settings/KeyBindingSubsystem.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> UInteractPromptWidget::RebuildWidget()
 {
@@ -18,7 +19,7 @@ TSharedRef<SWidget> UInteractPromptWidget::RebuildWidget()
 		UCanvasPanel* root = WidgetTree->ConstructWidget<UCanvasPanel>();
 		WidgetTree->RootWidget = root;
 		// 밝은 하늘이나 바닥 위에서도 읽히게 진한 외곽선을 두른다.
-		FSlateFontInfo font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), FONT_SIZE);
+		FSlateFontInfo font = GetGameFont(FONT_SIZE);
 		font.OutlineSettings.OutlineSize = 2;
 		font.OutlineSettings.OutlineColor = FLinearColor(0.03f, 0.02f, 0.01f, 0.9f);
 

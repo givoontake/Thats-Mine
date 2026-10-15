@@ -15,6 +15,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Materials/MaterialInterface.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 // 나무 버튼 재질 하나로 버튼 크기의 그림 붓을 만든다.
 static FSlateBrush MakeButtonBrush(const TCHAR* material_path, const FVector2D& size)
@@ -63,7 +64,7 @@ TSharedRef<SWidget> UPauseMenuWidget::RebuildWidget()
 		panel->SetContent(list);
 		UTextBlock* title = WidgetTree->ConstructWidget<UTextBlock>();
 		title->SetText(NSLOCTEXT("PauseMenu", "Title", "메뉴"));
-		title->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 32));
+		title->SetFont(GetGameFont(32));
 		title->SetColorAndOpacity(FLinearColor(1.0f, 0.85f, 0.35f));
 		title->SetJustification(ETextJustify::Center);
 		UVerticalBoxSlot* title_slot = list->AddChildToVerticalBox(title);
@@ -89,7 +90,7 @@ UButton* UPauseMenuWidget::AddButton(UVerticalBox* list, const FText& text)
 	size->AddChild(button);
 	UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 	label->SetText(text);
-	label->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 24));
+	label->SetFont(GetGameFont(24));
 	label->SetColorAndOpacity(FSlateColor::UseForeground());
 	Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
 	UVerticalBoxSlot* slot = list->AddChildToVerticalBox(size);

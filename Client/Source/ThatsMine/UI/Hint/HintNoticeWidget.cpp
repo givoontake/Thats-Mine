@@ -5,6 +5,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/TextBlock.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> UHintNoticeWidget::RebuildWidget()
 {
@@ -14,7 +15,7 @@ TSharedRef<SWidget> UHintNoticeWidget::RebuildWidget()
 		WidgetTree->RootWidget = root;
 		text_ = WidgetTree->ConstructWidget<UTextBlock>();
 		// 밝은 하늘이나 바닥 위에서도 읽히게 진한 외곽선을 두른다.
-		FSlateFontInfo font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 30);
+		FSlateFontInfo font = GetGameFont(30);
 		font.OutlineSettings.OutlineSize = 2;
 		font.OutlineSettings.OutlineColor = FLinearColor(0.03f, 0.02f, 0.01f, 0.9f);
 		text_->SetFont(font);

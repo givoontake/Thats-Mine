@@ -30,5 +30,8 @@ protected:
 	TArray<TSoftObjectPtr<UMaterialInterface>> grade_border_materials_;
 
 private:
+	// 등급 글자를 위로 옮기는 거리. 게임 글꼴의 영문 글자가 글자 칸 안에서 아래로 치우친 만큼이다.
+	static constexpr double GLYPH_RAISE = 4.5;
+
 	EHintGrade grade_ = EHintGrade::C;
 };

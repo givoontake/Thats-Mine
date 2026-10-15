@@ -5,6 +5,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/TextBlock.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 TSharedRef<SWidget> ULocalPlayWidget::RebuildWidget()
 {
@@ -14,7 +15,7 @@ TSharedRef<SWidget> ULocalPlayWidget::RebuildWidget()
 		WidgetTree->RootWidget = canvas;
 		UTextBlock* notice = WidgetTree->ConstructWidget<UTextBlock>();
 		notice->SetText(NSLOCTEXT("LocalSession", "PlayNotice", "로컬 테스트  |  F10: 종료"));
-		notice->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 18));
+		notice->SetFont(GetGameFont(18));
 		notice->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.8f, 0.4f)));
 		notice->SetShadowColorAndOpacity(FLinearColor::Black);
 		notice->SetShadowOffset(FVector2D(1.0, 1.0));

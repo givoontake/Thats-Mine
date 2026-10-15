@@ -8,6 +8,7 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/World.h"
 #include "Styling/CoreStyle.h"
+#include "UI/game_font.h"
 
 // 시간이 넘어갈 때 커졌다가 원래 크기로 돌아오는 정도와 시간
 static constexpr float PULSE_SCALE = 0.15f;
@@ -28,7 +29,7 @@ TSharedRef<SWidget> UMatchTimerWidget::RebuildWidget()
 
 		// 안내 글씨를 위에, 남은 초를 그 아래에 둔다.
 		message_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MatchTimerMessage"));
-		message_text_->SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), MESSAGE_FONT_SIZE));
+		message_text_->SetFont(GetGameFont(MESSAGE_FONT_SIZE));
 		message_text_->SetColorAndOpacity(FSlateColor(text_color_));
 		message_text_->SetShadowOffset(FVector2D(1.5, 1.5));
 		message_text_->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.75f));
@@ -38,7 +39,7 @@ TSharedRef<SWidget> UMatchTimerWidget::RebuildWidget()
 
 		// 배경 없이 숫자만 보이므로, 밝은 배경에서도 읽히게 진한 갈색 외곽선과 그림자를 넣는다.
 		timer_text_ = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("MatchTimerText"));
-		FSlateFontInfo timer_font = FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 36);
+		FSlateFontInfo timer_font = GetGameFont(36);
 		timer_font.OutlineSettings.OutlineSize = 2;
 		timer_font.OutlineSettings.OutlineColor = FLinearColor::FromSRGBColor(FColor(58, 36, 24, 255));
 		timer_text_->SetFont(timer_font);
