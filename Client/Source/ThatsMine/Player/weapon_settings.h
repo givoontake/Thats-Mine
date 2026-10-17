@@ -60,7 +60,4 @@ struct FWeaponSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (EditCondition = "can_aim", ClampMin = "5", ClampMax = "170"))
 	float aiming_field_of_view = 40.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (EditCondition = "can_aim", ClampMin = "0"))
-	float aiming_move_speed = 150.0f;
 };

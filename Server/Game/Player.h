@@ -12,6 +12,7 @@
 #include "CharacterPose.h"
 #include "hitbox_types.h"
 #include "weapon_ammo.h"
+#include "air_state.h"
 
 // 방 슬롯 하나를 나타낸다. 방을 처리하는 스레드만 변경하므로 슬롯 사용 여부는 세션 키 유무로 판단한다.
 class Player
@@ -30,6 +31,10 @@ class Player
 	long long last_move_relay_ms_ = 0;
 	bool has_new_move_state_ = false;
 	bool has_input_change_ = false;
+	// 마지막으로 인정한 위치까지 최대 속도보다 더 움직인 수평 거리의 누적(cm). 시간이 지나면 0까지만 줄어든다.
+	float move_excess_ = 0.0f;
+	// 서버가 판정하는 공중 상태. 마지막으로 인정한 이동 상태까지 반영한 값이다.
+	AirState air_state_;
 	// 명중 검증에 쓰는 서버 판정용 자세. 이동 상태와 동작으로 애니메이션 진행을 따라간다.
 	CharacterPose pose_;
 	// 기절 게이지는 stun_gauge_time_ms_ 시각의 값이고, 그 뒤로는 초당 감소량만큼 줄어든 것으로 계산한다. 기절 중에는 최대치로 본다.
@@ -87,6 +92,13 @@ public:
 	const MOVE_STATE& GetMoveState() const { return move_state_; }
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
+	// time_ms 시각에 처리하는 move_state를 인정하면 될 초과 누적(cm)
+	float GetMoveExcess(const MOVE_STATE& move_state, long long time_ms) const;
+	// time_ms 시각의 공중 상태. 상승 중에 정점 시각과 지연 여유가 지났으면 정점에서 하강을 시작한 것으로 바꾼다.
+	AirState GetAirState(long long time_ms) const;
+	// time_ms에 처리하는 move_state를 인정하면 될 공중 상태. 땅에서 떠나면 마지막으로 인정한 위치에서 시작하고,
+	// 상승 중 하강을 알리면 그 위치에서 하강을 시작하되 정점 시각보다 늦게는 잡지 않는다. 하강 중의 상승 알림은 받지 않는다.
+	AirState GetNextAirState(const MOVE_STATE& move_state, long long time_ms) const;
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
 	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
 	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + GetStunProtectionMs(); }
@@ -105,6 +117,8 @@ public:
 	bool AddToSendBuffer(const char* data, int data_size);
 	void ClearSendBuffer();
 	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change);
+	// 스폰 자리를 마지막으로 인정한 위치로 둔다. 첫 이동 상태도 이 위치와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
+	void SetSpawnLocation(const float location[3], float yaw, long long time_ms);
 	void MarkMoveStateRelayed(long long tick_time_ms);
 	// 기절 게이지를 올린다. 기절 중이거나 보호 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
 	bool AddStunGauge(float amount, long long time_ms);
@@ -115,8 +129,9 @@ public:
 	// 가진 힌트 중 하나를 무작위로 골라 빼고 돌려준다. 가진 힌트가 없으면 비어 있다.
 	std::optional<std::uint32_t> TakeRandomHint();
 	void ResetHints() { hint_indices_.clear(); }
-	// 마지막으로 인정한 위치에 멈춘 상태로 되돌리고 새 되돌리기 번호를 돌려준다. 확인을 받을 때까지 이동 상태를 받지 않는다.
-	std::uint32_t StartMoveCorrection();
+	// time_ms에 location으로 옮겨 수평으로 멈춘 상태로 맞추고 새 되돌리기 번호를 돌려준다. 공중이면 수직 속도 velocity_z로 air 곡선을 이어 간다.
+	// 확인을 받을 때까지 이동 상태를 받지 않는다.
+	std::uint32_t StartMoveCorrection(const float location[3], float velocity_z, const AirState& air, long long time_ms);
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.
 	void CompleteMoveCorrection(std::uint32_t correction_id);
 	// 무기 수만큼 탄약 상태를 탄과 탄창 없이 만든다.

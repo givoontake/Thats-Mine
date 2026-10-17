@@ -82,6 +82,23 @@ constexpr float HINT_DROP_PICKUP_HEIGHT = 100.0f; // 주울 때 캡슐 중심이
 // 지울 칸이 없으면 그 차례는 건너뛴다.
 constexpr int AREA_REMOVAL_INTERVAL_MS = 180000;
 
+// 캐릭터 최대 이동 속도(cm/s). 클라이언트 이동과 서버 이동 검증이 같은 값을 쓴다.
+// 뒤로 이동하면 뒤 속도, 조준 중에는 방향과 관계없이 조준 속도다.
+constexpr float MOVE_SPEED_FORWARD = 600.0f;
+constexpr float MOVE_SPEED_BACKWARD = 300.0f;
+constexpr float MOVE_SPEED_AIMING = 150.0f;
+
+// 점프와 낙하. 클라이언트 캐릭터 이동과 서버 높이 검증이 같은 값을 쓴다.
+// 중력은 프로젝트 기본 중력, 낙하 속도 상한은 게임 레벨 기본 물리 볼륨의 값과 같다.
+constexpr float JUMP_Z_VELOCITY = 500.0f; // 점프 순간 위쪽 속도(cm/s)
+constexpr float GRAVITY = 980.0f; // 중력 가속도(cm/s²)
+constexpr float TERMINAL_FALL_SPEED = 4000.0f; // 낙하 속도 상한(cm/s)
+// 미리 구한 값. 정점 시간은 v/g, 정점 높이는 위치에너지 식 v²/2g이고, 낙하 속도 상한에 닿는 시간과 그때까지 떨어진 거리도 같은 식이다.
+constexpr float JUMP_APEX_SECONDS = JUMP_Z_VELOCITY / GRAVITY;
+constexpr float JUMP_APEX_HEIGHT = JUMP_Z_VELOCITY * JUMP_Z_VELOCITY / (2.0f * GRAVITY);
+constexpr float TERMINAL_FALL_SECONDS = TERMINAL_FALL_SPEED / GRAVITY;
+constexpr float TERMINAL_FALL_DISTANCE = TERMINAL_FALL_SPEED * TERMINAL_FALL_SPEED / (2.0f * GRAVITY);
+
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
 constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아래 끝까지 거리(cm). 양 끝 반구를 포함한다.
@@ -89,6 +106,16 @@ constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아�
 // 이동 검증. 어기면 마지막으로 인정한 위치로 되돌린다.
 // 허용치(cm): 캡슐 아래 끝(발)이 랜드스케이프보다 이만큼 넘게 아래면 땅속, 캡슐이 이동을 막는 배치물에 이만큼 넘게 파고들면 겹침으로 본다.
 constexpr float MOVE_TOLERANCE = 20.0f;
+// 수평 이동 속도 검사. 인정한 위치 사이마다 초과 누적에서 "최대 속도 × 서버 처리 시각 차이"를 0까지만 빼고 수평 거리를 더한다.
+// 초과 누적이 이 허용치(cm)를 넘으면 인정하지 않는다. 패킷이 늦었다 몰려 와 처리 시각 차이가 짧게 잡힌 몫을 받아 준다.
+constexpr float MOVE_MAX_EXCESS_DISTANCE = 300.0f;
+// 공중 높이 검사. 상승은 이륙 높이 + 정점 높이 + MOVE_TOLERANCE까지이고, 하강은 하강 시작점에서 떨어지는 곡선을 이 시간(초)만큼 늦추고 당긴 범위 ± MOVE_TOLERANCE 안이어야 한다.
+// 벗어나면 서버가 계산한 위치로 맞추고, 공중에서 이 시간 넘게 이동 상태가 오지 않아도 같이 맞춘다.
+constexpr float MOVE_AIR_DELAY_SECONDS = 0.5f;
+// 땅 확인. 캡슐을 이만큼(cm) 내리고 반지름을 이만큼 줄여 랜드스케이프나 캐릭터를 막는 배치물에 닿으면 땅 위다.
+// 내리는 깊이는 걸을 수 있는 가장 가파른 경사를 덮고, 줄인 반지름 때문에 옆 벽에 붙어 있는 것은 땅으로 보지 않는다.
+constexpr float GROUND_CHECK_DEPTH = 30.0f;
+constexpr float GROUND_CHECK_RADIUS_MARGIN = 10.0f;
 
 // 명중 검증. 지연 보정이 없어 클라이언트 화면과 서버의 위치 차이를 여유로 허용한다.
 constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)

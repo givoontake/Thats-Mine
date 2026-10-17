@@ -81,10 +81,10 @@ private:
 	// 이번 틱에 받은 동작. 덮어쓰지 않고 틱 끝에 이동 상태와 함께 보낸다.
 	std::array<S2C_ACTION_PACKET, MAX_ROOM_ACTIONS_PER_TICK> pending_actions_{};
 	std::size_t pending_action_count_ = 0;
-	// 전원 로딩 완료를 기다리는 마감 시각, 실제 게임 시작 시각(0이면 아직 시작 대기 전), 게임 시작 여부
+	// 시작 단계, 전원 로딩 완료를 기다리는 마감 시각, 실제 게임 시작 시각(시작 대기에 들어갈 때 정한다)
+	MatchPhase match_phase_ = MatchPhase::LOADING;
 	long long loading_deadline_ms_ = 0;
 	long long game_start_ms_ = 0;
-	bool is_game_started_ = false;
 	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
 	long long last_pose_tick_ms_ = 0;
 	// 이번 게임에 놓인 탑의 지형 후보 배치물 번호. 이동·명중 검사가 놓인 탑만 보게 넘긴다.
@@ -154,8 +154,9 @@ private:
 	void SendAreaRemovalTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;
-	bool CheckMove(const Player& player, const MOVE_STATE& move_state) const;
-	void RollbackMove(Player& player, Session& session);
+	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state) const;
+	bool IsOnGround(const float location[3]) const;
+	void CorrectMove(Player& player, Session& session, bool is_on_air_curve);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
 	void GenerateHints();

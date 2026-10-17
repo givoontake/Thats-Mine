@@ -10,6 +10,7 @@
 #include "Environment/StartBarrier.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "Interaction/TreasureChest.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameNetworkSubsystem.h"
 #include "MovementSyncSubsystem.h"
@@ -27,6 +28,17 @@
 #define LOCTEXT_NAMESPACE "GameStart"
 
 DEFINE_LOG_CATEGORY_STATIC(LogGameStart, Log, All);
+
+// 스폰 때 막아 둔 내 캐릭터의 이동을 푼다. 이미 풀려 있으면 그대로 둔다.
+static void EnableLocalMovement(UWorld* world)
+{
+	const APlayerController* controller = world->GetFirstPlayerController();
+	const ACharacter* character = controller ? Cast<ACharacter>(controller->GetPawn()) : nullptr;
+	if (character && character->GetCharacterMovement()->MovementMode == MOVE_None)
+	{
+		character->GetCharacterMovement()->SetDefaultMovementMode();
+	}
+}
 
 // 맵이 열린 시점의 게이지 값. 나머지는 준비 항목이 끝날 때마다 채운다.
 static constexpr float MAP_LOADED_PROGRESS = 0.8f;
@@ -187,6 +199,11 @@ void UGameStartSubsystem::HandleSpawnPacket(const TArray<uint8>& payload)
 		else if (!controller->GetPawn())
 		{
 			game_mode->RestartPlayerAtTransform(controller, transform);
+			// 시작 대기에 들어갈 때까지(전원 로딩 완료) 움직이지 못하게 한다.
+			if (ACharacter* character = Cast<ACharacter>(controller->GetPawn()))
+			{
+				character->GetCharacterMovement()->DisableMovement();
+			}
 		}
 	}
 }
@@ -226,6 +243,7 @@ void UGameStartSubsystem::HandleGameReadyPacket(const TArray<uint8>& payload)
 		timer->SetMessage(LOCTEXT("GameStartingSoon", "곧 게임을 시작합니다!"));
 		timer->StartCountdown(remaining_ms / 1000.0f);
 	}
+	EnableLocalMovement(GetWorld());
 }
 
 void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
@@ -255,6 +273,8 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 	{
 		game_time_widget_->StartCountdown(remaining_ms / 1000.0f);
 	}
+	// 게임 시작 뒤에 합류하면 시작 대기 패킷 없이 이 패킷을 받으므로 여기서도 이동을 푼다.
+	EnableLocalMovement(GetWorld());
 	// 시작 구역 입구 차단벽을 바로 없앤다.
 	for (TActorIterator<AStartBarrier> barrier(GetWorld()); barrier; ++barrier)
 	{

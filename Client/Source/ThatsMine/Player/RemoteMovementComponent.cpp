@@ -55,13 +55,14 @@ void URemoteMovementComponent::ApplyState(const FRemoteMoveState& state)
 	}
 
 	// 점프는 받은 속도로 시작하고, 착지는 걷기로 돌린다.
-	if (state.is_falling != movement->IsFalling())
+	const bool is_falling = state.air_phase != AirPhase::GROUND;
+	if (is_falling != movement->IsFalling())
 	{
-		if (state.is_falling)
+		if (is_falling)
 		{
 			movement->Velocity = state.velocity;
 		}
-		movement->SetMovementMode(state.is_falling ? MOVE_Falling : MOVE_Walking);
+		movement->SetMovementMode(is_falling ? MOVE_Falling : MOVE_Walking);
 	}
 
 	// 조준 중에는 무기를 바꿀 수 없으므로 조준 해제, 무기 교체, 조준 순서로 맞춘다.

@@ -43,7 +43,7 @@ static MOVE_STATE ToMoveState(const FRemoteMoveState& state)
 	move_state.view_pitch = state.view_pitch;
 	move_state.input_right = QuantizeInput(state.move_input.X);
 	move_state.input_forward = QuantizeInput(state.move_input.Y);
-	move_state.is_falling = state.is_falling;
+	move_state.air_phase = state.air_phase;
 	move_state.is_aiming = state.is_aiming;
 	move_state.weapon = static_cast<uint8>(state.weapon);
 	return move_state;
@@ -57,16 +57,16 @@ static FRemoteMoveState ToRemoteMoveState(const MOVE_STATE& move_state)
 	state.yaw = move_state.yaw;
 	state.view_pitch = move_state.view_pitch;
 	state.move_input = FVector2D(move_state.input_right / 127.0, move_state.input_forward / 127.0);
-	state.is_falling = move_state.is_falling;
+	state.air_phase = move_state.air_phase;
 	state.is_aiming = move_state.is_aiming;
 	state.weapon = ToWeaponType(move_state.weapon);
 	return state;
 }
 
-// 이동 키, 점프·착지, 조준, 무기가 바뀌었는지 확인한다. 입력 변화는 간격 제한 없이 즉시 보낸다.
+// 이동 키, 공중 단계(점프·하강·착지), 조준, 무기가 바뀌었는지 확인한다. 입력 변화는 간격 제한 없이 즉시 보낸다.
 static bool HasInputChanged(const FRemoteMoveState& previous, const FRemoteMoveState& current)
 {
-	return QuantizeInput(previous.move_input.X) != QuantizeInput(current.move_input.X) || QuantizeInput(previous.move_input.Y) != QuantizeInput(current.move_input.Y) || previous.is_falling != current.is_falling || previous.is_aiming != current.is_aiming || previous.weapon != current.weapon;
+	return QuantizeInput(previous.move_input.X) != QuantizeInput(current.move_input.X) || QuantizeInput(previous.move_input.Y) != QuantizeInput(current.move_input.Y) || previous.air_phase != current.air_phase || previous.is_aiming != current.is_aiming || previous.weapon != current.weapon;
 }
 
 // 마우스 회전 등으로 이동 방향이 기준 이상 꺾였는지 확인한다.
@@ -201,7 +201,8 @@ void UMovementSyncSubsystem::SendMoveState()
 	// 이동 계산에 들어간 가속 방향을 몸 기준으로 바꿔 이동 입력으로 쓴다.
 	const FVector input = character->GetActorQuat().UnrotateVector(movement->GetCurrentAcceleration() / FMath::Max(movement->GetMaxAcceleration(), UE_KINDA_SMALL_NUMBER));
 	state.move_input = FVector2D(input.Y, input.X);
-	state.is_falling = movement->IsFalling();
+	// 공중이면 수직 속도로 상승과 하강을 나눈다. 정점을 지나거나 천장에 부딪혀 위로 가는 속도가 없어지면 하강이 되어 그 순간 바로 보낸다.
+	state.air_phase = !movement->IsFalling() ? AirPhase::GROUND : state.velocity.Z > 0.0 ? AirPhase::RISING : AirPhase::FALLING;
 	state.is_aiming = character->IsAiming();
 	state.weapon = character->GetCurrentWeapon();
 
@@ -442,7 +443,8 @@ void UMovementSyncSubsystem::HandleStunPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 서버가 내 이동을 인정하지 않았다. 받은 위치로 바로 옮겨 멈추고, 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다.
+// 서버가 내 이동을 인정하지 않았다. 받은 위치로 바로 옮겨 수평으로 멈추고, 공중이면 받은 수직 속도로 이어 떨어진다.
+// 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다.
 void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_MOVE_CORRECTION_PACKET) - sizeof(PACKET_HEADER))
@@ -455,7 +457,13 @@ void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& pay
 	if (APlayerCharacter* character = local_character_.Get())
 	{
 		character->SetActorLocation(FVector(packet.location[0], packet.location[1], packet.location[2]), false, nullptr, ETeleportType::TeleportPhysics);
-		character->GetCharacterMovement()->StopMovementImmediately();
+		UCharacterMovementComponent* movement = character->GetCharacterMovement();
+		movement->StopMovementImmediately();
+		if (packet.air_phase != AirPhase::GROUND)
+		{
+			movement->SetMovementMode(MOVE_Falling);
+			movement->Velocity = FVector(0.0, 0.0, packet.velocity_z);
+		}
 	}
 	C2S_MOVE_CORRECTION_ACK_PACKET ack{};
 	ack.correction_id = packet.correction_id;

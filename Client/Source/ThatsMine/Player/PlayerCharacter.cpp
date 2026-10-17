@@ -218,6 +218,8 @@ void APlayerCharacter::PostInitializeComponents()
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	// 서버 높이 검증과 같은 점프 속도를 쓴다. 블루프린트 값이 덮어쓰지 못하게 시작할 때 넣는다.
+	GetCharacterMovement()->JumpZVelocity = JUMP_Z_VELOCITY;
 	UpdateWeaponVisuals();
 	SetAiming(false);
 }
@@ -426,15 +428,15 @@ void APlayerCharacter::Move(const FInputActionValue& value)
 
 void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
 {
-	const FWeaponSettings* settings = GetCurrentWeaponSettings();
-	if (is_aiming_ && settings)
+	// 서버 이동 검증과 같은 속도를 쓴다.
+	if (is_aiming_)
 	{
 		// 조준 중에는 뒤로 이동할 때도 같은 속도로 천천히 움직인다.
-		GetCharacterMovement()->MaxWalkSpeed = settings->aiming_move_speed;
+		GetCharacterMovement()->MaxWalkSpeed = MOVE_SPEED_AIMING;
 	}
 	else
 	{
-		GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? forward_speed_ * 0.5f : forward_speed_;
+		GetCharacterMovement()->MaxWalkSpeed = movement.Y < 0.0f ? MOVE_SPEED_BACKWARD : MOVE_SPEED_FORWARD;
 	}
 	AddMovementInput(GetActorForwardVector(), movement.Y);
 	AddMovementInput(GetActorRightVector(), movement.X);

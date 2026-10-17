@@ -275,13 +275,15 @@ void GameRoom::HandlePacket(char* packet, Session& request_session)
 	}
 	case C2S_MOVE:
 	case C2S_MOVE_INPUT: {
-		if (room_state_.load() != RoomState::PLAY) break;
+		// 전원 로딩을 기다리는 동안에는 움직이지 못하므로 이동 상태를 받지 않는다.
+		if (room_state_.load() != RoomState::PLAY || match_phase_ == MatchPhase::LOADING) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		// 기절 중에는 이동·동작·명중을 받지 않는다. 되돌리기 확인을 기다리는 동안 받은 이동 상태도 버린다.
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_) || room_player->IsAwaitingMoveCorrection()) break;
 		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
-		if (!CheckMove(*room_player, move_state)) {
-			RollbackMove(*room_player, request_session);
+		const MoveCheckResult result = CheckMove(*room_player, move_state);
+		if (result != MoveCheckResult::ACCEPTED) {
+			CorrectMove(*room_player, request_session, result == MoveCheckResult::AIR_CORRECTION);
 			break;
 		}
 		const bool is_input_change = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_MOVE_INPUT;
@@ -502,7 +504,7 @@ void GameRoom::TryPostRoomDelete()
 void GameRoom::ClearGame()
 {
 	if (!TryChangeRoomState(RoomState::PLAY, RoomState::WAIT)) return;
-	is_game_started_ = false;
+	match_phase_ = MatchPhase::LOADING;
 	game_start_ms_ = 0;
 	game_end_ms_ = 0;
 	award_end_ms_ = 0;
@@ -686,7 +688,7 @@ void GameRoom::StartGame(int requester_id)
 	}
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
 	game_start_ms_ = 0;
-	is_game_started_ = false;
+	match_phase_ = MatchPhase::LOADING;
 	last_pose_tick_ms_ = 0;
 	// 이번 게임의 탑 자리를 후보 중에서 고르게 퍼뜨려 고른다. 고른 순서대로 종류를 번갈아 정해 종류마다 고르게 퍼지게 한다. 보물은 놓인 탑을 피한다.
 	// TOWER_SPAWN_ENABLED가 거짓이면 탑 없이 빈 배치를 보낸다.
@@ -860,6 +862,12 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
 		room_player.GetPose().Update(room_player.GetMoveState(), pose_delta_seconds, tick_time_ms);
 	}
+	// 공중에서 이동 상태가 MOVE_AIR_DELAY_SECONDS 넘게 오지 않으면 서버가 계산한 공중 위치로 맞춘다.
+	for (auto& room_player : room_players_) {
+		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingMoveCorrection()) continue;
+		if (room_player.GetAirState(tick_time_ms).phase == AirPhase::GROUND || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
+		if (auto session = FindSession(room_player)) CorrectMove(room_player, *session, true);
+	}
 	char send_buffer[BUF_SIZE];
 	int send_data_size = 0;
 	const auto flush = [&]() {
@@ -932,7 +940,10 @@ void GameRoom::ProcessLoadedPlayers()
 		const SpawnPoint& point = START_SPAWN_POINTS[slot];
 		const S2C_SPAWN_ENTRY entry{ room_player.GetSessionKey().player_id, { point.x, point.y, point.z }, point.yaw };
 		all_p.entries[all_p.player_count++] = entry;
-		if (state == RoomPlayerState::LOADED) joined_p.entries[joined_p.player_count++] = entry;
+		if (state == RoomPlayerState::LOADED) {
+			joined_p.entries[joined_p.player_count++] = entry;
+			room_player.SetSpawnLocation(entry.location, entry.yaw, tick_time_ms_);
+		}
 	}
 	joined_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + joined_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
 	all_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + all_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
@@ -956,7 +967,7 @@ void GameRoom::ProcessLoadedPlayers()
 			seed_p.header = { static_cast<std::uint16_t>(sizeof(seed_p)), S2C_SHOT_SEED };
 			seed_p.seed = shot_seed_;
 			session->SendPacket(reinterpret_cast<char*>(&seed_p), seed_p.header.size);
-			if (is_game_started_) {
+			if (match_phase_ == MatchPhase::STARTED) {
 				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
 				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
 				for (std::size_t index = 0; index < hint_drops_.size(); ++index) {
@@ -970,7 +981,7 @@ void GameRoom::ProcessLoadedPlayers()
 			}
 			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
-			if (is_game_started_) {
+			if (match_phase_ == MatchPhase::STARTED) {
 				session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
 				// 지금까지 지운 칸이 든 배제 판과 다음 지우기까지 남은 시간을 받는다.
 				char board_buffer[sizeof(S2C_EXCLUSION_BOARD_PACKET)];
@@ -978,7 +989,7 @@ void GameRoom::ProcessLoadedPlayers()
 				if (board_size > 0) session->SendPacket(board_buffer, board_size);
 				SendAreaRemovalTime(*session);
 			}
-			else if (game_start_ms_ != 0) session->SendPacket(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
+			else if (match_phase_ == MatchPhase::READY) session->SendPacket(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
 			room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
 		}
 		else if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) {
@@ -1164,7 +1175,7 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 {
 	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
 	if (request_p.is_shot && !opener.ClaimShot(request_p.weapon)) return;
-	if (!is_game_started_ || request_p.box >= is_box_opened_.size() || is_box_opened_[request_p.box] || !CheckBoxOpen(opener, request_p)) return;
+	if (match_phase_ != MatchPhase::STARTED || request_p.box >= is_box_opened_.size() || is_box_opened_[request_p.box] || !CheckBoxOpen(opener, request_p)) return;
 	is_box_opened_[request_p.box] = true;
 	opener.AddAwardCount(AwardCategory::BOX_OPEN, tick_time_ms_);
 
@@ -1281,7 +1292,7 @@ void GameRoom::DropHint(Player& target)
 // 플레이 중인 전원에게 지운 칸과 바뀐 배제 판, 다음 지우기까지 남은 시간을 보낸다.
 void GameRoom::ProcessAreaRemoval()
 {
-	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < next_area_removal_ms_) return;
+	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || tick_time_ms_ < next_area_removal_ms_) return;
 	next_area_removal_ms_ += AREA_REMOVAL_INTERVAL_MS;
 	const int treasure_cell = GetBlockCellIndex(treasure_placement_.location.x, treasure_placement_.location.y);
 	std::vector<std::uint8_t> candidates;
@@ -1323,7 +1334,7 @@ int GameRoom::AppendExclusionBoard(char* buffer, Player& player) const
 // 보물이 놓인 칸 안에 있으면 나머지 칸을, 없으면 놓인 칸을 배제하고, 쓴 사람에게 결과와 배제 판을 보낸다.
 void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p)
 {
-	if (!is_game_started_ || !user.CanUseBlock(request_p.piece) || request_p.rotation >= BLOCK_ROTATION_COUNT) return;
+	if (match_phase_ != MatchPhase::STARTED || !user.CanUseBlock(request_p.piece) || request_p.rotation >= BLOCK_ROTATION_COUNT) return;
 	const std::uint64_t cells = GetBlockCells(request_p.piece, request_p.rotation, request_p.column, request_p.row);
 	if (cells == 0 || (cells & (user.GetKeptExcludedCells() | removed_cells_)) != 0) return;
 	S2C_BLOCK_RESULT_PACKET result_p;
@@ -1341,7 +1352,7 @@ void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request
 // 발견한 뒤에도 게임이 끝날 때까지 플레이는 그대로 하지만 힌트 제공은 멈춘다.
 void GameRoom::DigTreasure(const Player& digger)
 {
-	if (!is_game_started_ || game_end_ms_ != 0 || !digger.HasMoveState()) return;
+	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || !digger.HasMoveState()) return;
 	const float* location = digger.GetMoveState().location;
 	const float dx = location[0] - treasure_placement_.location.x;
 	const float dy = location[1] - treasure_placement_.location.y;
@@ -1363,7 +1374,7 @@ void GameRoom::DigTreasure(const Player& digger)
 
 void GameRoom::ProcessTimeLimit()
 {
-	if (!is_game_started_ || game_end_ms_ != 0 || tick_time_ms_ < game_start_ms_ + GAME_TIME_LIMIT_MS) return;
+	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || tick_time_ms_ < game_start_ms_ + GAME_TIME_LIMIT_MS) return;
 	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
 	S2C_TIME_OVER_PACKET over_p;
 	over_p.header = { static_cast<std::uint16_t>(sizeof(over_p)), S2C_TIME_OVER };
@@ -1423,7 +1434,7 @@ void GameRoom::SendAreaRemovalTime(Session& session) const
 // 이미 가진 힌트도 보내고, 가진 힌트 목록에는 다시 넣지 않는다.
 void GameRoom::ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p)
 {
-	if (!is_game_started_ || request_p.drop >= hint_drops_.size() || hint_drops_[request_p.drop].is_picked || !CheckHintPickup(picker, hint_drops_[request_p.drop])) return;
+	if (match_phase_ != MatchPhase::STARTED || request_p.drop >= hint_drops_.size() || hint_drops_[request_p.drop].is_picked || !CheckHintPickup(picker, hint_drops_[request_p.drop])) return;
 	HintDrop& hint_drop = hint_drops_[request_p.drop];
 	hint_drop.is_picked = true;
 
@@ -1457,49 +1468,93 @@ bool GameRoom::CheckHintPickup(const Player& picker, const HintDrop& drop) const
 
 // 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
 // 두 위치의 캡슐 중심을 이은 선분이 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨·탑)을 지나면 관통이다.
-// 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 게임 시작 전에는 시작 구역 밖으로 나간 위치도 인정하지 않는다. 첫 위치는 비교할 이전 위치가 없어 인정한다.
-bool GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) const
+// 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 게임 시작 전에는 시작 구역 밖으로 나간 위치도 인정하지 않는다. 첫 이동은 스폰 자리와 비교한다.
+// 최대 속도보다 더 움직인 수평 거리의 누적이 허용치를 넘으면 속도 조작으로 보고 인정하지 않는다. 여기까지 어기면 되돌린다.
+// 마지막으로 공중 높이와 땅 위라는 알림을 본다. 땅에서 떠나는 이동은 떠난 뒤의 공중 상태로, 공중에서 오는 이동은 지금 공중 상태로 높이를 본다.
+// 땅 위에 있다가 어기면 되돌리고, 공중에서 어기면 서버가 계산한 공중 위치로 맞춘다.
+MoveCheckResult GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state) const
 {
 	const float* next = move_state.location;
-	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2])) return false;
+	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2]) || move_state.air_phase > AirPhase::FALLING) return MoveCheckResult::ROLLBACK;
 	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
 	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
-	if (!player.HasMoveState()) return true;
 	const std::optional<float> ground = landscape.GetGroundHeight(next[0], next[1]);
-	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return false;
+	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
 	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
-	if (collision_objects.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, placed_objects_)) return false;
-	if (!is_game_started_ && (next[0] < START_AREA_MIN[0] || next[0] > START_AREA_MAX[0] || next[1] < START_AREA_MIN[1] || next[1] > START_AREA_MAX[1])) return false;
+	if (collision_objects.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, placed_objects_)) return MoveCheckResult::ROLLBACK;
+	if (match_phase_ != MatchPhase::STARTED && (next[0] < START_AREA_MIN[0] || next[0] > START_AREA_MAX[0] || next[1] < START_AREA_MIN[1] || next[1] > START_AREA_MAX[1])) return MoveCheckResult::ROLLBACK;
 	const float* previous = player.GetMoveState().location;
-	return !collision_objects.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, placed_objects_);
+	if (player.GetMoveExcess(move_state, tick_time_ms_) > MOVE_MAX_EXCESS_DISTANCE) return MoveCheckResult::ROLLBACK;
+	if (collision_objects.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, placed_objects_)) return MoveCheckResult::ROLLBACK;
+	const AirState air = player.GetAirState(tick_time_ms_);
+	const AirState judged = air.phase == AirPhase::GROUND ? player.GetNextAirState(move_state, tick_time_ms_) : air;
+	const MoveCheckResult air_failure = air.phase == AirPhase::GROUND ? MoveCheckResult::ROLLBACK : MoveCheckResult::AIR_CORRECTION;
+	if (judged.phase != AirPhase::GROUND && !IsAirHeightAllowed(judged, next[2], tick_time_ms_)) return air_failure;
+	if (move_state.air_phase == AirPhase::GROUND && !IsOnGround(next)) return air_failure;
+	return MoveCheckResult::ACCEPTED;
 }
 
-// 마지막으로 인정한 위치에 멈춘 상태로 되돌려 다른 플레이어에게 다음 틱에 중계하고, 본인에게는 그 위치로 옮기라고 보낸다.
-void GameRoom::RollbackMove(Player& player, Session& session)
+// 캡슐을 GROUND_CHECK_DEPTH만큼 내리고 반지름을 GROUND_CHECK_RADIUS_MARGIN만큼 줄여 랜드스케이프나 캐릭터를 막는 배치물에 닿으면 땅 위로 본다.
+bool GameRoom::IsOnGround(const float location[3]) const
 {
+	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(location[0], location[1]);
+	if (ground && location[2] - CHARACTER_CAPSULE_HALF_HEIGHT <= *ground + GROUND_CHECK_DEPTH) return true;
+	return server_->GetMapData().GetCollisionObjects().IsCapsuleOverlappingObjects({ location[0], location[1], location[2] - GROUND_CHECK_DEPTH },
+		CHARACTER_CAPSULE_RADIUS - GROUND_CHECK_RADIUS_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, placed_objects_);
+}
+
+// 이동을 인정하지 않고 서버 위치로 맞춘다. 수평 속도는 없애고, 공중이면 수직 속도는 서버 곡선을 그대로 따른다.
+// is_on_air_curve이고 공중이면 마지막으로 인정한 수평 위치에서 곡선의 지금 높이로 맞춘다. 그 높이가 땅 아래면 땅에 내려놓는다.
+// 그 위치까지 바닥 배치물 등에 막히면 마지막으로 인정한 위치에서 속도 0으로 떨어지기 시작한 것으로 본다. 아래가 막혀 있어 곧 그 위에 내려선다.
+// 아니면 마지막으로 인정한 위치로 되돌린다. 맞춘 위치는 다른 플레이어에게 다음 틱에 중계하고, 본인에게는 그 위치로 옮기라고 보낸다.
+void GameRoom::CorrectMove(Player& player, Session& session, bool is_on_air_curve)
+{
+	AirState air = player.GetAirState(tick_time_ms_);
+	const float* previous = player.GetMoveState().location;
+	float location[3] = { previous[0], previous[1], previous[2] };
+	if (is_on_air_curve && air.phase != AirPhase::GROUND) {
+		float curve_z = GetAirHeight(air, tick_time_ms_);
+		AirState curve_air = air;
+		const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(location[0], location[1]);
+		if (ground && curve_z - CHARACTER_CAPSULE_HALF_HEIGHT < *ground) {
+			curve_z = *ground + CHARACTER_CAPSULE_HALF_HEIGHT;
+			curve_air = {};
+		}
+		if (server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { previous[0], previous[1], curve_z }, TERRAIN_BLOCKS_PAWN, placed_objects_)) {
+			air = { AirPhase::FALLING, previous[2], tick_time_ms_ };
+		}
+		else {
+			location[2] = curve_z;
+			air = curve_air;
+		}
+	}
+	const float velocity_z = air.phase == AirPhase::GROUND ? 0.0f : GetAirVelocityZ(air, tick_time_ms_);
 	S2C_MOVE_CORRECTION_PACKET correction_p;
 	correction_p.header = { static_cast<std::uint16_t>(sizeof(correction_p)), S2C_MOVE_CORRECTION };
-	correction_p.correction_id = player.StartMoveCorrection();
-	std::memcpy(correction_p.location, player.GetMoveState().location, sizeof(correction_p.location));
+	correction_p.correction_id = player.StartMoveCorrection(location, velocity_z, air, tick_time_ms_);
+	std::memcpy(correction_p.location, location, sizeof(correction_p.location));
+	correction_p.velocity_z = velocity_z;
+	correction_p.air_phase = air.phase;
 	session.SendPacket(reinterpret_cast<char*>(&correction_p), correction_p.header.size);
 }
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.
 void GameRoom::ProcessGameStart()
 {
-	if (is_game_started_) return;
+	if (match_phase_ == MatchPhase::STARTED) return;
 	const auto send_to_playing = [&](char* packet, int packet_size) {
 		for (auto& room_player : room_players_) {
 			auto session = FindSession(room_player);
 			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(packet, packet_size);
 		}
 	};
-	if (game_start_ms_ == 0) {
+	if (match_phase_ == MatchPhase::LOADING) {
 		bool has_loading_player = false;
 		for (auto& room_player : room_players_) {
 			if (FindSession(room_player) && room_player.GetRoomPlayerState() == RoomPlayerState::LOADING) has_loading_player = true;
 		}
 		if (has_loading_player && tick_time_ms_ < loading_deadline_ms_) return;
+		match_phase_ = MatchPhase::READY;
 		game_start_ms_ = tick_time_ms_ + GAME_READY_WAIT_MS;
 		S2C_GAME_READY_PACKET ready_p;
 		ready_p.header = { static_cast<std::uint16_t>(sizeof(ready_p)), S2C_GAME_READY };
@@ -1508,7 +1563,7 @@ void GameRoom::ProcessGameStart()
 		return;
 	}
 	if (tick_time_ms_ < game_start_ms_) return;
-	is_game_started_ = true;
+	match_phase_ = MatchPhase::STARTED;
 	next_area_removal_ms_ = tick_time_ms_ + AREA_REMOVAL_INTERVAL_MS;
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };

@@ -11,6 +11,13 @@ enum class RoomPlayerState { EMPTY, WAIT, READY, LOADING, LOADED, PLAY };
 
 enum class RoomState { EMPTY, INITIALIZING, WAIT, PLAY, WAITING_DELETE, DELETE_POST };
 
+// 게임 방의 시작 단계. LOADING: 전원 로딩 완료(또는 로딩 제한 시간)를 기다리는 중, READY: 시작 대기 시간을 세는 중, STARTED: 게임 중
+// 로딩 단계에는 플레이어가 움직이지 못한다.
+enum class MatchPhase { LOADING, READY, STARTED };
+
+// 받은 이동 상태의 검사 결과. ROLLBACK: 마지막으로 인정한 위치로 되돌림, AIR_CORRECTION: 공중 높이만 어겨 서버가 계산한 공중 위치로 맞춤
+enum class MoveCheckResult { ACCEPTED, ROLLBACK, AIR_CORRECTION };
+
 // FREE: 빈 자리 또는 초기화 중(게임 스레드가 처리하지 않음), COMPLETE: 처리 가능, PROCESSING: 처리 중
 enum class RoomProcessState { FREE, COMPLETE, PROCESSING };
 

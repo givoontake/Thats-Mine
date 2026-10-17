@@ -144,7 +144,7 @@ static BroadphaseCapsule ComputeBroadphaseCapsule(const HitboxData& data)
 				// 서 있기와 공중
 				run(base, nullptr);
 				MOVE_STATE falling = base;
-				falling.is_falling = true;
+				falling.air_phase = AirPhase::FALLING;
 				falling.velocity[0] = 300.0f;
 				run(falling, nullptr);
 				// 기준 방향마다 그 기준을 유지하는 방향 범위(앞뒤 ±77.5도, 옆 ±32.5도)와, 그 줄의 샘플 속도·사이 속도를 훑는다.

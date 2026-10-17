@@ -168,9 +168,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Input")
 	TObjectPtr<UInputAction> mouse_look_action_;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Player|Movement", meta = (ClampMin = "0"))
-	float forward_speed_ = 600.0f;
-
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Weapon")
 	TMap<EWeaponType, FWeaponSettings> weapon_settings_;
 

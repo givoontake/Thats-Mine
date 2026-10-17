@@ -169,7 +169,7 @@ void CharacterPose::Update(const MOVE_STATE& move_state, float delta_seconds, lo
 		if (elapsed * montage_->play_rate >= data_->GetTrack(montage_->track).length) montage_ = nullptr;
 	}
 
-	if (move_state.is_falling) {
+	if (move_state.air_phase != AirPhase::GROUND) {
 		jump_time_ += delta_seconds;
 		return;
 	}
@@ -213,7 +213,7 @@ std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_
 
 	// 1. 하체 기본 자세: 공중이면 점프 애니메이션, 땅이면 기준 방향 줄에서 속도로 두 샘플을 섞는다.
 	std::vector<BoneTransform> locals;
-	if (move_state.is_falling) {
+	if (move_state.air_phase != AirPhase::GROUND) {
 		locals = SampleTrack(data.GetTrack(data.GetJumpTrack()), bone_count, jump_time_, true);
 	}
 	else {
@@ -256,7 +256,7 @@ std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_
 	};
 
 	// 2. 하체 돌리기: 땅에서 움직이면 루트를 실제 이동 방향까지 돌리고, 허리와 가슴을 반씩 되돌려 상체가 앞을 보게 한다.
-	if (!move_state.is_falling && speed >= MIN_LOCOMOTION_SPEED) {
+	if (move_state.air_phase == AirPhase::GROUND && speed >= MIN_LOCOMOTION_SPEED) {
 		const float angle = XMConvertToRadians(GetDeltaAngle(GetCardinalAngle(cardinal_), GetMoveDirection(move_state)));
 		rotate_bone(0, XMQuaternionRotationNormal(g_XMIdentityR2, angle));
 		rotate_bone(data.GetSpineBone(), XMQuaternionRotationNormal(g_XMIdentityR2, -angle * 0.5f));
@@ -271,7 +271,7 @@ std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_
 	case WeaponPoseType::PICKAXE: upper_track = data.GetPoseTrack(UpperBodyPose::PICKAXE_HOLD); break;
 	case WeaponPoseType::PISTOL: upper_track = data.GetPoseTrack(UpperBodyPose::PISTOL_AIM); break;
 	case WeaponPoseType::RIFLE: upper_track = data.GetPoseTrack(move_state.is_aiming ? UpperBodyPose::RIFLE_AIM : UpperBodyPose::RIFLE_HOLD); break;
-	default: upper_track = move_state.is_falling ? data.GetPoseTrack(UpperBodyPose::IDLE) : -1; break;
+	default: upper_track = move_state.air_phase != AirPhase::GROUND ? data.GetPoseTrack(UpperBodyPose::IDLE) : -1; break;
 	}
 	if (upper_track >= 0) blend_branch(data.GetSpineBone(), SampleTrack(data.GetTrack(upper_track), bone_count, 0.0f, false), 1.0f);
 

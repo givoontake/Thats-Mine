@@ -6,6 +6,14 @@
 #include "random_seed.h"
 #include "shot_spread.h"
 
+// 이동 상태의 최대 수평 속도(cm/s). 공중에서는 뛰어오를 때의 속도를 그대로 유지하므로 상태와 관계없이 앞 속도로 본다.
+static float GetMaxMoveSpeed(const MOVE_STATE& move_state)
+{
+	if (move_state.air_phase != AirPhase::GROUND) return MOVE_SPEED_FORWARD;
+	if (move_state.is_aiming) return MOVE_SPEED_AIMING;
+	return move_state.input_forward < 0 ? MOVE_SPEED_BACKWARD : MOVE_SPEED_FORWARD;
+}
+
 Player::Player()
 {
 	room_player_state_.store(RoomPlayerState::WAIT);
@@ -101,7 +109,7 @@ bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time
 	const ShotSpreadSettings& spread = GetShotSpreadSettings(weapon);
 	const float elapsed_seconds = (time_ms - ammo.spread_time_ms) / 1000.0f;
 	const bool has_state = HasMoveState();
-	const bool is_falling = has_state && move_state_.is_falling && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
+	const bool is_falling = has_state && move_state_.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
 	const bool is_unaimed = !has_state || (!move_state_.is_aiming && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
 	ammo.last_shot_min_spread = GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), !is_unaimed, 0.0f, is_falling);
 	ammo.last_shot_index = ammo.shot_count++;
@@ -243,11 +251,50 @@ bool Player::ClaimShotTrace(std::uint8_t weapon)
 void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change)
 {
 	if (move_state.is_aiming != move_state_.is_aiming) aim_change_ms_ = time_ms;
-	if (move_state.is_falling != move_state_.is_falling) fall_change_ms_ = time_ms;
+	if ((move_state.air_phase == AirPhase::GROUND) != (move_state_.air_phase == AirPhase::GROUND)) fall_change_ms_ = time_ms;
+	move_excess_ = GetMoveExcess(move_state, time_ms);
+	air_state_ = GetNextAirState(move_state, time_ms);
 	move_state_ = move_state;
 	move_time_ms_ = time_ms;
 	has_new_move_state_ = true;
 	has_input_change_ = has_input_change_ || is_input_change;
+}
+
+void Player::SetSpawnLocation(const float location[3], float yaw, long long time_ms)
+{
+	ClearMoveState();
+	std::memcpy(move_state_.location, location, sizeof(move_state_.location));
+	move_state_.yaw = yaw;
+	move_time_ms_ = time_ms;
+}
+
+float Player::GetMoveExcess(const MOVE_STATE& move_state, long long time_ms) const
+{
+	// 두 위치 사이에 상태가 바뀌었을 수 있어 앞뒤 상태 중 빠른 쪽 속도를 쓴다.
+	const float max_speed = std::max(GetMaxMoveSpeed(move_state_), GetMaxMoveSpeed(move_state));
+	const float distance = std::hypot(move_state.location[0] - move_state_.location[0], move_state.location[1] - move_state_.location[1]);
+	// 지난 시간만큼 줄이되 0 아래로는 내리지 않고 거리를 더한다. 오래 보내지 않다가 한 번에 멀리 가도 그 거리가 허용치를 넘으면 걸린다.
+	return std::max(0.0f, move_excess_ - max_speed * static_cast<float>(time_ms - move_time_ms_) / 1000.0f) + distance;
+}
+
+AirState Player::GetAirState(long long time_ms) const
+{
+	if (air_state_.phase == AirPhase::RISING && GetAirElapsedSeconds(air_state_, time_ms) > JUMP_APEX_SECONDS + MOVE_AIR_DELAY_SECONDS) {
+		return { AirPhase::FALLING, air_state_.start_z + JUMP_APEX_HEIGHT, air_state_.start_ms + static_cast<long long>(JUMP_APEX_SECONDS * 1000.0f) };
+	}
+	return air_state_;
+}
+
+AirState Player::GetNextAirState(const MOVE_STATE& move_state, long long time_ms) const
+{
+	const AirState air = GetAirState(time_ms);
+	if (move_state.air_phase == AirPhase::GROUND) return {};
+	if (air.phase == AirPhase::GROUND) return { move_state.air_phase, move_state_.location[2], move_time_ms_ };
+	if (air.phase == AirPhase::RISING && move_state.air_phase == AirPhase::FALLING) {
+		const long long apex_ms = air.start_ms + static_cast<long long>(JUMP_APEX_SECONDS * 1000.0f);
+		return { AirPhase::FALLING, std::min(move_state.location[2], air.start_z + JUMP_APEX_HEIGHT), std::min(time_ms, apex_ms) };
+	}
+	return air;
 }
 
 void Player::MarkMoveStateRelayed(long long tick_time_ms)
@@ -295,9 +342,14 @@ void Player::StopMovement()
 	has_input_change_ = true;
 }
 
-std::uint32_t Player::StartMoveCorrection()
+std::uint32_t Player::StartMoveCorrection(const float location[3], float velocity_z, const AirState& air, long long time_ms)
 {
 	StopMovement();
+	std::memcpy(move_state_.location, location, sizeof(move_state_.location));
+	move_state_.velocity[2] = velocity_z;
+	move_state_.air_phase = air.phase;
+	move_time_ms_ = time_ms;
+	air_state_ = air;
 	is_awaiting_move_correction_ = true;
 	return ++move_correction_id_;
 }
@@ -311,6 +363,8 @@ void Player::ClearMoveState()
 {
 	move_state_ = {};
 	move_time_ms_ = 0;
+	move_excess_ = 0.0f;
+	air_state_ = {};
 	last_move_relay_ms_ = 0;
 	has_new_move_state_ = false;
 	has_input_change_ = false;

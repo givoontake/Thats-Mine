@@ -15,6 +15,9 @@ enum class TowerKind : std::uint8_t { TOWER_02, TOWER_04 };
 // 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다.
 enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
 
+// 이동 상태의 공중 단계. 땅 위, 점프로 올라가는 중, 떨어지는 중(점프 정점 이후·천장에 부딪힌 뒤·걸어서 떨어질 때)이다.
+enum class AirPhase : std::uint8_t { GROUND, RISING, FALLING };
+
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
 enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
 
@@ -69,7 +72,7 @@ struct MOVE_STATE {
 	float view_pitch;
 	std::int8_t input_right;
 	std::int8_t input_forward;
-	bool is_falling;
+	AirPhase air_phase;
 	bool is_aiming;
 	std::uint8_t weapon;
 };
@@ -178,11 +181,14 @@ struct S2C_STUN_PACKET {
 	std::uint32_t protection_ms;
 };
 
-// 서버가 이동을 인정하지 않아 마지막으로 인정한 위치(캡슐 중심, cm)로 되돌린다. 받은 클라이언트는 그 위치로 바로 옮기고 같은 번호로 확인을 보낸다.
+// 서버가 이동을 인정하지 않아 서버 위치(캡슐 중심, cm)로 맞춘다. 받은 클라이언트는 그 위치로 바로 옮기고 같은 번호로 확인을 보낸다.
+// 수평 속도는 없애고, 공중이면 수직 속도(cm/s)로 서버 곡선을 이어 떨어진다.
 struct S2C_MOVE_CORRECTION_PACKET {
 	PACKET_HEADER header;
 	std::uint32_t correction_id;
 	float location[3];
+	float velocity_z;
+	AirPhase air_phase;
 };
 
 // 되돌리기를 적용했다는 확인. 서버는 이 확인을 받을 때까지 그 플레이어의 이동 상태를 받지 않는다.
