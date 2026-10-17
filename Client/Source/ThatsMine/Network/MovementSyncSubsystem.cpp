@@ -165,11 +165,11 @@ void UMovementSyncSubsystem::Tick(float delta_seconds)
 	Super::Tick(delta_seconds);
 	if (GetWorld()->GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->GetState() == EClientState::PLAYING)
 	{
-		SendMoveState();
+		SendMoveState(false);
 	}
 }
 
-void UMovementSyncSubsystem::SendMoveState()
+void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 {
 	const APlayerController* controller = GetWorld()->GetFirstPlayerController();
 	APlayerCharacter* character = controller ? Cast<APlayerCharacter>(controller->GetPawn()) : nullptr;
@@ -209,7 +209,7 @@ void UMovementSyncSubsystem::SendMoveState()
 	const double now = GetWorld()->GetRealTimeSeconds();
 	const double elapsed = now - last_send_time_;
 	// 입력 변화는 즉시, 위치는 주기마다, 방향이 꺾이면 최소 간격을 두고 보낸다.
-	const bool is_input_changed = has_sent_state_ && HasInputChanged(last_sent_state_, state);
+	const bool is_input_changed = is_forced || (has_sent_state_ && HasInputChanged(last_sent_state_, state));
 	const bool is_periodic = elapsed >= MOVE_SEND_INTERVAL_MS / 1000.0;
 	const bool is_direction_changed = elapsed >= MOVE_EXTRA_SEND_INTERVAL_MS / 1000.0 && HasDirectionChanged(last_sent_state_, state);
 	if (has_sent_state_ && !is_input_changed && !is_periodic && !is_direction_changed)
@@ -227,8 +227,13 @@ void UMovementSyncSubsystem::SendMoveState()
 	}
 }
 
+// 총을 쏘면 서버가 발사 순간의 위치·방향으로 총구와 조준을 판정하도록, 동작보다 먼저 지금 이동 상태를 바로 보낸다.
 void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponType weapon)
 {
+	if (action == EPlayerAction::FIRE)
+	{
+		SendMoveState(true);
+	}
 	C2S_ACTION_PACKET packet{};
 	packet.action = static_cast<uint8>(action);
 	packet.weapon = static_cast<uint8>(weapon);
@@ -289,7 +294,6 @@ void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 		return;
 	}
 	const FVector ray = shot.hit.ImpactPoint - shot.trace_start;
-	const FVector direction = ray.GetSafeNormal();
 	C2S_HIT_PACKET packet{};
 	packet.target_player_id = *target_player_id;
 	packet.weapon = static_cast<uint8>(shot.weapon);
@@ -297,7 +301,7 @@ void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 	for (int32 axis = 0; axis < 3; ++axis)
 	{
 		packet.origin[axis] = static_cast<float>(shot.trace_start[axis]);
-		packet.direction[axis] = static_cast<float>(direction[axis]);
+		packet.direction[axis] = static_cast<float>(shot.shot_direction[axis]);
 	}
 	packet.distance = static_cast<float>(ray.Size());
 	for (int32 axis = 0; axis < 3; ++axis)

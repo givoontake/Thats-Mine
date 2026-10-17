@@ -34,7 +34,8 @@ protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;
 
 private:
-	void SendMoveState();
+	// is_forced면 보내는 간격과 관계없이 지금 상태를 입력 변화로 바로 보낸다.
+	void SendMoveState(bool is_forced);
 	void HandleActionStarted(EPlayerAction action, EWeaponType weapon);
 	UFUNCTION()
 	void HandleShotFired(const FShotResult& shot);

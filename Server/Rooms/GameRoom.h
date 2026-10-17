@@ -137,6 +137,7 @@ private:
 	void ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& request_p);
 	void AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
+	bool IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const;
 	bool CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& request_p, const DirectX::XMFLOAT3& direction) const;
 	void ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p);
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;

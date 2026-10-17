@@ -27,6 +27,8 @@ class HitboxData
 	int chest_bone_ = -1;
 	int head_bone_ = -1;
 	int upperarm_r_bone_ = -1;
+	// 탄 광선이 시작하는 뼈(SHOT_ORIGIN_BONE)
+	int shot_origin_bone_ = -1;
 
 public:
 	bool Load(const std::string& file_path);
@@ -58,4 +60,5 @@ public:
 	int GetChestBone() const { return chest_bone_; }
 	int GetHeadBone() const { return head_bone_; }
 	int GetUpperarmRBone() const { return upperarm_r_bone_; }
+	int GetShotOriginBone() const { return shot_origin_bone_; }
 };

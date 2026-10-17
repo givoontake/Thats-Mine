@@ -120,7 +120,10 @@ constexpr float GROUND_CHECK_RADIUS_MARGIN = 10.0f;
 // 명중 검증. 지연 보정이 없어 클라이언트 화면과 서버의 위치 차이를 여유로 허용한다.
 constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)
 constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여유에 더하는 지연 허용 시간(초)
-constexpr float HIT_ORIGIN_MAX_OFFSET = 200.0f; // 발사 시작점이 쏜 사람 위치에서 벗어날 수 있는 기본 거리(cm)
+// 탄 광선은 이 뼈(오른손) 위치에서 시작한다. 총구는 화염·궤적 표시에만 쓴다. 클라이언트와 서버가 같은 뼈 이름을 쓴다.
+inline constexpr char SHOT_ORIGIN_BONE[] = "hand_r";
+// 발사 시작점이 서버가 쏜 사람 자세로 구한 오른손 위치에서 벗어날 수 있는 기본 거리(cm). 손이 막혀 몸 안쪽 점에서 쏘면 쏜 사람 캡슐 안이어야 한다.
+constexpr float HIT_ORIGIN_MAX_OFFSET = 30.0f;
 // 탄 퍼짐 검증(shot_spread.h). 다시 계산한 탄 방향과 받은 광선 방향 사이 허용 각도(도), 퍼짐 크기 반올림 오차(도),
 // 조준 방향과 이동 상태의 시선 방향 사이 허용 각도(도). 시선 허용은 3인칭 카메라와 총구 사이 시차까지 덮는다.
 // 퍼짐 크기 최소치는 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정하고,

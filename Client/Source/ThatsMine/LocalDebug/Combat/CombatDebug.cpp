@@ -39,13 +39,13 @@ void CombatDebug::DrawShot(UWorld* world, const FVector& body_start, const FShot
 	{
 		return;
 	}
-	DrawDebugLine(world, body_start, shot.muzzle_location, FColor::Cyan, false, 2.0f);
+	DrawDebugLine(world, body_start, shot.trace_start, FColor::Cyan, false, 2.0f);
 	DrawDebugLine(world, shot.trace_start, shot.trace_end, shot.has_hit ? FColor::Green : FColor::Red, false, 2.0f);
 	if (shot.has_hit)
 	{
 		DrawDebugSphere(world, shot.hit.ImpactPoint, 5.0f, 12, FColor::Yellow, false, 2.0f);
 		DrawDebugLine(world, shot.hit.ImpactPoint, shot.hit.ImpactPoint + shot.hit.ImpactNormal * 25.0f, FColor::Yellow, false, 2.0f);
-		UE_LOG(LogTemp, Log, TEXT("Shot hit: %s at %s, muzzle blocked: %d"), *GetNameSafe(shot.hit.GetActor()), *shot.hit.ImpactPoint.ToCompactString(), shot.is_muzzle_blocked);
+		UE_LOG(LogTemp, Log, TEXT("Shot hit: %s at %s, hand blocked: %d"), *GetNameSafe(shot.hit.GetActor()), *shot.hit.ImpactPoint.ToCompactString(), shot.is_hand_blocked);
 	}
 #endif
 }

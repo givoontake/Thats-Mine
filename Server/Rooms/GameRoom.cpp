@@ -1057,14 +1057,20 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 	AddStunGauge(shooter, *target, request_p);
 }
 
-// 인정한 발사 하나의 궤적을 쏜 사람을 뺀 플레이 중인 전원에게 보낸다. 탄이 끝난 곳은 쏜 사람 위치에서 사거리와 발사 시작점 여유 안이어야 한다.
+// 인정한 발사 하나의 궤적을 쏜 사람을 뺀 플레이 중인 전원에게 보낸다. 탄이 끝난 곳은 서버가 구한 오른손 위치에서 사거리와 발사 시작점 여유 안이어야 하고,
+// 몸 중심에서 오른손까지와 오른손에서 탄이 끝난 곳까지 막히지 않아야 한다.
 void GameRoom::ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& request_p)
 {
 	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(request_p.weapon);
 	if (!weapon || !weapon->is_hitscan || !shooter.HasMoveState() || !shooter.ClaimShotTrace(request_p.weapon)) return;
-	const float* location = shooter.GetMoveState().location;
-	const float distance = std::hypot(request_p.end[0] - location[0], request_p.end[1] - location[1], request_p.end[2] - location[2]);
+	const MOVE_STATE& shooter_state = shooter.GetMoveState();
+	const std::optional<DirectX::XMFLOAT3> hand = shooter.GetPose().GetBoneLocation(shooter_state, server_->GetHitboxData().GetShotOriginBone(), tick_time_ms_);
+	if (!hand) return;
+	const DirectX::XMFLOAT3 end(request_p.end[0], request_p.end[1], request_p.end[2]);
+	const float distance = std::hypot(end.x - hand->x, end.y - hand->y, end.z - hand->z);
 	if (!std::isfinite(distance) || distance > weapon->hitscan_distance + HIT_ORIGIN_MAX_OFFSET) return;
+	const DirectX::XMFLOAT3 body(shooter_state.location[0], shooter_state.location[1], shooter_state.location[2]);
+	if (IsShotPathBlocked(body, *hand) || IsShotPathBlocked(*hand, end)) return;
 	S2C_SHOT_TRACE_PACKET trace_p;
 	trace_p.header = { static_cast<std::uint16_t>(sizeof(trace_p)), S2C_SHOT_TRACE };
 	trace_p.player_id = shooter.GetSessionKey().player_id;
@@ -1101,8 +1107,17 @@ void GameRoom::AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKE
 	if (auto session = FindSession(target)) session->SendPacket(reinterpret_cast<char*>(&gauge_p), gauge_p.header.size);
 }
 
+// point가 location이 중심인 캐릭터 캡슐을 margin(cm)만큼 키운 안에 있는지 본다.
+static bool IsInsideCharacterCapsule(const DirectX::XMFLOAT3& point, const float location[3], float margin)
+{
+	const float half_segment = CHARACTER_CAPSULE_HALF_HEIGHT - CHARACTER_CAPSULE_RADIUS;
+	const float height = point.z - location[2];
+	const float axis_height = std::clamp(height, -half_segment, half_segment);
+	return std::hypot(point.x - location[0], point.y - location[1], height - axis_height) <= CHARACTER_CAPSULE_RADIUS + margin;
+}
+
 // 지연 보정이 없으므로 클라이언트 화면과 서버 위치 차이를 여유로 허용한다.
-// 총인지, 사거리 안인지, 시작점이 쏜 사람 근처인지 본 뒤, 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 지나가는지 검사한다.
+// 총인지, 사거리 안인지, 시작점이 서버가 쏜 사람 자세로 구한 오른손 근처(오른손이 막혀 몸 안쪽 점에서 쐈으면 쏜 사람 캡슐 안)이고 몸에서 시작점까지 막히지 않는지 본 뒤, 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 지나가는지 검사한다.
 // 마지막으로 발사 지점부터 히트박스에 닿은 곳까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않는지 본다.
 bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const
 {
@@ -1122,8 +1137,13 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	const MOVE_STATE& shooter_state = shooter.GetMoveState();
 	if (!CheckShotSpread(shooter, request_p, unit_direction)) return false;
 	const float shooter_speed = std::hypot(shooter_state.velocity[0], shooter_state.velocity[1], shooter_state.velocity[2]);
-	const float origin_offset = std::hypot(origin.x - shooter_state.location[0], origin.y - shooter_state.location[1], origin.z - shooter_state.location[2]);
-	if (!std::isfinite(origin_offset) || origin_offset > HIT_ORIGIN_MAX_OFFSET + shooter_speed * HIT_LATENCY_ALLOWANCE_SECONDS) return false;
+	const std::optional<DirectX::XMFLOAT3> hand = shooter.GetPose().GetBoneLocation(shooter_state, data.GetShotOriginBone(), tick_time_ms_);
+	if (!hand) return false;
+	const float latency_margin = shooter_speed * HIT_LATENCY_ALLOWANCE_SECONDS;
+	const float hand_offset = std::hypot(origin.x - hand->x, origin.y - hand->y, origin.z - hand->z);
+	if (!std::isfinite(hand_offset) || (hand_offset > HIT_ORIGIN_MAX_OFFSET + latency_margin && !IsInsideCharacterCapsule(origin, shooter_state.location, latency_margin))) return false;
+	const DirectX::XMFLOAT3 body(shooter_state.location[0], shooter_state.location[1], shooter_state.location[2]);
+	if (IsShotPathBlocked(body, origin)) return false;
 
 	const MOVE_STATE& target_state = target.GetMoveState();
 	const float target_speed = std::hypot(target_state.velocity[0], target_state.velocity[1], target_state.velocity[2]);
@@ -1143,6 +1163,22 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
 	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
 	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+}
+
+// start에서 end까지 랜드스케이프나 총알을 막는 배치물이 가로막는지 본다. 총구가 벽을 뚫고 나가 있으면 총구에서 맞은 곳까지는 막히지 않으므로 몸 중심에서 총구까지도 따로 본다.
+// 벽에 붙어 선 총구나 벽에 맞은 탄 끝을 막힘으로 보지 않게 양 끝을 HIT_OCCLUSION_MARGIN만큼 줄인다.
+bool GameRoom::IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const
+{
+	const DirectX::XMVECTOR start_v = DirectX::XMLoadFloat3(&start);
+	const DirectX::XMVECTOR end_v = DirectX::XMLoadFloat3(&end);
+	const float length = DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVectorSubtract(end_v, start_v)));
+	if (!std::isfinite(length) || length <= HIT_OCCLUSION_MARGIN * 2.0f) return false;
+	DirectX::XMFLOAT3 segment_start;
+	DirectX::XMFLOAT3 segment_end;
+	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorLerp(start_v, end_v, HIT_OCCLUSION_MARGIN / length));
+	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorLerp(start_v, end_v, 1.0f - HIT_OCCLUSION_MARGIN / length));
+	return server_->GetMapData().GetLandscape().IsSegmentBlockedByLandscape(segment_start, segment_end)
+		|| server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
 }
 
 // 명중에 쓴 발사의 탄 퍼짐을 확인한다. 쓴 퍼짐 크기는 그 발의 최소치와 무기 최대 사이여야 하고, 조준 방향은 이동 상태의 시선 방향에서 SHOT_AIM_TOLERANCE_DEGREES 안이어야 한다.

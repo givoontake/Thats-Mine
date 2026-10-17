@@ -16,15 +16,19 @@ struct FShotResult
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector muzzle_location = FVector::ZeroVector;
 
-	// 총구가 벽을 관통했으면 몸통 검사 시작점, 그 외에는 총구 위치다.
+	// 탄 광선 시작점. 오른손 위치이고, 오른손이 벽이나 다른 몸에 묻혔으면 몸통 검사 시작점이다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector trace_start = FVector::ZeroVector;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector trace_end = FVector::ZeroVector;
 
+	// 퍼짐을 적용한 발사 방향(단위 벡터). 시작점이 맞은 몸 안이면 맞은 곳이 시작점과 같아지므로 방향은 따로 둔다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
-	bool is_muzzle_blocked = false;
+	FVector shot_direction = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool is_hand_blocked = false;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	bool has_hit = false;

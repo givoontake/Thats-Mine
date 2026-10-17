@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include "hitbox_types.h"
 #include "game_packets.h"
@@ -30,4 +31,6 @@ public:
 	std::vector<BoneTransform> BuildBonePoses(const MOVE_STATE& move_state, long long time_ms) const;
 	// time_ms 시각의 히트박스를 월드 좌표로 만든다. 도형의 transform이 월드 기준이 된다.
 	std::vector<HitboxShape> BuildWorldHitboxes(const MOVE_STATE& move_state, long long time_ms) const;
+	// time_ms 시각에 bone 뼈가 있을 월드 위치. 자세를 만들 수 없으면 비어 있다.
+	std::optional<DirectX::XMFLOAT3> GetBoneLocation(const MOVE_STATE& move_state, int bone, long long time_ms) const;
 };
