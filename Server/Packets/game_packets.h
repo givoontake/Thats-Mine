@@ -145,14 +145,14 @@ struct S2C_GAME_START_PACKET {
 	std::uint32_t remaining_ms;
 };
 
-// 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 시작점(cm)·단위 방향·맞은 곳까지의 거리(cm)이고, 부위는 클라이언트가 판정한 값이다.
-// aim_direction은 퍼지기 전 조준 방향(단위 벡터), spread는 그 발에 쓴 퍼짐 크기(도)다. 서버는 같은 빗나감을 다시 계산해 광선 방향과 맞춰 본다(shot_spread.h).
+// 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 단위 방향·맞은 곳까지의 거리(cm)이고, 시작점은 서버가 이동 상태로 구한다(SHOT_ORIGIN_*). 부위는 클라이언트가 판정한 값이다.
+// camera는 발사할 때 카메라 위치(cm)다. aim_direction은 퍼지기 전 조준 방향(단위 벡터), spread는 그 발에 쓴 퍼짐 크기(도)다. 서버는 같은 빗나감을 다시 계산해 광선 방향과 맞춰 본다(shot_spread.h).
 struct C2S_HIT_PACKET {
 	PACKET_HEADER header;
 	int target_player_id;
 	std::uint8_t weapon;
 	std::uint8_t part;
-	float origin[3];
+	float camera[3];
 	float direction[3];
 	float distance;
 	float aim_direction[3];

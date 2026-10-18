@@ -16,7 +16,7 @@ struct FShotResult
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector muzzle_location = FVector::ZeroVector;
 
-	// 탄 광선 시작점. 오른손 위치이고, 오른손이 벽이나 다른 몸에 묻혔으면 몸통 검사 시작점이다.
+	// 탄 광선 시작점. 캡슐 안 오른쪽 어깨 높이 고정점이다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector trace_start = FVector::ZeroVector;
 
@@ -27,8 +27,9 @@ struct FShotResult
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector shot_direction = FVector::ZeroVector;
 
+	// 발사할 때 카메라 위치. 서버가 카메라가 있을 수 있는 자리인지, 맞은 곳이 보였는지 확인한다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
-	bool is_hand_blocked = false;
+	FVector camera_location = FVector::ZeroVector;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	bool has_hit = false;

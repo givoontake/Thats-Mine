@@ -321,18 +321,6 @@ std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_
 	return poses;
 }
 
-std::optional<XMFLOAT3> CharacterPose::GetBoneLocation(const MOVE_STATE& move_state, int bone, long long time_ms) const
-{
-	const std::vector<BoneTransform> poses = BuildBonePoses(move_state, time_ms);
-	if (bone < 0 || poses.size() <= static_cast<std::size_t>(bone)) return std::nullopt;
-	// 액터 기준 뼈 위치에 캐릭터 좌우 방향과 위치를 적용한다.
-	const XMVECTOR actor_position = XMLoadFloat3(&poses[bone].position);
-	const XMVECTOR yaw = XMQuaternionRotationNormal(g_XMIdentityR2, XMConvertToRadians(move_state.yaw));
-	XMFLOAT3 location;
-	XMStoreFloat3(&location, XMVectorAdd(XMVectorSet(move_state.location[0], move_state.location[1], move_state.location[2], 0.0f), XMVector3Rotate(actor_position, yaw)));
-	return location;
-}
-
 std::vector<HitboxShape> CharacterPose::BuildWorldHitboxes(const MOVE_STATE& move_state, long long time_ms) const
 {
 	const std::vector<BoneTransform> poses = BuildBonePoses(move_state, time_ms);

@@ -1057,20 +1057,24 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 	AddStunGauge(shooter, *target, request_p);
 }
 
-// 인정한 발사 하나의 궤적을 쏜 사람을 뺀 플레이 중인 전원에게 보낸다. 탄이 끝난 곳은 서버가 구한 오른손 위치에서 사거리와 발사 시작점 여유 안이어야 하고,
-// 몸 중심에서 오른손까지와 오른손에서 탄이 끝난 곳까지 막히지 않아야 한다.
+// 쏜 사람 이동 상태의 위치와 몸 방향으로 탄 광선 시작점(캡슐 안 어깨 고정점)을 구한다. 클라이언트도 같은 식으로 구한다.
+static DirectX::XMFLOAT3 GetShotOrigin(const MOVE_STATE& move_state)
+{
+	const float yaw = DirectX::XMConvertToRadians(move_state.yaw);
+	const float cos_yaw = std::cos(yaw);
+	const float sin_yaw = std::sin(yaw);
+	return { move_state.location[0] + SHOT_ORIGIN_FORWARD * cos_yaw - SHOT_ORIGIN_RIGHT * sin_yaw, move_state.location[1] + SHOT_ORIGIN_FORWARD * sin_yaw + SHOT_ORIGIN_RIGHT * cos_yaw, move_state.location[2] + SHOT_ORIGIN_UP };
+}
+
+// 인정한 발사 하나의 궤적을 쏜 사람을 뺀 플레이 중인 전원에게 보낸다. 탄이 끝난 곳은 서버가 구한 탄 시작점에서 사거리 안이어야 하고, 그 사이가 막히지 않아야 한다.
 void GameRoom::ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& request_p)
 {
 	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(request_p.weapon);
 	if (!weapon || !weapon->is_hitscan || !shooter.HasMoveState() || !shooter.ClaimShotTrace(request_p.weapon)) return;
-	const MOVE_STATE& shooter_state = shooter.GetMoveState();
-	const std::optional<DirectX::XMFLOAT3> hand = shooter.GetPose().GetBoneLocation(shooter_state, server_->GetHitboxData().GetShotOriginBone(), tick_time_ms_);
-	if (!hand) return;
+	const DirectX::XMFLOAT3 origin = GetShotOrigin(shooter.GetMoveState());
 	const DirectX::XMFLOAT3 end(request_p.end[0], request_p.end[1], request_p.end[2]);
-	const float distance = std::hypot(end.x - hand->x, end.y - hand->y, end.z - hand->z);
-	if (!std::isfinite(distance) || distance > weapon->hitscan_distance + HIT_ORIGIN_MAX_OFFSET) return;
-	const DirectX::XMFLOAT3 body(shooter_state.location[0], shooter_state.location[1], shooter_state.location[2]);
-	if (IsShotPathBlocked(body, *hand) || IsShotPathBlocked(*hand, end)) return;
+	const float distance = std::hypot(end.x - origin.x, end.y - origin.y, end.z - origin.z);
+	if (!std::isfinite(distance) || distance > weapon->hitscan_distance + SHOT_DISTANCE_EPSILON || IsShotPathBlocked(origin, end)) return;
 	S2C_SHOT_TRACE_PACKET trace_p;
 	trace_p.header = { static_cast<std::uint16_t>(sizeof(trace_p)), S2C_SHOT_TRACE };
 	trace_p.player_id = shooter.GetSessionKey().player_id;
@@ -1117,8 +1121,8 @@ static bool IsInsideCharacterCapsule(const DirectX::XMFLOAT3& point, const float
 }
 
 // 지연 보정이 없으므로 클라이언트 화면과 서버 위치 차이를 여유로 허용한다.
-// 총인지, 사거리 안인지, 시작점이 서버가 쏜 사람 자세로 구한 오른손 근처(오른손이 막혀 몸 안쪽 점에서 쐈으면 쏜 사람 캡슐 안)이고 몸에서 시작점까지 막히지 않는지 본 뒤, 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 지나가는지 검사한다.
-// 마지막으로 발사 지점부터 히트박스에 닿은 곳까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않는지 본다.
+// 총인지, 사거리 안인지, 탄 퍼짐이 맞는지 본 뒤, 서버가 구한 시작점에서 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 보낸 부위를 지나가는지 검사한다.
+// 마지막으로 시작점부터 히트박스에 닿은 곳까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않는지, 맞은 곳이 쏜 사람 카메라에서 보였는지 본다.
 bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const
 {
 	const HitboxData& data = server_->GetHitboxData();
@@ -1132,18 +1136,8 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	if (!std::isfinite(direction_length) || direction_length < 0.5f) return false;
 	DirectX::XMFLOAT3 unit_direction;
 	DirectX::XMStoreFloat3(&unit_direction, DirectX::XMVectorScale(direction, 1.0f / direction_length));
-	const DirectX::XMFLOAT3 origin(request_p.origin[0], request_p.origin[1], request_p.origin[2]);
-
-	const MOVE_STATE& shooter_state = shooter.GetMoveState();
 	if (!CheckShotSpread(shooter, request_p, unit_direction)) return false;
-	const float shooter_speed = std::hypot(shooter_state.velocity[0], shooter_state.velocity[1], shooter_state.velocity[2]);
-	const std::optional<DirectX::XMFLOAT3> hand = shooter.GetPose().GetBoneLocation(shooter_state, data.GetShotOriginBone(), tick_time_ms_);
-	if (!hand) return false;
-	const float latency_margin = shooter_speed * HIT_LATENCY_ALLOWANCE_SECONDS;
-	const float hand_offset = std::hypot(origin.x - hand->x, origin.y - hand->y, origin.z - hand->z);
-	if (!std::isfinite(hand_offset) || (hand_offset > HIT_ORIGIN_MAX_OFFSET + latency_margin && !IsInsideCharacterCapsule(origin, shooter_state.location, latency_margin))) return false;
-	const DirectX::XMFLOAT3 body(shooter_state.location[0], shooter_state.location[1], shooter_state.location[2]);
-	if (IsShotPathBlocked(body, origin)) return false;
+	const DirectX::XMFLOAT3 origin = GetShotOrigin(shooter.GetMoveState());
 
 	const MOVE_STATE& target_state = target.GetMoveState();
 	const float target_speed = std::hypot(target_state.velocity[0], target_state.velocity[1], target_state.velocity[2]);
@@ -1151,22 +1145,81 @@ bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_H
 	const float max_distance = request_p.distance + margin;
 	const DirectX::XMFLOAT3 location(target_state.location[0], target_state.location[1], target_state.location[2]);
 	if (!IsRayNearCharacter(origin, unit_direction, max_distance, location, target_state.yaw, data.GetBroadphaseCapsule(), margin)) return false;
-	const HitboxRayHit hit = RaycastHitboxes(origin, unit_direction, max_distance, target.GetPose().BuildWorldHitboxes(target_state, tick_time_ms_), margin);
+	// 클라이언트가 보낸 부위의 도형만 검사해, 광선이 그 부위를 지나지 않으면 인정하지 않는다.
+	std::vector<HitboxShape> shapes = target.GetPose().BuildWorldHitboxes(target_state, tick_time_ms_);
+	std::erase_if(shapes, [&](const HitboxShape& shape) { return shape.part != static_cast<HitboxPart>(request_p.part); });
+	const HitboxRayHit hit = RaycastHitboxes(origin, unit_direction, max_distance, shapes, margin);
 	if (!hit.has_hit) return false;
-	if (hit.distance <= HIT_OCCLUSION_MARGIN * 2.0f) return true;
-	const DirectX::XMVECTOR origin_v = DirectX::XMLoadFloat3(&origin);
-	const DirectX::XMVECTOR direction_v = DirectX::XMLoadFloat3(&unit_direction);
-	DirectX::XMFLOAT3 segment_start;
-	DirectX::XMFLOAT3 segment_end;
-	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
-	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, hit.distance - HIT_OCCLUSION_MARGIN)));
-	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
-	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
-	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+	DirectX::XMFLOAT3 hit_point;
+	DirectX::XMStoreFloat3(&hit_point, DirectX::XMVectorAdd(DirectX::XMLoadFloat3(&origin), DirectX::XMVectorScale(DirectX::XMLoadFloat3(&unit_direction), hit.distance)));
+	return !IsShotPathBlocked(origin, hit_point) && CheckShotCamera(shooter, DirectX::XMFLOAT3(request_p.camera[0], request_p.camera[1], request_p.camera[2]), hit_point);
 }
 
-// start에서 end까지 랜드스케이프나 총알을 막는 배치물이 가로막는지 본다. 총구가 벽을 뚫고 나가 있으면 총구에서 맞은 곳까지는 막히지 않으므로 몸 중심에서 총구까지도 따로 본다.
-// 벽에 붙어 선 총구나 벽에 맞은 탄 끝을 막힘으로 보지 않게 양 끝을 HIT_OCCLUSION_MARGIN만큼 줄인다.
+// 받은 카메라 위치가 쏜 사람 카메라가 있을 수 있는 자리인지, 그 카메라에서 맞은 곳이 보였는지 본다.
+// 조준 카메라는 캡슐 기준 고정 위치에서 위아래 흔들림 안이어야 한다.
+// 3인칭 카메라는 팔 끝(땅 가까이면 팔을 올린 끝)이어야 하고, 그보다 당겨졌으면 카메라 충돌 구가 지형·배치물·다른 플레이어에 닿아 있으면서 팔 시작점에서 카메라까지는 막히지 않아야 한다(팔을 따라가다 처음 닿은 곳).
+// 3인칭 카메라 방향은 카메라 위치에서 팔 모양으로 거꾸로 구하고, 맞은 곳이 그 방향에서 CAMERA_VIEW_CONE_DEGREES 안이어야 한다. 마지막으로 카메라에서 맞은 곳까지 막히지 않아야 한다.
+bool GameRoom::CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& camera, const DirectX::XMFLOAT3& hit_point) const
+{
+	if (!std::isfinite(camera.x) || !std::isfinite(camera.y) || !std::isfinite(camera.z)) return false;
+	const MOVE_STATE& state = shooter.GetMoveState();
+	const float yaw = DirectX::XMConvertToRadians(state.yaw);
+	const float tolerance = CAMERA_POSITION_TOLERANCE + std::hypot(state.velocity[0], state.velocity[1], state.velocity[2]) * CAMERA_FRAME_ALLOWANCE_SECONDS;
+	if (state.is_aiming) {
+		const float horizontal = std::hypot(camera.x - (state.location[0] + AIM_CAMERA_FORWARD * std::cos(yaw)), camera.y - (state.location[1] + AIM_CAMERA_FORWARD * std::sin(yaw)));
+		if (horizontal > tolerance || std::abs(camera.z - (state.location[2] + AIM_CAMERA_UP)) > tolerance + AIM_CAMERA_BOB_RANGE) return false;
+		return !IsShotPathBlocked(camera, hit_point);
+	}
+
+	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
+	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
+	const float arm_length = std::hypot(CAMERA_ARM_LENGTH, CAMERA_SOCKET_RIGHT, CAMERA_SOCKET_UP);
+	// 팔 시작점 높이가 pivot_z일 때 카메라가 팔 위에 있을 수 있는 자리이고 맞은 곳이 화면 안이었는지 본다.
+	const auto is_arm_camera = [&](float pivot_z)
+	{
+		const DirectX::XMFLOAT3 pivot(state.location[0], state.location[1], pivot_z);
+		const float offset[3] = { camera.x - pivot.x, camera.y - pivot.y, camera.z - pivot.z };
+		const float distance = std::hypot(offset[0], offset[1], offset[2]);
+		if (distance > arm_length + tolerance) return false;
+		if (distance < arm_length - tolerance) {
+			const float probe = CAMERA_PROBE_RADIUS + tolerance;
+			DirectX::XMFLOAT3 probe_end;
+			DirectX::XMStoreFloat3(&probe_end, DirectX::XMVectorAdd(DirectX::XMLoadFloat3(&camera), DirectX::XMVectorScale(DirectX::XMVectorSet(offset[0], offset[1], offset[2], 0.0f), probe / std::max(distance, 1.0f))));
+			const std::optional<float> ground = landscape.GetGroundHeight(camera.x, camera.y);
+			bool is_touching = (ground && camera.z - probe <= *ground) || landscape.IsSegmentBlockedByLandscape(camera, probe_end)
+				|| collision_objects.IsCapsuleOverlappingObjects(camera, probe, probe, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN, placed_objects_);
+			for (const auto& room_player : room_players_) {
+				if (&room_player == &shooter || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
+				const MOVE_STATE& other = room_player.GetMoveState();
+				is_touching = is_touching || IsInsideCharacterCapsule(camera, other.location, probe + std::hypot(other.velocity[0], other.velocity[1], other.velocity[2]) * HIT_LATENCY_ALLOWANCE_SECONDS);
+			}
+			if (!is_touching || landscape.IsSegmentBlockedByLandscape(pivot, camera) || collision_objects.IsSegmentBlockedByObjects(pivot, camera, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN, placed_objects_)) return false;
+		}
+		// 팔은 시선 반대 방향 팔 길이와 시선 기준 오른쪽·위 오프셋을 더한 모양이다. 높이로 상하 각도를, 수평 방향으로 좌우 각도를 구한다.
+		// 팔 시작점 가까이 당겨졌으면 방향을 구할 수 없으므로 보지 않는다.
+		if (distance < arm_length * 0.2f) return true;
+		const float arm_up = offset[2] * arm_length / distance;
+		const float pitch = std::acos(std::clamp(arm_up / std::hypot(CAMERA_ARM_LENGTH, CAMERA_SOCKET_UP), -1.0f, 1.0f)) - std::atan2(CAMERA_ARM_LENGTH, CAMERA_SOCKET_UP);
+		const float arm_back = -CAMERA_ARM_LENGTH * std::cos(pitch) - CAMERA_SOCKET_UP * std::sin(pitch);
+		const float arm_yaw = std::atan2(offset[1], offset[0]) - std::atan2(CAMERA_SOCKET_RIGHT, arm_back);
+		const float view_pitch = pitch - DirectX::XMConvertToRadians(CAMERA_PITCH_DOWN_DEGREES);
+		const DirectX::XMVECTOR forward = DirectX::XMVectorSet(std::cos(view_pitch) * std::cos(arm_yaw), std::cos(view_pitch) * std::sin(arm_yaw), std::sin(view_pitch), 0.0f);
+		const DirectX::XMVECTOR to_hit = DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&hit_point), DirectX::XMLoadFloat3(&camera)));
+		return DirectX::XMVectorGetX(DirectX::XMVector3Dot(forward, to_hit)) >= std::cos(DirectX::XMConvertToRadians(CAMERA_VIEW_CONE_DEGREES));
+	};
+	if (is_arm_camera(state.location[2])) return !IsShotPathBlocked(camera, hit_point);
+	// 올려다보면 팔 끝이 땅 가까이 내려가 팔 전체를 올리고, 카메라는 땅에서 CAMERA_GROUND_CLEARANCE 높이에 온다.
+	// 올리지 않은 팔로 맞지 않으면 팔 끝이 카메라에 오도록 올린 높이를 구하고, 카메라 바로 아래 그 높이 안에 땅이나 배치물이 있을 때만 올린 팔로 다시 본다.
+	const float horizontal = std::hypot(camera.x - state.location[0], camera.y - state.location[1]);
+	if (horizontal > arm_length) return false;
+	const float raise = camera.z - state.location[2] + std::sqrt(arm_length * arm_length - horizontal * horizontal);
+	const DirectX::XMFLOAT3 below(camera.x, camera.y, camera.z - CAMERA_GROUND_CLEARANCE - tolerance);
+	if (raise <= 0.0f || (!landscape.IsSegmentBlockedByLandscape(camera, below) && !collision_objects.IsSegmentBlockedByObjects(camera, below, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN, placed_objects_))) return false;
+	return is_arm_camera(state.location[2] + raise) && !IsShotPathBlocked(camera, hit_point);
+}
+
+// start에서 end까지 랜드스케이프나 총알을 막는 배치물이 가로막는지 본다.
+// 벽에 붙은 시작점이나 벽에 맞은 탄 끝을 막힘으로 보지 않게 양 끝을 HIT_OCCLUSION_MARGIN만큼 줄인다.
 bool GameRoom::IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const
 {
 	const DirectX::XMVECTOR start_v = DirectX::XMLoadFloat3(&start);
@@ -1181,7 +1234,7 @@ bool GameRoom::IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::
 		|| server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
 }
 
-// 명중에 쓴 발사의 탄 퍼짐을 확인한다. 쓴 퍼짐 크기는 그 발의 최소치와 무기 최대 사이여야 하고, 조준 방향은 이동 상태의 시선 방향에서 SHOT_AIM_TOLERANCE_DEGREES 안이어야 한다.
+// 명중에 쓴 발사의 탄 퍼짐을 확인한다. 쓴 퍼짐 크기는 그 발의 최소치와 무기 최대 사이여야 한다.
 // 조준 방향에 서버가 (시드, 아이디, 무기, 발사 번호)로 다시 계산한 빗나감을 적용한 방향이 받은 광선 방향과 같아야 한다.
 bool GameRoom::CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& request_p, const DirectX::XMFLOAT3& direction) const
 {
@@ -1193,11 +1246,6 @@ bool GameRoom::CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& requ
 	if (!std::isfinite(aim_length) || aim_length < 0.5f) return false;
 	DirectX::XMFLOAT3 unit_aim;
 	DirectX::XMStoreFloat3(&unit_aim, DirectX::XMVectorScale(aim, 1.0f / aim_length));
-	const MOVE_STATE& state = shooter.GetMoveState();
-	const float yaw = DirectX::XMConvertToRadians(state.yaw);
-	const float pitch = DirectX::XMConvertToRadians(state.view_pitch);
-	const float view_dot = unit_aim.x * std::cos(pitch) * std::cos(yaw) + unit_aim.y * std::cos(pitch) * std::sin(yaw) + unit_aim.z * std::sin(pitch);
-	if (view_dot < std::cos(DirectX::XMConvertToRadians(SHOT_AIM_TOLERANCE_DEGREES))) return false;
 	const std::uint64_t hash = GetShotSpreadHash(shot_seed_, shooter.GetSessionKey().player_id, request_p.weapon, ammo->last_shot_index);
 	const ShotSpreadDirection expected = ApplyShotSpread(unit_aim.x, unit_aim.y, unit_aim.z, request_p.spread, hash);
 	const float shot_dot = expected.x * direction.x + expected.y * direction.y + expected.z * direction.z;

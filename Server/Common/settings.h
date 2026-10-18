@@ -120,17 +120,38 @@ constexpr float GROUND_CHECK_RADIUS_MARGIN = 10.0f;
 // 명중 검증. 지연 보정이 없어 클라이언트 화면과 서버의 위치 차이를 여유로 허용한다.
 constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)
 constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여유에 더하는 지연 허용 시간(초)
-// 탄 광선은 이 뼈(오른손) 위치에서 시작한다. 총구는 화염·궤적 표시에만 쓴다. 클라이언트와 서버가 같은 뼈 이름을 쓴다.
-inline constexpr char SHOT_ORIGIN_BONE[] = "hand_r";
-// 발사 시작점이 서버가 쏜 사람 자세로 구한 오른손 위치에서 벗어날 수 있는 기본 거리(cm). 손이 막혀 몸 안쪽 점에서 쏘면 쏜 사람 캡슐 안이어야 한다.
-constexpr float HIT_ORIGIN_MAX_OFFSET = 30.0f;
-// 탄 퍼짐 검증(shot_spread.h). 다시 계산한 탄 방향과 받은 광선 방향 사이 허용 각도(도), 퍼짐 크기 반올림 오차(도),
-// 조준 방향과 이동 상태의 시선 방향 사이 허용 각도(도). 시선 허용은 3인칭 카메라와 총구 사이 시차까지 덮는다.
+// 탄 광선은 캡슐 안 오른쪽 어깨 높이의 고정점에서 시작한다. 캐릭터 위치(캡슐 중심)에서 몸 방향 기준 앞·오른쪽·위로 이만큼(cm) 옮긴 점이다.
+// 캡슐은 벽에 파고들지 못하므로 시작점이 벽 너머에 있을 수 없다. 총구는 화염·궤적 표시에만 쓴다. 클라이언트와 서버가 같은 식으로 구한다.
+constexpr float SHOT_ORIGIN_FORWARD = 10.0f;
+constexpr float SHOT_ORIGIN_RIGHT = 12.0f;
+constexpr float SHOT_ORIGIN_UP = -20.0f;
+// 탄이 끝난 곳까지 거리와 사거리를 비교할 때 허용하는 반올림 오차(cm)
+constexpr float SHOT_DISTANCE_EPSILON = 1.0f;
+
+// 카메라. 클라이언트 카메라 설정과 서버 명중 검증이 같은 값을 쓴다.
+// 3인칭 카메라 팔은 캡슐 중심에서 시선 반대 방향으로 팔 길이만큼, 시선 기준 오른쪽·위로 어깨 오프셋만큼 간 곳이 끝이고, 벽에 막히면 막힌 곳까지 당겨진다.
+// 카메라 충돌 구 반지름, 팔 끝이 땅에서 떨어져 있어야 하는 높이(올려다볼 때 팔 전체를 올린다), 팔 방향보다 아래로 숙인 카메라 각도(도)다.
+constexpr float CAMERA_ARM_LENGTH = 300.0f;
+constexpr float CAMERA_SOCKET_RIGHT = 50.0f;
+constexpr float CAMERA_SOCKET_UP = 100.0f;
+constexpr float CAMERA_PROBE_RADIUS = 12.0f;
+constexpr float CAMERA_GROUND_CLEARANCE = 100.0f;
+constexpr float CAMERA_PITCH_DOWN_DEGREES = 8.0f;
+// 조준 카메라는 캡슐 중심에서 몸 방향 앞·위로 이만큼(cm) 간 곳에 있고, 걸음마다 위아래로 AIM_CAMERA_BOB_RANGE까지 흔들린다.
+constexpr float AIM_CAMERA_FORWARD = 66.9f;
+constexpr float AIM_CAMERA_UP = 18.7f;
+constexpr float AIM_CAMERA_BOB_RANGE = 30.0f;
+// 명중 카메라 검증. 받은 카메라 위치가 서버가 계산한 자리에서 이만큼(cm)과 "속도 × CAMERA_FRAME_ALLOWANCE_SECONDS"까지 벗어나도 된다.
+// 카메라는 이전 프레임에 자리를 정하므로 그만큼 움직인 몫을 봐준다. 3인칭 카메라에서 맞은 곳은 카메라 방향에서 CAMERA_VIEW_CONE_DEGREES 안이어야 한다.
+constexpr float CAMERA_POSITION_TOLERANCE = 15.0f;
+constexpr float CAMERA_FRAME_ALLOWANCE_SECONDS = 0.05f;
+constexpr float CAMERA_VIEW_CONE_DEGREES = 45.0f;
+
+// 탄 퍼짐 검증(shot_spread.h). 다시 계산한 탄 방향과 받은 광선 방향 사이 허용 각도(도), 퍼짐 크기 반올림 오차(도).
 // 퍼짐 크기 최소치는 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정하고,
 // 공중이나 조준하지 않은 상태는 이동 상태에서 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 퍼짐을 요구한다. 상태가 막 바뀐 것은 지연으로 보고 봐준다.
 constexpr float SHOT_SPREAD_DIRECTION_TOLERANCE_DEGREES = 0.1f;
 constexpr float SHOT_SPREAD_EPSILON_DEGREES = 0.01f;
-constexpr float SHOT_AIM_TOLERANCE_DEGREES = 45.0f;
 constexpr float SHOT_SPREAD_TIME_ALLOWANCE_SECONDS = 0.2f;
 constexpr long long SHOT_SPREAD_STATE_ALLOWANCE_MS = 300;
 constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.

@@ -67,8 +67,6 @@
 
 // 조준 카메라 출렁임의 기준 머리 높이가 실제 머리 높이를 따라가는 속도. 걸음마다의 출렁임보다 충분히 느려야 출렁임이 남는다.
 static constexpr float AIM_HEAD_HEIGHT_INTERP_SPEED = 1.0f;
-// 3인칭 카메라가 잔디에 묻히지 않도록 땅에서 띄워 두는 최소 높이
-static constexpr double CAMERA_GROUND_CLEARANCE = 100.0;
 
 // 기절 게이지를 화면 아래 끝에서 띄우는 거리
 static constexpr float STUN_GAUGE_BOTTOM_MARGIN = 48.0f;
@@ -864,7 +862,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	const uint64 spread_hash = GetShotSpreadHash(movement_sync ? movement_sync->GetShotSeed() : 0, static_cast<int32>(GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey()), static_cast<uint8>(current_weapon_), ammo->shot_count++);
 	ammo->spread_heat = AddShotHeat(spread_settings, heat);
 	ammo->spread_time = now;
-	// 탄은 오른손에서 나가고, 총구는 화염·궤적 표시에만 쓴다.
+	// 총구는 화염·궤적 표시에만 쓴다.
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
 	const float distance = FMath::Max(1.0f, settings.distance);
 	FCollisionQueryParams query(SCENE_QUERY_STAT(HitscanShot), false, this);
@@ -877,16 +875,11 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		}
 	}
 
-	// 오른손이 벽이나 다른 플레이어 몸에 묻혔으면 검사 시작점을 충돌 캡슐 안쪽으로 옮긴다.
-	const UCapsuleComponent* capsule = GetCapsuleComponent();
-	const float max_height = FMath::Max(0.0f, capsule->GetScaledCapsuleHalfHeight() - capsule->GetScaledCapsuleRadius());
-	const FVector body_start = capsule->GetComponentLocation() + capsule->GetUpVector() * FMath::Clamp(settings.body_height, -max_height, max_height);
-	const FVector hand_location = GetMesh()->GetBoneLocation(FName(SHOT_ORIGIN_BONE));
-	FHitResult hand_hit;
-	shot.is_hand_blocked = world->SweepSingleByChannel(hand_hit, body_start, hand_location, FQuat::Identity, settings.trace_channel, FCollisionShape::MakeSphere(1.0f), query);
-	shot.trace_start = shot.is_hand_blocked ? body_start : hand_location;
+	// 탄은 캡슐 안 오른쪽 어깨 높이 고정점에서 나간다. 서버도 이동 상태의 위치와 몸 방향으로 같은 점을 구한다.
+	shot.trace_start = GetActorLocation() + FRotator(0.0, GetActorRotation().Yaw, 0.0).RotateVector(FVector(SHOT_ORIGIN_FORWARD, SHOT_ORIGIN_RIGHT, SHOT_ORIGIN_UP));
 	const FVector view_direction = camera->GetForwardVector();
 	const FVector view_location = camera->GetComponentLocation();
+	shot.camera_location = view_location;
 	// 3인칭 카메라와 캐릭터 사이의 물체 때문에 뒤로 발사하지 않게 한다.
 	const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(shot.trace_start - view_location, view_direction));
 	const FVector aim_end = aim_start + view_direction * distance;
@@ -904,7 +897,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	}
 
 #if WITH_LOCAL_COMBAT_DEBUG
-	CombatDebug::DrawShot(world, body_start, shot);
+	CombatDebug::DrawShot(world, shot);
 #endif
 
 	if (ammo->rounds == 0 && shot.weapon != EWeaponType::PISTOL)

@@ -49,9 +49,6 @@ struct FHitscanSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled"))
 	TSoftObjectPtr<USoundBase> reload_sound;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled", Units = "cm"))
-	float body_height = 30.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitscan", meta = (EditCondition = "is_enabled"))
 	TEnumAsByte<ECollisionChannel> trace_channel = ECC_Visibility;
 };

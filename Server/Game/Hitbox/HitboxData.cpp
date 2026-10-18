@@ -396,8 +396,7 @@ bool HitboxData::Load(const std::string& file_path)
 	chest_bone_ = FindBone("chest");
 	head_bone_ = FindBone("head");
 	upperarm_r_bone_ = FindBone("upperarm_r");
-	shot_origin_bone_ = FindBone(SHOT_ORIGIN_BONE);
-	const bool has_bones = hips_bone_ >= 0 && spine_bone_ >= 0 && chest_bone_ >= 0 && head_bone_ >= 0 && upperarm_r_bone_ >= 0 && shot_origin_bone_ >= 0;
+	const bool has_bones = hips_bone_ >= 0 && spine_bone_ >= 0 && chest_bone_ >= 0 && head_bone_ >= 0 && upperarm_r_bone_ >= 0;
 	// 다른 항목이 가리키는 트랙·뼈 번호가 범위 안인지 확인한다.
 	const auto is_track = [this](int track) { return track >= 0 && track < static_cast<int>(tracks_.size()) && tracks_[track].key_count > 0; };
 	bool has_valid_indices = is_track(jump_track_);

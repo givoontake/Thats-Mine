@@ -300,7 +300,7 @@ void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 	packet.part = static_cast<uint8>(GetHitboxPart(shot.hit.BoneName));
 	for (int32 axis = 0; axis < 3; ++axis)
 	{
-		packet.origin[axis] = static_cast<float>(shot.trace_start[axis]);
+		packet.camera[axis] = static_cast<float>(shot.camera_location[axis]);
 		packet.direction[axis] = static_cast<float>(shot.shot_direction[axis]);
 	}
 	packet.distance = static_cast<float>(ray.Size());
