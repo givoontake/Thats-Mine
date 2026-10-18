@@ -198,9 +198,8 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	state.velocity = character->GetVelocity();
 	state.yaw = character->GetActorRotation().Yaw;
 	state.view_pitch = FRotator::NormalizeAxis(character->GetViewRotation().Pitch);
-	// 이동 계산에 들어간 가속 방향을 몸 기준으로 바꿔 이동 입력으로 쓴다.
-	const FVector input = character->GetActorQuat().UnrotateVector(movement->GetCurrentAcceleration() / FMath::Max(movement->GetMaxAcceleration(), UE_KINDA_SMALL_NUMBER));
-	state.move_input = FVector2D(input.Y, input.X);
+	// 이번 프레임에 넣은 이동 키 입력을 보낸다. 서버 속도 검증과 원격 이동 계산이 키 입력 기준으로 앞뒤를 나눈다.
+	state.move_input = character->GetMovementInput();
 	// 공중이면 수직 속도로 상승과 하강을 나눈다. 정점을 지나거나 천장에 부딪혀 위로 가는 속도가 없어지면 하강이 되어 그 순간 바로 보낸다.
 	state.air_phase = !movement->IsFalling() ? AirPhase::GROUND : state.velocity.Z > 0.0 ? AirPhase::RISING : AirPhase::FALLING;
 	state.is_aiming = character->IsAiming();

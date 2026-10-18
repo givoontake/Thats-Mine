@@ -440,6 +440,13 @@ void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
 	}
 	AddMovementInput(GetActorForwardVector(), movement.Y);
 	AddMovementInput(GetActorRightVector(), movement.X);
+	movement_input_ = movement;
+	movement_input_frame_ = GFrameCounter;
+}
+
+FVector2D APlayerCharacter::GetMovementInput() const
+{
+	return movement_input_frame_ == GFrameCounter ? movement_input_ : FVector2D::ZeroVector;
 }
 
 void APlayerCharacter::CalcCamera(float delta_time, FMinimalViewInfo& out_result)

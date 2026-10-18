@@ -57,6 +57,8 @@ public:
 
 	// 이동 입력(X 오른쪽, Y 앞쪽)을 이동 계산에 넣는다. 다른 플레이어는 받은 입력으로 호출한다.
 	void ApplyMovementInput(const FVector2D& movement);
+	// 이번 프레임에 넣은 이동 키 입력(좌우, 앞뒤). 이번 프레임에 넣지 않았으면 0이다.
+	FVector2D GetMovementInput() const;
 
 	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
 	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
@@ -215,6 +217,9 @@ private:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|State", meta = (AllowPrivateAccess = "true"))
 	bool is_aiming_ = false;
+	// 마지막으로 넣은 이동 키 입력과 그 프레임 번호
+	FVector2D movement_input_ = FVector2D::ZeroVector;
+	uint64 movement_input_frame_ = 0;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|State", meta = (AllowPrivateAccess = "true"))
 	bool is_action_locked_ = false;
