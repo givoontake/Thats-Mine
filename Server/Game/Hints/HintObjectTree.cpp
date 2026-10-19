@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -21,24 +22,28 @@ bool HintObjectTree::Build(const MapData& map)
 	points_.clear();
 	const CollisionObjectData& collision_objects = map.GetCollisionObjects();
 	const DecorObjectData& decor_objects = map.GetDecorObjects();
+	// 같은 종류에 이름이 여럿일 수 있어(클라이언트 핑용 메시 이름과 맵 데이터의 폴리지 종류 이름), 종류마다 하나라도 찾으면 된다.
+	std::array<bool, static_cast<std::size_t>(HintObjectKind::COUNT)> is_kind_listed{};
+	std::array<bool, static_cast<std::size_t>(HintObjectKind::COUNT)> is_kind_found{};
 	for (const HintMesh& mesh : HINT_MESHES) {
+		is_kind_listed[static_cast<std::size_t>(mesh.kind)] = true;
 		// 충돌 있는 물체(바위·나무)는 충돌 모양 원본에서, 충돌 없는 물체(대나무·데이지·버섯)는 충돌 없는 물체 메시에서 찾는다.
 		if (const TerrainSource* source = collision_objects.FindSource(mesh.name)) {
+			is_kind_found[static_cast<std::size_t>(mesh.kind)] = true;
 			for (std::uint32_t index = source->first_object; index < source->first_object + source->object_count; ++index) {
 				const DirectX::XMFLOAT3 location = collision_objects.GetObjectLocation(index);
 				if (IsInsideMap(location.x, location.y)) points_.push_back({ location.x, location.y, location.z, mesh.kind });
 			}
 		}
 		else if (const DecorMesh* decor_mesh = decor_objects.FindMesh(mesh.name)) {
+			is_kind_found[static_cast<std::size_t>(mesh.kind)] = true;
 			for (std::uint32_t index = decor_mesh->first_location; index < decor_mesh->first_location + decor_mesh->location_count; ++index) {
 				const DirectX::XMFLOAT3& location = decor_objects.GetLocations()[index];
 				if (IsInsideMap(location.x, location.y)) points_.push_back({ location.x, location.y, location.z, mesh.kind });
 			}
 		}
-		else {
-			return false;
-		}
 	}
+	if (is_kind_listed != is_kind_found) return false;
 	points_.shrink_to_fit();
 	BuildRange(0, points_.size(), 0);
 	is_loaded_ = true;

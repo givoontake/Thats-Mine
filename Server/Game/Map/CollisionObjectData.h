@@ -5,7 +5,7 @@
 #include "terrain_types.h"
 #include "tower_types.h"
 
-class MapFileReader;
+struct MapMeshFile;
 
 // 게임 맵의 충돌 배치물(건물·나무·바위·경계 볼륨)을 갖고 선분 막힘과 캡슐 겹침을 답한다.
 // 게임마다 놓이는 자리가 다른 탑은 모든 자리를 후보 배치물로 따로 만들어 두고, 검사할 때는 방이 넘긴 놓인 후보 번호 목록만 본다.
@@ -35,9 +35,9 @@ class CollisionObjectData
 	bool IsCapsuleOverlappingObject(const TerrainObject& object, DirectX::FXMVECTOR bottom, DirectX::FXMVECTOR top, float radius, const DirectX::XMFLOAT3& min, const DirectX::XMFLOAT3& max) const;
 
 public:
-	// 맵 파일의 충돌 모양 원본과 배치 부분을 읽는다.
+	// 맵 폴더 항목들의 충돌 모양 파일과 배치 파일의 충돌 배치 부분을 읽는다. 항목 순서가 원본 순서다.
 	// tower_candidates: 탑 후보마다 탑 바닥 가운데 위치. 후보마다 종류별 탑과 기초 배치를 넣는다.
-	bool Load(MapFileReader& reader, const std::vector<DirectX::XMFLOAT3>& tower_candidates);
+	bool Load(const std::vector<MapMeshFile>& meshes, const std::vector<DirectX::XMFLOAT3>& tower_candidates);
 	bool IsLoaded() const { return is_loaded_; }
 	// 이름이 name인 충돌 모양 원본. 원본의 first_object, object_count가 그 메시 배치 구간이다. 없으면 nullptr이다.
 	const TerrainSource* FindSource(const std::string& name) const;

@@ -19,6 +19,16 @@ void MapFileReader::Read(void* destination, size_t size)
 	offset_ += size;
 }
 
+bool MapFileReader::ReadHeader(const char* magic, std::uint32_t version)
+{
+	char file_magic[4] = {};
+	std::uint32_t file_version = 0;
+	Read(file_magic, sizeof(file_magic));
+	ReadValue(file_version);
+	if (std::memcmp(file_magic, magic, sizeof(file_magic)) != 0 || file_version != version) is_valid_ = false;
+	return is_valid_;
+}
+
 std::uint32_t MapFileReader::ReadCount()
 {
 	std::uint32_t count = 0;

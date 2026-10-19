@@ -21,7 +21,7 @@ class HintObjectTree
 	void CountRange(std::size_t begin, std::size_t end, int depth, float x, float y, float z, float radius_sq, HintKindCounts& counts) const;
 
 public:
-	// 맵 데이터에서 힌트 종류 메시의 물체 중 맵 범위 안의 것을 모아 트리를 만든다. 대응표의 메시가 맵 데이터에 없으면 실패한다.
+	// 맵 데이터에서 힌트 종류 메시의 물체 중 맵 범위 안의 것을 모아 트리를 만든다. 대응표의 힌트 종류 중 맵 데이터에서 이름을 하나도 찾지 못한 종류가 있으면 실패한다.
 	bool Build(const MapData& map);
 	bool IsLoaded() const { return is_loaded_; }
 	// (x, y, z)에서 거리 radius(cm) 안에 있는 물체 수를 종류마다 센다.

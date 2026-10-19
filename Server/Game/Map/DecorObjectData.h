@@ -4,7 +4,7 @@
 #include <vector>
 #include <DirectXMath.h>
 
-class MapFileReader;
+struct MapMeshFile;
 
 // 충돌 없는 물체의 메시 하나. 이 메시 물체의 위치는 위치 목록의 first_location번부터 location_count개다.
 struct DecorMesh {
@@ -22,8 +22,8 @@ class DecorObjectData
 	bool is_loaded_ = false;
 
 public:
-	// 맵 파일의 충돌 없는 물체 부분을 읽는다.
-	bool Load(MapFileReader& reader);
+	// 맵 폴더 항목들의 배치 파일에서 충돌 없는 물체 부분을 읽는다. 충돌 없는 물체가 있는 항목마다 메시 하나다.
+	bool Load(const std::vector<MapMeshFile>& meshes);
 	bool IsLoaded() const { return is_loaded_; }
 	// 이름이 name인 메시. 없으면 nullptr이다.
 	const DecorMesh* FindMesh(const std::string& name) const;

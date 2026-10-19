@@ -48,7 +48,7 @@ void GameServer::StartServer()
 	if (!hitbox_data_.Load("Data/hitbox_data.bin")) std::cerr << "Hitbox data load fail.. " << std::endl;
 	// 지형 데이터는 탑 후보마다 탑·기초 배치를 넣으므로 탑 후보를 먼저 읽는다.
 	if (!tower_candidate_data_.Load("Data/tower_candidates.txt")) std::cerr << "Tower candidate data load fail.. " << std::endl;
-	if (!map_data_.Load("Data/map_data.bin", tower_candidate_data_.GetCandidates())) std::cerr << "Map data load fail.. " << std::endl;
+	if (!map_data_.Load("Data/Map", tower_candidate_data_.GetCandidates())) std::cerr << "Map data load fail.. " << std::endl;
 	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt")) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!map_region_data_.Load("Data/map_regions.txt")) std::cerr << "Map region data load fail.. " << std::endl;
 	if (!map_region_data_.LoadTreasureExclusions("Data/treasure_exclusions.txt")) std::cerr << "Treasure exclusion data load fail.. " << std::endl;

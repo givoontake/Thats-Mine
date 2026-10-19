@@ -30,7 +30,7 @@ static int ExportHintObjects(const char* file_path)
     TowerCandidateData tower_candidates;
     MapData map;
     HintObjectTree tree;
-    if (!tower_candidates.Load("Data/tower_candidates.txt") || !map.Load("Data/map_data.bin", tower_candidates.GetCandidates()) || !tree.Build(map) || !tree.Export(file_path)) {
+    if (!tower_candidates.Load("Data/tower_candidates.txt") || !map.Load("Data/Map", tower_candidates.GetCandidates()) || !tree.Build(map) || !tree.Export(file_path)) {
         std::cerr << "Hint object export fail.. " << std::endl;
         return 1;
     }

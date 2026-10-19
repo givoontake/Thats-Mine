@@ -5,29 +5,25 @@
 
 using namespace DirectX;
 
-bool DecorObjectData::Load(MapFileReader& reader)
+bool DecorObjectData::Load(const std::vector<MapMeshFile>& meshes)
 {
 	is_loaded_ = false;
-	meshes_.assign(reader.ReadCount(), {});
-	for (DecorMesh& mesh : meshes_) mesh.name = reader.ReadName();
-	std::vector<std::pair<std::uint32_t, XMFLOAT3>> objects(reader.ReadCount());
-	for (auto& [mesh, location] : objects) {
-		reader.ReadValue(mesh);
-		reader.ReadValue(location);
-		if (mesh >= meshes_.size()) reader.Invalidate();
-	}
-	if (!reader.IsValid()) return false;
-
-	// 위치를 메시 순서로 줄 세우고(같은 메시 안은 파일 순서), 메시마다 자기 구간의 시작 번호와 개수를 둔다.
-	std::stable_sort(objects.begin(), objects.end(), [](const auto& first, const auto& second) { return first.first < second.first; });
+	meshes_.clear();
 	locations_.clear();
-	locations_.reserve(objects.size());
-	for (std::uint32_t index = 0; index < objects.size(); ++index) {
-		DecorMesh& mesh = meshes_[objects[index].first];
-		if (mesh.location_count == 0) mesh.first_location = index;
-		++mesh.location_count;
-		locations_.push_back(objects[index].second);
+	// 위치를 항목 순서로 이어 담아(같은 항목 안은 파일 순서), 메시마다 자기 구간의 시작 번호와 개수를 둔다. 앞의 충돌 배치 부분은 건너뛴다.
+	for (const MapMeshFile& file : meshes) {
+		if (file.placements.empty()) continue;
+		MapFileReader reader(file.placements);
+		if (!reader.ReadHeader("TMPL", MAP_PLACEMENT_FILE_VERSION) || reader.ReadName() != file.name) return false;
+		reader.Skip(static_cast<size_t>(reader.ReadCount()) * (sizeof(std::uint8_t) + sizeof(MapTransform)));
+		const std::uint32_t count = reader.ReadCount();
+		if (count > 0) {
+			meshes_.push_back({ file.name, static_cast<std::uint32_t>(locations_.size()), count });
+			for (std::uint32_t index = 0; index < count; ++index) reader.ReadValue(locations_.emplace_back());
+		}
+		if (!reader.IsValid() || !reader.IsAtEnd()) return false;
 	}
+	locations_.shrink_to_fit();
 	is_loaded_ = true;
 	return true;
 }

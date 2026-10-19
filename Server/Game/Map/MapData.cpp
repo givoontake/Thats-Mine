@@ -1,4 +1,5 @@
-#include <cstring>
+#include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include "MapData.h"
@@ -6,29 +7,35 @@
 
 using namespace DirectX;
 
-// 파일 형식 버전. 맵 데이터 내보내기 도구와 같아야 한다.
-constexpr std::uint32_t MAP_DATA_VERSION = 3;
+static std::vector<char> ReadFileBytes(const std::filesystem::path& path)
+{
+	std::ifstream file(path, std::ios::binary);
+	return std::vector<char>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
 
-// 파일 순서: 머리(표지, 버전), 배치 액터 종류 이름, 충돌 모양 원본, 배치, 랜드스케이프 충돌 조각, 충돌 없는 물체
-bool MapData::Load(const std::string& file_path, const std::vector<XMFLOAT3>& tower_candidates)
+// 폴더 구성: Landscape.bin(랜드스케이프 충돌 조각), Meshes/항목 이름/collision.bin(충돌 모양), Meshes/항목 이름/placements.bin(충돌 배치, 충돌 없는 물체)
+// 항목 파일을 이름 순서로 모두 메모리에 읽은 뒤 부분마다 자기 파일을 읽게 하고, 다 읽으면 파일 내용은 버린다.
+bool MapData::Load(const std::string& map_dir, const std::vector<XMFLOAT3>& tower_candidates)
 {
 	is_loaded_ = false;
-	std::ifstream file(file_path, std::ios::binary);
-	if (!file.is_open()) return false;
-	const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-	MapFileReader reader(bytes);
+	const std::filesystem::path root(map_dir);
+	const std::vector<char> landscape_bytes = ReadFileBytes(root / "Landscape.bin");
+	MapFileReader landscape_reader(landscape_bytes);
+	if (!landscape_reader.ReadHeader("TMLS", MAP_LANDSCAPE_FILE_VERSION) || !landscape_.Load(landscape_reader) || !landscape_reader.IsAtEnd()) return false;
 
-	char magic[4] = {};
-	reader.Read(magic, sizeof(magic));
-	std::uint32_t version = 0;
-	reader.ReadValue(version);
-	if (!reader.IsValid() || std::memcmp(magic, "TMTR", 4) != 0 || version != MAP_DATA_VERSION) return false;
-	// 배치 액터 종류 이름은 쓰지 않는다.
-	reader.Skip(static_cast<size_t>(reader.ReadCount()) * MAP_NAME_SIZE);
-	if (!collision_objects_.Load(reader, tower_candidates)) return false;
-	if (!landscape_.Load(reader)) return false;
-	if (!decor_objects_.Load(reader)) return false;
-	if (!reader.IsValid() || !reader.IsAtEnd()) return false;
+	std::error_code error;
+	std::vector<MapMeshFile> meshes;
+	for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(root / "Meshes", error)) {
+		if (!entry.is_directory()) continue;
+		MapMeshFile& mesh = meshes.emplace_back();
+		mesh.name = entry.path().filename().string();
+		if (std::filesystem::exists(entry.path() / "collision.bin")) mesh.collision = ReadFileBytes(entry.path() / "collision.bin");
+		if (std::filesystem::exists(entry.path() / "placements.bin")) mesh.placements = ReadFileBytes(entry.path() / "placements.bin");
+	}
+	if (error || meshes.empty()) return false;
+	std::sort(meshes.begin(), meshes.end(), [](const MapMeshFile& first, const MapMeshFile& second) { return first.name < second.name; });
+	if (!collision_objects_.Load(meshes, tower_candidates)) return false;
+	if (!decor_objects_.Load(meshes)) return false;
 	is_loaded_ = true;
 	return true;
 }

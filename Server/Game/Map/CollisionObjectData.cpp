@@ -264,14 +264,20 @@ static TerrainConvex BuildConvex(const std::vector<XMFLOAT3>& vertices, const st
 	return convex;
 }
 
-bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3>& tower_candidates)
+bool CollisionObjectData::Load(const std::vector<MapMeshFile>& meshes, const std::vector<XMFLOAT3>& tower_candidates)
 {
 	constexpr float INF = std::numeric_limits<float>::infinity();
 	is_loaded_ = false;
 
-	// 충돌 모양 원본
-	sources_.assign(reader.ReadCount(), {});
-	for (TerrainSource& source : sources_) {
+	// 충돌 모양 원본. 충돌 모양 파일이 있는 항목마다 하나이고, 항목 번호로 원본 번호를 찾는다.
+	sources_.clear();
+	std::vector<std::uint32_t> mesh_sources(meshes.size(), UINT32_MAX);
+	for (std::size_t mesh = 0; mesh < meshes.size(); ++mesh) {
+		if (meshes[mesh].collision.empty()) continue;
+		MapFileReader reader(meshes[mesh].collision);
+		if (!reader.ReadHeader("TMCS", MAP_COLLISION_FILE_VERSION)) return false;
+		mesh_sources[mesh] = static_cast<std::uint32_t>(sources_.size());
+		TerrainSource& source = sources_.emplace_back();
 		source.name = reader.ReadName();
 		std::uint8_t trace_mode = 0;
 		std::uint8_t is_double_sided = 0;
@@ -316,7 +322,7 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 			reader.ReadValue(index);
 			if (index >= source.vertices.size()) reader.Invalidate();
 		}
-		if (!reader.IsValid()) return false;
+		if (!reader.IsValid() || !reader.IsAtEnd() || source.name != meshes[mesh].name) return false;
 		source.triangles.resize(source.triangles.size() / 3 * 3);
 		source.has_local_shapes = !source.boxes.empty() || !source.convexes.empty() || !source.triangles.empty();
 		BuildBvh(source);
@@ -370,17 +376,23 @@ bool CollisionObjectData::Load(MapFileReader& reader, const std::vector<XMFLOAT3
 		}
 	};
 
-	// 배치
-	objects_.assign(reader.ReadCount(), {});
+	// 배치. 배치 파일 앞부분의 충돌 배치를 그 항목의 충돌 모양 원본에 붙인다. 뒷부분의 충돌 없는 물체는 DecorObjectData가 읽는다.
+	objects_.clear();
 	object_capsules_.clear();
-	for (TerrainObject& object : objects_) {
-		std::uint32_t kind = 0;
-		reader.ReadValue(object.source);
-		reader.ReadValue(kind);
-		reader.ReadValue(object.flags);
-		const MapTransform transform = reader.ReadTransform();
-		if (!reader.IsValid() || object.source >= sources_.size()) return false;
-		build_object(object, transform.ToMatrix(), transform.rotation, transform.scale);
+	for (std::size_t mesh = 0; mesh < meshes.size(); ++mesh) {
+		if (meshes[mesh].placements.empty()) continue;
+		MapFileReader reader(meshes[mesh].placements);
+		if (!reader.ReadHeader("TMPL", MAP_PLACEMENT_FILE_VERSION) || reader.ReadName() != meshes[mesh].name) return false;
+		const std::uint32_t count = reader.ReadCount();
+		if (count > 0 && mesh_sources[mesh] == UINT32_MAX) return false;
+		for (std::uint32_t index = 0; index < count; ++index) {
+			TerrainObject& object = objects_.emplace_back();
+			object.source = mesh_sources[mesh];
+			reader.ReadValue(object.flags);
+			const MapTransform transform = reader.ReadTransform();
+			if (!reader.IsValid()) return false;
+			build_object(object, transform.ToMatrix(), transform.rotation, transform.scale);
+		}
 	}
 	// 배치를 원본 순서로 줄 세우고(같은 원본 안은 파일 순서), 원본마다 자기 배치의 시작 번호와 개수를 둔다.
 	std::stable_sort(objects_.begin(), objects_.end(), [](const TerrainObject& first, const TerrainObject& second) { return first.source < second.source; });

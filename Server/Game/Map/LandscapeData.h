@@ -13,7 +13,7 @@ class LandscapeData
 	bool is_loaded_ = false;
 
 public:
-	// 맵 파일의 랜드스케이프 충돌 조각 부분을 읽는다.
+	// 랜드스케이프 파일의 머리 뒤 충돌 조각 부분을 읽는다.
 	bool Load(MapFileReader& reader);
 	bool IsLoaded() const { return is_loaded_; }
 	// 선분이 랜드스케이프에 닿는지 본다.
