@@ -87,6 +87,13 @@ constexpr int AREA_REMOVAL_INTERVAL_MS = 180000;
 constexpr float MOVE_SPEED_FORWARD = 600.0f;
 constexpr float MOVE_SPEED_BACKWARD = 300.0f;
 constexpr float MOVE_SPEED_AIMING = 150.0f;
+// 땅에서의 가감속. 언리얼 캐릭터 이동 설정과 같은 값이다. 상한보다 느리면 최대 가속으로 일정하게 빨라지고,
+// 상한보다 빠르면 "지면 마찰 × 제동 마찰 배수 × 속도 + 제동 감속"으로 느려지며, 제동은 MOVE_BRAKING_STEP_SECONDS 이하 단계로 나눠 계산한다.
+constexpr float MOVE_MAX_ACCELERATION = 2048.0f;
+constexpr float MOVE_BRAKING_DECELERATION = 2048.0f;
+constexpr float MOVE_GROUND_FRICTION = 8.0f;
+constexpr float MOVE_BRAKING_FRICTION_FACTOR = 2.0f;
+constexpr float MOVE_BRAKING_STEP_SECONDS = 1.0f / 33.0f;
 
 // 점프와 낙하. 클라이언트 캐릭터 이동과 서버 높이 검증이 같은 값을 쓴다.
 // 중력은 프로젝트 기본 중력, 낙하 속도 상한은 게임 레벨 기본 물리 볼륨의 값과 같다.
@@ -106,9 +113,13 @@ constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아�
 // 이동 검증. 어기면 마지막으로 인정한 위치로 되돌린다.
 // 허용치(cm): 캡슐 아래 끝(발)이 랜드스케이프보다 이만큼 넘게 아래면 땅속, 캡슐이 이동을 막는 배치물에 이만큼 넘게 파고들면 겹침으로 본다.
 constexpr float MOVE_TOLERANCE = 20.0f;
-// 수평 이동 속도 검사. 인정한 위치 사이마다 초과 누적에서 "최대 속도 × 서버 처리 시각 차이"를 0까지만 빼고 수평 거리를 더한다.
-// 초과 누적이 이 허용치(cm)를 넘으면 인정하지 않는다. 패킷이 늦었다 몰려 와 처리 시각 차이가 짧게 잡힌 몫을 받아 준다.
-constexpr float MOVE_MAX_EXCESS_DISTANCE = 300.0f;
+// 이동 속도 검사. 인정한 위치 사이마다 "실제 거리 - 갈 수 있는 거리"를 이번 오차로 보고, 이번 오차가 MOVE_MAX_STEP_EXCESS_DISTANCE(cm)를 넘거나
+// 0 아래로는 내려가지 않게 쌓은 초과 누적이 MOVE_MAX_EXCESS_DISTANCE(cm)를 넘으면 인정하지 않는다.
+// 갈 수 있는 거리는 땅끼리면 서버가 따라가는 최대 수평 속도를 위 가감속 식으로 바꿔 가며 쌓은 수평 거리이고, 앞뒤 중 하나라도 공중이면 정점에서 내려간 높이만큼 키운 최대 속도로 간 3차원 거리다.
+// 시간은 클라이언트 시각 차이(기준이 없으면 서버가 받은 시각 차이)이고, 한 번에 MOVE_MAX_STEP_SECONDS까지만 인정해 오래 보내지 않다가 한 번에 멀리 가는 것을 막는다.
+constexpr float MOVE_MAX_STEP_EXCESS_DISTANCE = 30.0f;
+constexpr float MOVE_MAX_EXCESS_DISTANCE = 100.0f;
+constexpr float MOVE_MAX_STEP_SECONDS = 0.5f;
 // 공중 높이 검사. 상승은 이륙 높이 + 정점 높이 + MOVE_TOLERANCE까지이고, 하강은 하강 시작점에서 떨어지는 곡선을 이 시간(초)만큼 늦추고 당긴 범위 ± MOVE_TOLERANCE 안이어야 한다.
 // 벗어나면 서버가 계산한 위치로 맞추고, 공중에서 이 시간 넘게 이동 상태가 오지 않아도 같이 맞춘다.
 constexpr float MOVE_AIR_DELAY_SECONDS = 0.5f;
@@ -116,6 +127,22 @@ constexpr float MOVE_AIR_DELAY_SECONDS = 0.5f;
 // 내리는 깊이는 걸을 수 있는 가장 가파른 경사를 덮고, 줄인 반지름 때문에 옆 벽에 붙어 있는 것은 땅으로 보지 않는다.
 constexpr float GROUND_CHECK_DEPTH = 30.0f;
 constexpr float GROUND_CHECK_RADIUS_MARGIN = 10.0f;
+// 비탈 접촉 확인. 랜드스케이프 기울기를 캐릭터 위치에서 앞뒤·좌우로 이만큼(cm) 떨어진 높이로 구하고, 이 각도(도) 이상인 비탈만 비탈 접촉으로 본다.
+// 언리얼 캐릭터는 약 44.8도 넘는 비탈을 걷지 못하고 미끄러지며, 기울기 계산 오차를 고려해 조금 낮게 둔다.
+constexpr float SLOPE_SAMPLE_DISTANCE = 25.0f;
+constexpr float STEEP_SLOPE_MIN_DEGREES = 40.0f;
+// 허공 낙하 검사. 공중에서 수직 속도를 바꾸는 것은 중력과 면에 닿는 것뿐이므로, 직전 두 상태가 모두 어떤 면에도 닿지 않았으면
+// 그 둘로 구한 수직 속도에 중력을 더해 이번 높이를 예측하고, AIR_STEP_TOLERANCE(cm)에 클라이언트 시각 단위(AIR_STEP_TIME_UNIT_SECONDS)가 만드는 오차를 더한 범위 안이어야 한다.
+// 시각 단위 오차는 속도 × 시각 단위 × (1 + 예측 시간 / 속도를 구한 구간)이다. 속도를 구하는 구간은 AIR_STEP_MIN_BASELINE_MS보다 짧게 잡지 않는다.
+// 캡슐을 AIR_CONTACT_MARGIN(cm)만큼 키워 지형·배치물·다른 플레이어에 닿으면 면에 닿은 것으로 보고 이 검사를 하지 않는다.
+constexpr float AIR_STEP_TOLERANCE = 2.0f;
+constexpr float AIR_STEP_TIME_UNIT_SECONDS = 0.001f;
+constexpr int AIR_STEP_MIN_BASELINE_MS = 50;
+constexpr float AIR_CONTACT_MARGIN = 10.0f;
+// 클라이언트 시각 검사. 이동 상태 사이 "클라이언트 시각 차이 - 서버가 받은 시각 차이"를 쌓아 클라이언트 시각이 이만큼(ms) 넘게 앞서면 시간을 빠르게 돌린 것으로 보고 되돌린다.
+// 늦은 쪽은 CLOCK_MAX_BEHIND_MS까지만 쌓아, 오래 끊겼다가 한 번에 몰아 보내는 몫을 무한히 미리 쌓아 두지 못하게 한다.
+constexpr long long CLOCK_MAX_AHEAD_MS = 250;
+constexpr long long CLOCK_MAX_BEHIND_MS = 2000;
 
 // 명중 검증. 지연 보정이 없어 클라이언트 화면과 서버의 위치 차이를 여유로 허용한다.
 constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)
@@ -168,7 +195,9 @@ constexpr float STUN_GAUGE_DECAY_PER_SECOND = 4.0f;
 constexpr int STUN_GAUGE_DECAY_DELAY_MS = 5000;
 constexpr float STUN_GAUGE_WEAPON_GAINS[] = { 0.0f, 50.0f, 20.0f }; // 무기 값 순서: 곡괭이, 저격총, 권총
 constexpr float STUN_GAUGE_PART_MULTIPLIERS[] = { 1.1f, 1.0f, 0.8f, 0.8f, 0.8f, 0.8f }; // 부위 값 순서: 머리, 몸통, 팔, 손, 다리, 발
-constexpr int STUN_DURATION_MS = 5000; // 기절 시간. 기절 동안 서버는 그 플레이어의 이동·동작·명중을 받지 않고, 끝나면 게이지는 0이다.
+constexpr int STUN_DURATION_MS = 5000; // 기절 시간. 기절 동안 서버는 그 플레이어의 이동 입력(이동 키·조준·점프)·동작·명중을 받지 않고, 끝나면 게이지는 0이다.
+// 기절이 시작된 뒤 이 시간(ms) 동안은 이동 입력이 있던 상태로 본다. 기절을 알리는 패킷이 클라이언트에 닿기 전까지 걷거나 뛴 몫을 받아 준다.
+constexpr int STUN_INPUT_GRACE_MS = 500;
 constexpr int STUN_PROTECTION_MS = 30000; // 기절이 끝난 뒤 보호 시간. 보호 동안 명중당해도 기절 게이지가 오르지 않는다.
 
 // 아이템. 상자에서 얻는 S·A 등급 아이템이고, 등급별 값은 S, A 순서다.

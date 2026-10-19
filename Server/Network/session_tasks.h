@@ -23,9 +23,10 @@ struct SessionTask
 struct SessionPacketTask final : SessionTask
 {
 	std::vector<char> packet;
+	long long receive_time_ms; // 받은 순간의 서버 시각. 틱 시각과 같은 시계이고, 처리할 틱을 기다린 시간이 섞이지 않는다.
 
-	SessionPacketTask(const char* packet_data, int packet_size)
-		: SessionTask(SessionTaskType::PACKET), packet(packet_data, packet_data + packet_size) {}
+	SessionPacketTask(const char* packet_data, int packet_size, long long receive_time_ms)
+		: SessionTask(SessionTaskType::PACKET), packet(packet_data, packet_data + packet_size), receive_time_ms(receive_time_ms) {}
 };
 
 struct SessionDisconnectTask final : SessionTask

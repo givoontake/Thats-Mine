@@ -215,7 +215,9 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	{
 		return;
 	}
-	const MOVE_STATE move_state = ToMoveState(state);
+	MOVE_STATE move_state = ToMoveState(state);
+	// 이 위치를 만든 게임 시각을 담는다. 서버는 상태 사이 시간을 이 차이로 재고, 서버 시각보다 빨리 흐르면 시간 조작으로 본다.
+	move_state.client_time_ms = static_cast<uint32>(static_cast<uint64>(GetWorld()->GetTimeSeconds() * 1000.0));
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&move_state), sizeof(move_state));
 	if (GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(is_input_changed ? C2S_MOVE_INPUT : C2S_MOVE, payload))

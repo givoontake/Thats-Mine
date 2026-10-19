@@ -3,6 +3,7 @@
 #include <atomic>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 #include "types.h"
 #include "settings.h"
@@ -31,10 +32,23 @@ class Player
 	long long last_move_relay_ms_ = 0;
 	bool has_new_move_state_ = false;
 	bool has_input_change_ = false;
-	// 마지막으로 인정한 위치까지 최대 속도보다 더 움직인 수평 거리의 누적(cm). 시간이 지나면 0까지만 줄어든다.
+	// 마지막으로 인정한 위치까지 갈 수 있는 거리보다 더 움직인 거리의 누적(cm). 덜 움직이면 0까지만 줄어든다.
 	float move_excess_ = 0.0f;
+	// 마지막으로 인정한 상태에서 나올 수 있는 최대 속도(cm/s). 땅에서는 언리얼 가감속 식으로 따라간 수평 속도이고,
+	// 공중이면 구간마다 내려간 높이만큼 키우고 올라간 만큼 줄인 3차원 속도다.
+	float speed_bound_ = 0.0f;
+	// 마지막으로 인정한 상태가 비탈 접촉이었는지
+	bool was_on_steep_slope_ = false;
 	// 서버가 판정하는 공중 상태. 마지막으로 인정한 이동 상태까지 반영한 값이다.
 	AirState air_state_;
+	// 허공 낙하 검사가 수직 속도를 구할 앞쪽 기준점의 높이와 클라이언트 시각. 보통 마지막으로 인정한 이동 상태 바로 앞 상태이고, 그 사이가 AIR_STEP_MIN_BASELINE_MS보다 짧으면 더 앞 상태다.
+	float previous_move_z_ = 0.0f;
+	std::uint32_t previous_client_time_ms_ = 0;
+	// 마지막으로 인정한 이동 상태까지 이어서 어떤 면에도 닿지 않은 공중 상태의 수
+	int open_air_count_ = 0;
+	// 클라이언트 시각이 서버가 받은 시각보다 앞선 누적(ms). 기준이 없으면(스폰·되돌림 직후) has_client_time_이 거짓이다.
+	long long clock_drift_ms_ = 0;
+	bool has_client_time_ = false;
 	// 명중 검증에 쓰는 서버 판정용 자세. 이동 상태와 동작으로 애니메이션 진행을 따라간다.
 	CharacterPose pose_;
 	// 기절 게이지는 stun_gauge_time_ms_ 시각의 값이고, 그 뒤로는 초당 감소량만큼 줄어든 것으로 계산한다. 기절 중에는 최대치로 본다.
@@ -92,14 +106,26 @@ public:
 	const MOVE_STATE& GetMoveState() const { return move_state_; }
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
+	bool WasOnSteepSlope() const { return was_on_steep_slope_; }
+	// time_ms에 받은 move_state를 인정하면 될 클라이언트 시각 앞섬 누적(ms). 클라이언트 시각이 거꾸로 가면 값이 없다.
+	std::optional<long long> GetClockDrift(const MOVE_STATE& move_state, long long time_ms) const;
+	// 직전 두 상태가 모두 허공이었으면 move_state의 클라이언트 시각에 자유 낙하로 있어야 할 높이와 허용 오차(cm). 판정할 수 없으면 값이 없다.
+	std::optional<std::pair<float, float>> GetPredictedAirZ(const MOVE_STATE& move_state) const;
+	// 직전 상태에서 time_ms에 받은 move_state까지 갈 수 있는 거리(cm)와 그때의 최대 수평 속도(cm/s)
+	std::pair<float, float> GetMoveReach(const MOVE_STATE& move_state, long long time_ms) const;
+	// 이번 이동의 "실제 거리 - 갈 수 있는 거리"(cm)
+	float GetMoveStepExcess(const MOVE_STATE& move_state, long long time_ms) const;
 	// time_ms 시각에 처리하는 move_state를 인정하면 될 초과 누적(cm)
 	float GetMoveExcess(const MOVE_STATE& move_state, long long time_ms) const;
 	// time_ms 시각의 공중 상태. 상승 중에 정점 시각과 지연 여유가 지났으면 정점에서 하강을 시작한 것으로 바꾼다.
 	AirState GetAirState(long long time_ms) const;
-	// time_ms에 처리하는 move_state를 인정하면 될 공중 상태. 땅에서 떠나면 마지막으로 인정한 위치에서 시작하고,
+	// time_ms에 처리하는 move_state를 인정하면 될 공중 상태. 점프는 점프를 알린 위치와 시각에서, 걸어서 떨어지면 마지막으로 인정한 위치에서 시작하고,
 	// 상승 중 하강을 알리면 그 위치에서 하강을 시작하되 정점 시각보다 늦게는 잡지 않는다. 하강 중의 상승 알림은 받지 않는다.
-	AirState GetNextAirState(const MOVE_STATE& move_state, long long time_ms) const;
+	// 하강 중 is_slope_slide(직전과 이번 위치가 모두 비탈 접촉)면 이번 위치와 직전 위치부터의 하강 속도로 시작점을 다시 잡는다.
+	AirState GetNextAirState(const MOVE_STATE& move_state, long long time_ms, bool is_slope_slide) const;
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
+	// 기절해 이동 입력이 없는 것으로 보는지. 기절 시작 뒤 STUN_INPUT_GRACE_MS가 지나야 참이다.
+	bool IsInputLocked(long long time_ms) const { return IsStunned(time_ms) && time_ms >= stun_end_ms_ - STUN_DURATION_MS + STUN_INPUT_GRACE_MS; }
 	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
 	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + GetStunProtectionMs(); }
 	int GetStunProtectionMs() const;
@@ -116,7 +142,8 @@ public:
 	void ResetGameData();
 	bool AddToSendBuffer(const char* data, int data_size);
 	void ClearSendBuffer();
-	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change);
+	// is_on_steep_slope는 move_state가 비탈 접촉인지, is_open_air는 공중이고 어떤 면에도 닿지 않았는지다.
+	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change, bool is_on_steep_slope, bool is_open_air);
 	// 스폰 자리를 마지막으로 인정한 위치로 둔다. 첫 이동 상태도 이 위치와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
 	void SetSpawnLocation(const float location[3], float yaw, long long time_ms);
 	void MarkMoveStateRelayed(long long tick_time_ms);

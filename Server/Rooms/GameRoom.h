@@ -156,8 +156,10 @@ private:
 	void SendAreaRemovalTime(Session& session) const;
 	void ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p);
 	bool CheckHintPickup(const Player& picker, const HintDrop& drop) const;
-	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state) const;
+	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms, bool is_slope_slide, bool is_open_air) const;
 	bool IsOnGround(const float location[3]) const;
+	bool IsTouchingSteepSlope(const float location[3]) const;
+	bool IsTouchingSurface(const Player& player, const float location[3]) const;
 	void CorrectMove(Player& player, Session& session, bool is_on_air_curve);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
@@ -189,7 +191,7 @@ public:
 	bool TryGetRoomInfoSnapshot(RoomInfoSnapshot& snapshot) const;
 
 	// 공통
-	void HandlePacket(char* packet, Session& request_session);
+	void HandlePacket(char* packet, Session& request_session, long long receive_time_ms);
 	void ProcessRoomTick(long long tick_time_ms);
 	void SendCreateRoom(Session& session);
 	bool AddHostSession(SessionKey session_key);

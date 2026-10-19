@@ -76,7 +76,7 @@ public:
 	void StartThreads();
 	void CloseThreads();
 	void JoinThreads();
-	void RoutePacket(char* packet, Session& session, GameRoom* room);
+	void RoutePacket(char* packet, Session& session, GameRoom* room, long long receive_time_ms);
 	void ProcessSessionTask(Session& session, std::unique_ptr<SessionTask> task, GameRoom* room);
 	SessionDrainResult DrainSessionTasks(Session& session, GameRoom* room);
 	void EnqueueLobbyTask(std::unique_ptr<LobbyTask> task);

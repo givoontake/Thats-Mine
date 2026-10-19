@@ -129,7 +129,7 @@ void GameServer::ProcessSessionTask(Session& session, std::unique_ptr<SessionTas
 			session.BeginDisconnect(task->session_key);
 			return;
 		}
-		RoutePacket(packet_task->packet.data(), session, room);
+		RoutePacket(packet_task->packet.data(), session, room, packet_task->receive_time_ms);
 		break;
 	}
 	case SessionTaskType::DB_RESULT:
@@ -166,9 +166,9 @@ SessionDrainResult GameServer::DrainSessionTasks(Session& session, GameRoom* roo
 	return SessionDrainResult::OWNED;
 }
 
-void GameServer::RoutePacket(char* packet, Session& session, GameRoom* room)
+void GameServer::RoutePacket(char* packet, Session& session, GameRoom* room, long long receive_time_ms)
 {
-	if (room) room->HandlePacket(packet, session);
+	if (room) room->HandlePacket(packet, session, receive_time_ms);
 	else thread_manager_->GetLobbyThreadManager().ProcessPacket(packet, session);
 }
 

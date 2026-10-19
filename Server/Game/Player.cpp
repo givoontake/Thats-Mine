@@ -6,10 +6,9 @@
 #include "random_seed.h"
 #include "shot_spread.h"
 
-// 이동 상태의 최대 수평 속도(cm/s). 공중에서는 뛰어오를 때의 속도를 그대로 유지하므로 상태와 관계없이 앞 속도로 본다.
+// 땅에서 이동 상태의 최대 수평 속도(cm/s)
 static float GetMaxMoveSpeed(const MOVE_STATE& move_state)
 {
-	if (move_state.air_phase != AirPhase::GROUND) return MOVE_SPEED_FORWARD;
 	if (move_state.is_aiming) return MOVE_SPEED_AIMING;
 	return move_state.input_forward < 0 ? MOVE_SPEED_BACKWARD : MOVE_SPEED_FORWARD;
 }
@@ -248,12 +247,23 @@ bool Player::ClaimShotTrace(std::uint8_t weapon)
 	return true;
 }
 
-void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change)
+void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change, bool is_on_steep_slope, bool is_open_air)
 {
 	if (move_state.is_aiming != move_state_.is_aiming) aim_change_ms_ = time_ms;
 	if ((move_state.air_phase == AirPhase::GROUND) != (move_state_.air_phase == AirPhase::GROUND)) fall_change_ms_ = time_ms;
 	move_excess_ = GetMoveExcess(move_state, time_ms);
-	air_state_ = GetNextAirState(move_state, time_ms);
+	speed_bound_ = GetMoveReach(move_state, time_ms).second;
+	// 직전과 이번 위치가 모두 비탈 접촉이어야 비탈을 타고 온 구간으로 본다.
+	air_state_ = GetNextAirState(move_state, time_ms, is_on_steep_slope && was_on_steep_slope_);
+	was_on_steep_slope_ = is_on_steep_slope;
+	clock_drift_ms_ = GetClockDrift(move_state, time_ms).value_or(0);
+	has_client_time_ = true;
+	// 허공 낙하 검사의 속도를 구할 구간이 너무 짧으면 시각 단위 오차가 커지므로, 이번 상태가 직전 상태와 가까우면 더 앞의 기준점을 그대로 둔다.
+	if (!is_open_air || static_cast<std::int32_t>(move_state.client_time_ms - move_state_.client_time_ms) >= AIR_STEP_MIN_BASELINE_MS) {
+		previous_move_z_ = move_state_.location[2];
+		previous_client_time_ms_ = move_state_.client_time_ms;
+	}
+	open_air_count_ = is_open_air ? open_air_count_ + 1 : 0;
 	move_state_ = move_state;
 	move_time_ms_ = time_ms;
 	has_new_move_state_ = true;
@@ -268,13 +278,79 @@ void Player::SetSpawnLocation(const float location[3], float yaw, long long time
 	move_time_ms_ = time_ms;
 }
 
+std::optional<long long> Player::GetClockDrift(const MOVE_STATE& move_state, long long time_ms) const
+{
+	if (!has_client_time_) return 0;
+	// 클라이언트 시각은 32비트로 돌아가므로 차이를 부호 있는 값으로 본다.
+	const std::int32_t client_elapsed_ms = static_cast<std::int32_t>(move_state.client_time_ms - move_state_.client_time_ms);
+	if (client_elapsed_ms < 0) return std::nullopt;
+	return std::max(-CLOCK_MAX_BEHIND_MS, clock_drift_ms_ + client_elapsed_ms - (time_ms - move_time_ms_));
+}
+
+std::optional<std::pair<float, float>> Player::GetPredictedAirZ(const MOVE_STATE& move_state) const
+{
+	if (open_air_count_ < 2) return std::nullopt;
+	const float seconds = static_cast<float>(move_state.client_time_ms - move_state_.client_time_ms) / 1000.0f;
+	const float previous_seconds = static_cast<float>(move_state_.client_time_ms - previous_client_time_ms_) / 1000.0f;
+	// 같은 프레임에 두 번 보낸 상태는 움직임이 없어 판정하지 않는다. 오래 끊긴 사이는 공중 시간 초과가 맡는다.
+	// 속도를 구할 구간이 짧으면 시각 단위 오차가 커지므로 판정하지 않고, 기준점이 앞에 남아 있어 곧 긴 구간으로 다시 판정한다.
+	if (seconds <= 0.0f || previous_seconds * 1000.0f < AIR_STEP_MIN_BASELINE_MS || seconds > MOVE_AIR_DELAY_SECONDS) return std::nullopt;
+	// 두 상태 사이 평균 속도는 그 가운데 시각의 속도이므로, 끝 시각 속도는 중력으로 그 절반 시간만큼 더 빨라진 값이다.
+	const float velocity = std::max(-TERMINAL_FALL_SPEED, (move_state_.location[2] - previous_move_z_) / previous_seconds - GRAVITY * previous_seconds / 2.0f);
+	const float tolerance = AIR_STEP_TOLERANCE + std::abs(velocity) * AIR_STEP_TIME_UNIT_SECONDS * (1.0f + seconds / previous_seconds);
+	return std::pair<float, float>{ move_state_.location[2] + GetFreeFallDisplacement(velocity, seconds), tolerance };
+}
+
+// speed(cm/s)에서 seconds초 동안 상한 cap을 향해 언리얼 걷기와 같이 가속하거나 제동할 때 갈 수 있는 수평 거리(cm)와 끝 속도.
+// 단계마다 속도를 먼저 바꾸고 그 속도로 움직인다.
+static std::pair<float, float> GetWalkReach(float speed, float cap, float seconds)
+{
+	float distance = 0.0f;
+	for (float remaining = seconds; remaining > 0.0f; remaining -= MOVE_BRAKING_STEP_SECONDS) {
+		const float step = std::min(remaining, MOVE_BRAKING_STEP_SECONDS);
+		if (speed < cap) speed = std::min(cap, speed + MOVE_MAX_ACCELERATION * step);
+		else speed = std::max(cap, speed - (MOVE_GROUND_FRICTION * MOVE_BRAKING_FRICTION_FACTOR * speed + MOVE_BRAKING_DECELERATION) * step);
+		distance += speed * step;
+	}
+	return { distance, speed };
+}
+
+std::pair<float, float> Player::GetMoveReach(const MOVE_STATE& move_state, long long time_ms) const
+{
+	// 지난 시간은 클라이언트 시각 차이로 잰다. 네트워크가 막혔다 몰려 와도 간격이 정확하고, 서버 시각보다 앞서 흐르는 것은 시각 검사가 막는다. 기준이 없으면 서버가 받은 시각 차이를 쓴다.
+	const float elapsed = has_client_time_ ? static_cast<float>(static_cast<std::int32_t>(move_state.client_time_ms - move_state_.client_time_ms)) / 1000.0f : static_cast<float>(time_ms - move_time_ms_) / 1000.0f;
+	// 오래 보내지 않다가 한 번에 멀리 가는 것은 정해진 시간까지만 인정한다.
+	const float seconds = std::clamp(elapsed, 0.0f, MOVE_MAX_STEP_SECONDS);
+	if (move_state_.air_phase == AirPhase::GROUND && move_state.air_phase == AirPhase::GROUND) {
+		// 두 위치 사이에 상태가 바뀌었을 수 있어 앞뒤 상태 중 빠른 쪽 상한을 쓴다. 상한이 낮아지면 다음 구간부터 제동식으로 줄어든다.
+		// 기절해 입력이 없으면 상한이 0이라 제동식으로 멈춘다.
+		const float cap = IsInputLocked(time_ms) ? 0.0f : std::max(GetMaxMoveSpeed(move_state_), GetMaxMoveSpeed(move_state));
+		return GetWalkReach(speed_bound_, cap, seconds);
+	}
+	// 공중에서는 키로 속도를 바꿀 수 없어 속도를 바꾸는 것이 중력과 면에 닿는 것뿐이므로, 구간 끝 속도는 시작 속도에서 이번 구간에 내려간 높이만큼만 빨라지고 올라간 만큼 느려진다.
+	// 땅에서 떠나는 구간은 땅에서 낼 수 있는 수평 속도에 점프의 수직 속도를 더해 시작한다.
+	float start_speed = speed_bound_;
+	if (move_state_.air_phase == AirPhase::GROUND) {
+		const float ground_speed = GetWalkReach(speed_bound_, IsInputLocked(time_ms) ? 0.0f : GetMaxMoveSpeed(move_state_), seconds).second;
+		start_speed = move_state.air_phase == AirPhase::RISING ? std::hypot(ground_speed, JUMP_Z_VELOCITY) : ground_speed;
+	}
+	const float end_speed = std::sqrt(std::max(0.0f, start_speed * start_speed + 2.0f * GRAVITY * (move_state_.location[2] - move_state.location[2])));
+	return { std::max(start_speed, end_speed) * seconds, end_speed };
+}
+
+float Player::GetMoveStepExcess(const MOVE_STATE& move_state, long long time_ms) const
+{
+	// 앞뒤 중 하나라도 공중이면 속도 상한이 3차원 속도이므로 3차원 거리를 본다.
+	const bool is_on_air = move_state_.air_phase != AirPhase::GROUND || move_state.air_phase != AirPhase::GROUND;
+	const float dx = move_state.location[0] - move_state_.location[0];
+	const float dy = move_state.location[1] - move_state_.location[1];
+	const float distance = is_on_air ? std::hypot(dx, dy, move_state.location[2] - move_state_.location[2]) : std::hypot(dx, dy);
+	return distance - GetMoveReach(move_state, time_ms).first;
+}
+
 float Player::GetMoveExcess(const MOVE_STATE& move_state, long long time_ms) const
 {
-	// 두 위치 사이에 상태가 바뀌었을 수 있어 앞뒤 상태 중 빠른 쪽 속도를 쓴다.
-	const float max_speed = std::max(GetMaxMoveSpeed(move_state_), GetMaxMoveSpeed(move_state));
-	const float distance = std::hypot(move_state.location[0] - move_state_.location[0], move_state.location[1] - move_state_.location[1]);
-	// 지난 시간만큼 줄이되 0 아래로는 내리지 않고 거리를 더한다. 오래 보내지 않다가 한 번에 멀리 가도 그 거리가 허용치를 넘으면 걸린다.
-	return std::max(0.0f, move_excess_ - max_speed * static_cast<float>(time_ms - move_time_ms_) / 1000.0f) + distance;
+	return std::max(0.0f, move_excess_ + GetMoveStepExcess(move_state, time_ms));
 }
 
 AirState Player::GetAirState(long long time_ms) const
@@ -285,16 +361,26 @@ AirState Player::GetAirState(long long time_ms) const
 	return air_state_;
 }
 
-AirState Player::GetNextAirState(const MOVE_STATE& move_state, long long time_ms) const
+AirState Player::GetNextAirState(const MOVE_STATE& move_state, long long time_ms, bool is_slope_slide) const
 {
 	const AirState air = GetAirState(time_ms);
 	if (move_state.air_phase == AirPhase::GROUND) return {};
-	if (air.phase == AirPhase::GROUND) return { move_state.air_phase, move_state_.location[2], move_time_ms_ };
-	if (air.phase == AirPhase::RISING && move_state.air_phase == AirPhase::FALLING) {
-		const long long apex_ms = air.start_ms + static_cast<long long>(JUMP_APEX_SECONDS * 1000.0f);
-		return { AirPhase::FALLING, std::min(move_state.location[2], air.start_z + JUMP_APEX_HEIGHT), std::min(time_ms, apex_ms) };
+	AirState next = air;
+	if (air.phase == AirPhase::GROUND) {
+		// 오르막·계단에서는 직전 위치보다 높은 곳에서 점프하므로 점프를 알린 위치에서 시작한다. 그 위치가 땅 위인지는 이동 검사가 본다.
+		if (move_state.air_phase == AirPhase::RISING) return { AirPhase::RISING, move_state.location[2], time_ms };
+		next = { move_state.air_phase, move_state_.location[2], move_time_ms_ };
 	}
-	return air;
+	else if (air.phase == AirPhase::RISING && move_state.air_phase == AirPhase::FALLING) {
+		const long long apex_ms = air.start_ms + static_cast<long long>(JUMP_APEX_SECONDS * 1000.0f);
+		next = { AirPhase::FALLING, std::min(move_state.location[2], air.start_z + JUMP_APEX_HEIGHT), std::min(time_ms, apex_ms) };
+	}
+	if (next.phase != AirPhase::FALLING || !is_slope_slide) return next;
+	// 공중에서 수직 속도를 바꾸는 것은 중력과 면에 닿는 것뿐이므로, 비탈을 타고 떨어지는 동안은 비탈이 늦춘 몫을 남기지 않도록 이번 위치에서 곡선을 다시 잡는다.
+	// 직전 위치부터의 하강 속도 v는 v/g초 전에 v²/2g 위에서 속도 0으로 떨어지기 시작한 것과 같다.
+	const float seconds = static_cast<float>(time_ms - move_time_ms_) / 1000.0f;
+	const float fall_speed = seconds > 0.01f ? std::clamp((move_state_.location[2] - move_state.location[2]) / seconds, 0.0f, TERMINAL_FALL_SPEED) : 0.0f;
+	return { AirPhase::FALLING, move_state.location[2] + fall_speed * fall_speed / (2.0f * GRAVITY), time_ms - static_cast<long long>(fall_speed / GRAVITY * 1000.0f) };
 }
 
 void Player::MarkMoveStateRelayed(long long tick_time_ms)
@@ -350,6 +436,13 @@ std::uint32_t Player::StartMoveCorrection(const float location[3], float velocit
 	move_state_.air_phase = air.phase;
 	move_time_ms_ = time_ms;
 	air_state_ = air;
+	// 옮긴 뒤에는 직전 상태로 속도를 구할 수 없고, 서버 시각이 맞춘 시각으로 바뀌어 시계 기준도 다시 잡는다.
+	open_air_count_ = 0;
+	has_client_time_ = false;
+	clock_drift_ms_ = 0;
+	// 맞춘 자리에서 수평 속도 없이 다시 시작한다. 공중이면 곡선의 수직 속도만 남는다.
+	speed_bound_ = std::abs(velocity_z);
+	was_on_steep_slope_ = false;
 	is_awaiting_move_correction_ = true;
 	return ++move_correction_id_;
 }
@@ -364,7 +457,14 @@ void Player::ClearMoveState()
 	move_state_ = {};
 	move_time_ms_ = 0;
 	move_excess_ = 0.0f;
+	speed_bound_ = 0.0f;
+	was_on_steep_slope_ = false;
 	air_state_ = {};
+	previous_move_z_ = 0.0f;
+	previous_client_time_ms_ = 0;
+	open_air_count_ = 0;
+	clock_drift_ms_ = 0;
+	has_client_time_ = false;
 	last_move_relay_ms_ = 0;
 	has_new_move_state_ = false;
 	has_input_change_ = false;

@@ -19,6 +19,15 @@ inline float GetFallDistance(float seconds)
 	return TERMINAL_FALL_DISTANCE + TERMINAL_FALL_SPEED * (seconds - TERMINAL_FALL_SECONDS);
 }
 
+// 수직 속도 velocity(cm/s, 위가 +)에서 seconds초 동안 자유 낙하로 움직이는 높이(cm). 낙하 속도 상한에 닿으면 그 뒤는 일정한 속도다.
+inline float GetFreeFallDisplacement(float velocity, float seconds)
+{
+	const float to_terminal = (velocity + TERMINAL_FALL_SPEED) / GRAVITY;
+	if (seconds <= to_terminal) return velocity * seconds - 0.5f * GRAVITY * seconds * seconds;
+	const float accelerating = std::max(0.0f, to_terminal);
+	return velocity * accelerating - 0.5f * GRAVITY * accelerating * accelerating - TERMINAL_FALL_SPEED * (seconds - accelerating);
+}
+
 inline float GetAirElapsedSeconds(const AirState& air, long long time_ms)
 {
 	return static_cast<float>(time_ms - air.start_ms) / 1000.0f;

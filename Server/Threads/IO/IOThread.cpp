@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include "IOThread.h"
 #include "GameServer.h"
@@ -116,6 +117,7 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 	char packet_buffer[BUF_SIZE];
 	memcpy(packet_buffer, session.GetRecvOver().packet_buffer, remaining_data_size);
 
+	const long long receive_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 	int offset = 0;
 	bool should_receive = true;
 	while (remaining_data_size - offset >= PACKET_HEADER_SIZE) {
@@ -136,7 +138,7 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 		}
 		if (remaining_data_size - offset < packet_size) break;
 
-		auto task = std::make_unique<SessionPacketTask>(packet, packet_size);
+		auto task = std::make_unique<SessionPacketTask>(packet, packet_size, receive_time_ms);
 		if (!game_server_.GetSessionManager().EnqueueSessionTask(session_key, std::move(task))) {
 			should_receive = false;
 			break;

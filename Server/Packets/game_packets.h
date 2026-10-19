@@ -75,6 +75,8 @@ struct MOVE_STATE {
 	AirPhase air_phase;
 	bool is_aiming;
 	std::uint8_t weapon;
+	// 이 상태를 만든 클라이언트 게임 시각(ms). 기준은 클라이언트마다 다르고 32비트로 돌아가므로 차이로만 쓴다.
+	std::uint32_t client_time_ms;
 };
 
 struct C2S_MOVE_PACKET {

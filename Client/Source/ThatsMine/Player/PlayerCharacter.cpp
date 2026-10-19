@@ -134,7 +134,8 @@ APlayerCharacter::APlayerCharacter()
 			footstep_sounds_.Add(sound.Object);
 		}
 	}
-	GetCharacterMovement()->AirControl = 0.5f;
+	// 공중에서는 키로 속도를 바꿀 수 없고, 뛰어오른 순간의 속도로 날아간다. 서버도 공중 속도는 중력과 충돌로만 바뀐다고 보고 검증한다.
+	GetCharacterMovement()->AirControl = 0.0f;
 	GetCharacterMovement()->AirControlBoostMultiplier = 1.0f;
 
 	equipment_widget_class_ = UEquipmentWidget::StaticClass();
@@ -1299,9 +1300,9 @@ void APlayerCharacter::StartStun(float duration_seconds, float protection_second
 	is_stunned_ = true;
 	if (IsLocallyControlled())
 	{
+		// 조작만 막고 이동은 그대로 두어, 땅에서는 제동으로 멈추고 공중에서는 뛰어오른 속도대로 떨어진다.
 		SetAiming(false);
 		StopJumping();
-		GetCharacterMovement()->StopMovementImmediately();
 		GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
 		if (stun_gauge_widget_)
 		{
