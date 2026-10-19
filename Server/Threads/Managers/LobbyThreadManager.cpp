@@ -7,7 +7,6 @@
 #include "char_buffer.h"
 #include "SessionManager.h"
 #include "LobbyPhaseContext.h"
-#include "lobby_packets.h"
 #include "packet_types.h"
 #include "room_packets.h"
 #include "room_lifecycle_tasks.h"
@@ -85,16 +84,6 @@ bool LobbyThreadManager::IsInLobby(ModeState mode_state)
 	return mode_state == ModeState::LOBBY || mode_state == ModeState::MATCHING;
 }
 
-// 받는 세션의 상태는 확인하지 않고 로비 목록 전원에게 보낸다. 전환 중인 세션이 받은 로비 패킷은 클라이언트가 현재 화면 상태에 맞지 않으면 거른다.
-void LobbyThreadManager::BroadcastToLobby(char* packet)
-{
-	const int packet_size = static_cast<int>(reinterpret_cast<const PACKET_HEADER*>(packet)->size);
-	for (int lobby_index = 0; lobby_index < lobby_list_.GetEnd(); ++lobby_index) {
-		auto* player = FindLobbySession(lobby_index);
-		if (player) player->SendPacket(packet, packet_size);
-	}
-}
-
 void LobbyThreadManager::SendRoomList(Session& session)
 {
 	char packet_buffer[BUF_SIZE];
@@ -109,46 +98,10 @@ void LobbyThreadManager::SendRoomList(Session& session)
 		info_p.header.size = static_cast<std::uint16_t>(sizeof(info_p));
 		info_p.header.type = S2C_ROOM_INFO;
 		info_p.room_key = room_snapshot.room_key;
-		info_p.max_player_count = static_cast<char>(room_snapshot.max_player_count);
 		info_p.current_player_count = static_cast<char>(room_snapshot.current_player_count);
 		memcpy(info_p.room_name, room_snapshot.room_name, sizeof(info_p.room_name));
 		info_p.is_private = room_snapshot.is_private;
 		info_p.is_play = room_snapshot.room_state == RoomState::PLAY;
-
-		if (packet_size + sizeof(info_p) > BUF_SIZE) {
-			session.SendPacket(reinterpret_cast<char*>(packet_buffer), packet_size);
-			packet_size = 0;
-		}
-
-		memcpy(packet_buffer + packet_size, &info_p, sizeof(info_p));
-		packet_size += sizeof(info_p);
-	}
-	session.SendPacket(reinterpret_cast<char*>(packet_buffer), packet_size);
-}
-
-void LobbyThreadManager::SendLobbyPlayerList(Session& session)
-{
-	{
-		// 로비에 있는 플레이어 목록만 조회한다.
-		if (!IsInLobby(session.GetModeState())) return;
-	}
-
-	int packet_size = 0;
-	char packet_buffer[BUF_SIZE];
-	for (int lobby_index = 0; lobby_index < lobby_list_.GetEnd(); ++lobby_index) {
-		auto* player = FindLobbySession(lobby_index);
-		if (!player) continue;
-		S2C_LOBBY_PLAYER_INFO_PACKET info_p;
-		info_p.header.size = static_cast<std::uint16_t>(sizeof(info_p));
-		info_p.header.type = S2C_LOBBY_PLAYER_INFO;
-		{
-			if (player->GetSessionKey().player_id == session.GetSessionKey().player_id) continue;
-			if (IsInLobby(player->GetModeState())) {
-				info_p.player_id = player->GetSessionKey().player_id;
-				StringToCharBuf(player->GetNickname(), info_p.nickname, sizeof(info_p.nickname));
-			}
-			else continue;
-		}
 
 		if (packet_size + sizeof(info_p) > BUF_SIZE) {
 			session.SendPacket(reinterpret_cast<char*>(packet_buffer), packet_size);
@@ -170,26 +123,6 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 		return;
 	}
 	switch (reinterpret_cast<PACKET_HEADER*>(packet)->type) {
-	case C2S_MESSAGE: {
-		if (!IsInLobby(session.GetModeState())) return;
-		C2S_MESSAGE_PACKET* recv_p = reinterpret_cast<C2S_MESSAGE_PACKET*>(packet);
-		int msg_size = recv_p->header.size - sizeof(C2S_MESSAGE_PACKET);
-		if (msg_size == 0) return;
-		int send_p_size = sizeof(S2C_MESSAGE_PACKET) + msg_size;
-		const SessionKey session_key = session.GetSessionKey();
-
-		char* send_p = new char[send_p_size];
-		S2C_MESSAGE_PACKET front_p;
-		front_p.header.size = static_cast<std::uint16_t>(send_p_size);
-		front_p.header.type = S2C_MESSAGE;
-		front_p.player_id = session_key.player_id;
-		StringToCharBuf("", front_p.nickname, sizeof(front_p.nickname));
-		memcpy(send_p, &front_p, sizeof(S2C_MESSAGE_PACKET));
-		memcpy(send_p + sizeof(S2C_MESSAGE_PACKET), reinterpret_cast<char*>(recv_p) + sizeof(C2S_MESSAGE_PACKET), msg_size);
-		BroadcastToLobby(send_p);
-		delete[] send_p;
-		break;
-	}
 	case C2S_ADD_PUBLIC_ROOM:
 	case C2S_ADD_PRIVATE_ROOM: {
 		// 전환 대기로 먼저 바꾼 뒤 방 생성 요청을 넣는다.
@@ -217,16 +150,7 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 	case C2S_REQUEST_ROOM_LIST:
 		SendRoomList(session);
 		break;
-	case C2S_REQUEST_LOBBY_PLAYER_LIST:
-		SendLobbyPlayerList(session);
-		break;
 	case C2S_FAST_MATCHING: {
-		C2S_FAST_MATCHING_PACKET* matching_p = reinterpret_cast<C2S_FAST_MATCHING_PACKET*>(packet);
-		// 0은 기존 패킷의 정원 무관 요청이며, 현재는 20인 방만 매칭한다.
-		if (matching_p->max_player_count != 0 && matching_p->max_player_count != MAX_ROOM_PLAYER_COUNT) {
-			game_server_.SendError(session, ErrorCode::INVALID_REQUEST);
-			break;
-		}
 		// 매칭 상태로 먼저 바꾼 뒤 매칭 풀에 등록한다. 매칭 중에도 로비가 담당하므로 로비 패킷은 계속 처리된다.
 		if (!session.TryChangeMode(ModeState::LOBBY, ModeState::MATCHING)) {
 			game_server_.SendError(session, ErrorCode::INVALID_REQUEST);

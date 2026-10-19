@@ -154,6 +154,7 @@ void CharacterPose::Reset(const HitboxData& data)
 	jump_time_ = 0.0f;
 	weapon_ = 0;
 	has_weapon_ = false;
+	is_aiming_ = false;
 	montage_ = nullptr;
 	montage_start_ms_ = 0;
 }
@@ -161,9 +162,6 @@ void CharacterPose::Reset(const HitboxData& data)
 void CharacterPose::Update(const MOVE_STATE& move_state, float delta_seconds, long long time_ms)
 {
 	if (!data_ || !data_->IsLoaded()) return;
-	if (has_weapon_ && move_state.weapon != weapon_) StartAction(ACTION_EQUIP, move_state.weapon, time_ms);
-	weapon_ = move_state.weapon;
-	has_weapon_ = true;
 	if (montage_) {
 		const float elapsed = (time_ms - montage_start_ms_) / 1000.0f;
 		if (elapsed * montage_->play_rate >= data_->GetTrack(montage_->track).length) montage_ = nullptr;
@@ -193,6 +191,13 @@ void CharacterPose::Update(const MOVE_STATE& move_state, float delta_seconds, lo
 		locomotion_phase_ += delta_seconds / cycle;
 		locomotion_phase_ -= std::floor(locomotion_phase_);
 	}
+}
+
+void CharacterPose::ChangeWeapon(std::uint8_t weapon, long long time_ms)
+{
+	if (has_weapon_ && weapon != weapon_) StartAction(ACTION_EQUIP, weapon, time_ms);
+	weapon_ = weapon;
+	has_weapon_ = true;
 }
 
 void CharacterPose::StartAction(std::uint8_t action, std::uint8_t weapon, long long time_ms)
@@ -264,13 +269,13 @@ std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_
 	}
 
 	// 3. 상체 무기 자세. 무기가 없으면 공중에서만 대기 자세를 덮는다.
-	const WeaponInfo* weapon_info = data.GetWeaponInfo(move_state.weapon);
+	const WeaponInfo* weapon_info = data.GetWeaponInfo(weapon_);
 	const WeaponPoseType pose_type = weapon_info ? weapon_info->pose_type : WeaponPoseType::NONE;
 	int upper_track = -1;
 	switch (pose_type) {
 	case WeaponPoseType::PICKAXE: upper_track = data.GetPoseTrack(UpperBodyPose::PICKAXE_HOLD); break;
 	case WeaponPoseType::PISTOL: upper_track = data.GetPoseTrack(UpperBodyPose::PISTOL_AIM); break;
-	case WeaponPoseType::RIFLE: upper_track = data.GetPoseTrack(move_state.is_aiming ? UpperBodyPose::RIFLE_AIM : UpperBodyPose::RIFLE_HOLD); break;
+	case WeaponPoseType::RIFLE: upper_track = data.GetPoseTrack(is_aiming_ ? UpperBodyPose::RIFLE_AIM : UpperBodyPose::RIFLE_HOLD); break;
 	default: upper_track = move_state.air_phase != AirPhase::GROUND ? data.GetPoseTrack(UpperBodyPose::IDLE) : -1; break;
 	}
 	if (upper_track >= 0) blend_branch(data.GetSpineBone(), SampleTrack(data.GetTrack(upper_track), bone_count, 0.0f, false), 1.0f);

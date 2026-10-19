@@ -186,7 +186,6 @@ int GameThreadManager::CreatePublicRoom(char* packet, Session& session, SessionK
 	C2S_ADD_PUBLIC_ROOM_PACKET* public_p = reinterpret_cast<C2S_ADD_PUBLIC_ROOM_PACKET*>(packet);
 	RoomInitData data;
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
-	if (public_p->max_player_count != MAX_ROOM_PLAYER_COUNT) return ErrorCode::INVALID_REQUEST;
 	CopyCharBuf(data.room_name, sizeof(data.room_name), public_p->room_name, sizeof(public_p->room_name));
 	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::INVALID_REQUEST;
 	data.room_key = GenerateRoomKey();
@@ -202,7 +201,6 @@ int GameThreadManager::CreatePrivateRoom(char* packet, Session& session, Session
 	RoomInitData data;
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	constexpr size_t MIN_ROOM_PASSWORD_LENGTH = 4;
-	if (private_p->max_player_count != MAX_ROOM_PLAYER_COUNT) return ErrorCode::INVALID_REQUEST;
 	CopyCharBuf(data.room_name, sizeof(data.room_name), private_p->room_name, sizeof(private_p->room_name));
 	CopyCharBuf(data.room_password, sizeof(data.room_password), private_p->room_password, sizeof(private_p->room_password));
 	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH || strnlen(data.room_password, sizeof(data.room_password)) < MIN_ROOM_PASSWORD_LENGTH) return ErrorCode::INVALID_REQUEST;

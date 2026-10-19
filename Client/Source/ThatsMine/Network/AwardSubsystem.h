@@ -32,6 +32,7 @@ private:
 	// 부문 하나: 부문 제목과 1위부터의 닉네임·횟수 문장
 	struct FAwardScene
 	{
+		uint8 category = 0;
 		FText title;
 		TArray<FString> nicknames;
 		TArray<FText> records;

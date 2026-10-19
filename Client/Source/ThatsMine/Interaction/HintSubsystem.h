@@ -48,8 +48,8 @@ public:
 
 private:
 	void LoadTexts();
-	FString BuildSentence(const HINT_ENTRY& hint) const;
-	void HandleHintPacket(const TArray<uint8>& payload);
+	void HandleDirectionHintPacket(const TArray<uint8>& payload);
+	void HandleCountHintPacket(const TArray<uint8>& payload);
 	void HandleHintLostPacket(const TArray<uint8>& payload);
 	void HandleExclusionBoardPacket(const TArray<uint8>& payload);
 	void HandleAreaRemovalTimePacket(const TArray<uint8>& payload);

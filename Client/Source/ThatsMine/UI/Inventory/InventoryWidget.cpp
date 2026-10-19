@@ -407,7 +407,7 @@ UBorder* UInventoryWidget::CreateHintRow(int32 hint_index, const FInventoryHint&
 	star_slot->SetVerticalAlignment(VAlign_Center);
 	content->AddChildToHorizontalBox(favorite)->SetVerticalAlignment(VAlign_Center);
 	// 분류 표시. 위치는 파랑, 단서는 초록 바탕이다.
-	const bool is_clue = GetHintCategory(hint.entry) == EHintCategory::CLUE;
+	const bool is_clue = hint.category == EHintCategory::CLUE;
 	UBorder* tag = WidgetTree->ConstructWidget<UBorder>();
 	tag->SetBrush(FSlateRoundedBoxBrush(is_clue ? FLinearColor(0.10f, 0.32f, 0.17f) : FLinearColor(0.09f, 0.22f, 0.42f), 4.0f));
 	tag->SetPadding(FMargin(10.0f, 3.0f));
@@ -448,7 +448,7 @@ void UInventoryWidget::RefreshHints()
 	TArray<int32> order;
 	for (int32 index = 0; index < hints.Num(); ++index)
 	{
-		if (!hint_filter_ || GetHintCategory(hints[index].entry) == *hint_filter_)
+		if (!hint_filter_ || hints[index].category == *hint_filter_)
 		{
 			order.Add(index);
 		}

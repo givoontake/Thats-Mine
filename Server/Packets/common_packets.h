@@ -15,13 +15,4 @@ struct S2C_ERROR_PACKET {
 	int error_code;
 };
 
-struct C2S_DISCONNECT_PACKET {
-	PACKET_HEADER header;
-};
-
-struct S2C_DISCONNECT_PACKET {
-	PACKET_HEADER header;
-	int player_id;
-};
-
 #pragma pack(pop)

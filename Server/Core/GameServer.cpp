@@ -46,15 +46,12 @@ void GameServer::SendError(Session& session, int error_code)
 void GameServer::StartServer()
 {
 	if (!hitbox_data_.Load("Data/hitbox_data.bin")) std::cerr << "Hitbox data load fail.. " << std::endl;
-	// 지형 데이터는 탑 후보마다 탑·기초 배치를 넣으므로 탑 후보를 먼저 읽는다.
-	if (!tower_candidate_data_.Load("Data/tower_candidates.txt")) std::cerr << "Tower candidate data load fail.. " << std::endl;
-	if (!map_data_.Load("Data/Map", tower_candidate_data_.GetCandidates())) std::cerr << "Map data load fail.. " << std::endl;
+	if (!map_data_.Load("Data/Map")) std::cerr << "Map data load fail.. " << std::endl;
 	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt")) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!map_region_data_.Load("Data/map_regions.txt")) std::cerr << "Map region data load fail.. " << std::endl;
 	if (!map_region_data_.LoadTreasureExclusions("Data/treasure_exclusions.txt")) std::cerr << "Treasure exclusion data load fail.. " << std::endl;
 	if (!hint_object_tree_.Build(map_data_)) std::cerr << "Hint object tree build fail.. " << std::endl;
 	if (!direction_hint_data_.Build(map_region_data_)) std::cerr << "Direction hint data build fail.. " << std::endl;
-	if (!view_hint_data_.Load("Data/view_points.txt", map_region_data_)) std::cerr << "View hint data load fail.. " << std::endl;
 	bind(listen_socket_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_));
 	listen(listen_socket_, SOMAXCONN);
 	iocp_handle_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
@@ -124,11 +121,6 @@ void GameServer::ProcessSessionTask(Session& session, std::unique_ptr<SessionTas
 	switch (task->task_type) {
 	case SessionTaskType::PACKET: {
 		auto* packet_task = static_cast<SessionPacketTask*>(task.get());
-		const std::uint8_t packet_type = reinterpret_cast<PACKET_HEADER*>(packet_task->packet.data())->type;
-		if (packet_type == C2S_DISCONNECT) {
-			session.BeginDisconnect(task->session_key);
-			return;
-		}
 		RoutePacket(packet_task->packet.data(), session, room, packet_task->receive_time_ms);
 		break;
 	}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "settings.h"
 #include "lobby_room_info.generated.h"
 
 USTRUCT(BlueprintType)
@@ -18,7 +19,7 @@ struct FLobbyRoomInfo
 	int32 player_count = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	int32 max_player_count = 20;
+	int32 max_player_count = MAX_ROOM_PLAYER_COUNT;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool is_private = false;

@@ -4,7 +4,6 @@ constexpr int TICK_INTERVAL_MS = 1000 / TICK_RATE;
 
 
 constexpr int BUF_SIZE = 2048;
-constexpr int MAX_MESSAGE_SIZE = 512;
 constexpr int SERVER_PORT = 12312;
 
 constexpr int MAX_PLAYER_COUNT = 10000;
@@ -22,26 +21,15 @@ constexpr int MAX_PLAYER_PASSWORD_SIZE = 48;
 
 // 이동 동기화 간격. 클라이언트도 같은 값을 사용한다.
 constexpr int MOVE_SEND_INTERVAL_MS = 100; // 클라이언트가 이동 상태를 주기적으로 보내는 간격
-constexpr int MOVE_EXTRA_SEND_INTERVAL_MS = 50; // 클라이언트가 이동 방향이 꺾여 주기보다 먼저 보낼 때의 최소 간격. 입력 변화는 제한 없이 즉시 보낸다.
-constexpr int MOVE_RELAY_INTERVAL_MS = 40; // 서버가 한 플레이어의 위치를 중계하는 최소 간격. 입력 변화는 다음 틱에 바로 중계한다.
-constexpr int MAX_ROOM_ACTIONS_PER_TICK = 80; // 서버가 한 방에서 한 틱에 중계하는 동작 수
+constexpr int MOVE_EXTRA_SEND_INTERVAL_MS = 50; // 클라이언트가 이동 방향이 꺾여 주기보다 먼저 보낼 때의 최소 간격. 공중 단계가 바뀌면 제한 없이 즉시 보낸다.
+constexpr int MOVE_RELAY_INTERVAL_MS = 40; // 서버가 한 플레이어의 위치를 중계하는 최소 간격. 공중 단계가 바뀐 위치는 다음 틱에 바로 중계한다.
+constexpr int MAX_ROOM_RELAYS_PER_TICK = 80; // 서버가 한 방에서 한 틱에 중계하는 동작·재장전·입력 변화 수
 constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 완료를 기다리는 최대 시간. 지나면 남은 플레이어를 기다리지 않고 시작 대기에 들어간다.
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr int GAME_TIME_LIMIT_MS = 7200000; // 게임이 시작된 뒤 보물을 찾지 못해도 게임을 끝내는 시간. 끝나면 보물 위치를 알리고 GAME_END_WAIT_MS 뒤 방으로 돌아간다.
 
 // 상자 배치. 게임 시작 때 힌트 상자 수만큼 유적 상자를 먼저 고르고, 나머지 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
 constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
-
-// 탑 배치. 게임 시작 때 탑 후보 자리(tower_candidates.txt) 중 TOWER_COUNT곳을 미첼 최적 후보 방식으로 고르고, 고른 순서대로 종류를 번갈아 정한다.
-// TOWER_SPAWN_ENABLED가 거짓이면 탑을 놓지 않는다.
-// 탑(SM_tower_02, SM_tower_04)은 후보 자리의 높이(바닥에서 가장 높은 땅)에 놓고, 그 아래에 기초(SM_tower_foundation_03)를 붙여 땅까지 채운다.
-constexpr bool TOWER_SPAWN_ENABLED = false;
-constexpr int TOWER_KIND_COUNT = 2;
-constexpr int TOWER_COUNT_PER_KIND = 10; // 종류마다 놓는 탑 수
-constexpr int TOWER_COUNT = TOWER_KIND_COUNT * TOWER_COUNT_PER_KIND;
-constexpr float TOWER_MIN_DISTANCE = 10000.0f; // 탑끼리 최소 수평 거리(cm)
-constexpr float TOWER_FOUNDATION_HEIGHT = 1565.0f; // 기초 높이(cm). 기초 바닥은 탑 바닥보다 이만큼 아래다.
-constexpr float TOWER_FOUNDATION_WIDTH_SCALE = 1.41f; // 기초 가로·세로 배율. 탑 아래 돌 받침 폭에 맞춘다.
 
 // 최종 보물. 임시로 크기 1의 보물 상자 모델(가로 약 170cm, 높이 130cm) 크기로 보고, 서버가 맵 안 무작위 위치에 놓는다. 위치는 서버만 안다.
 constexpr float MAP_MIN[2] = { -100750.0f, -100700.0f }; // 맵 범위(cm). 클라이언트 지도와 같다.
@@ -60,10 +48,6 @@ constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm
 constexpr float HINT_OBJECT_COUNT_RADII[] = { 3000.0f, 1000.0f };
 // 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
 constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
-// 보임 힌트("~에서 보물이 묻힌 곳이 보인다")를 만들지. 당분간 끈다.
-constexpr bool HINT_VIEW_ENABLED = false;
-// 힌트의 "보물이 묻힌 자리가 보인다" 판정. 영역의 판정 위치(발밑 땅 + 3인칭 카메라 높이 140cm)에서 보물 자리 지면까지 그은 선이 하나라도 막히지 않으면 보인다.
-constexpr float PLACE_VIEW_END_MARGIN = 30.0f; // 선을 보물 자리 지면 이만큼(cm) 앞에서 멈춘다. 목표 지면 자체에 걸리지 않게 하고, 등진 경사면에 묻힌 자리는 땅 속을 지나 막히게 한다.
 // 힌트 상자. 힌트마다 HINT_BOX_COPIES × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.
 constexpr int HINT_BOX_COPIES = 2;
 constexpr int HINT_BOX_PLAYERS_PER_MULTIPLIER = 5;
@@ -75,9 +59,6 @@ constexpr float HINT_BOX_OPEN_DISTANCE = 225.0f; // F키로 열 때 캡슐 중�
 constexpr float HINT_BOX_CENTER_HEIGHTS[] = { 45.5f, 53.1f }; // 상자 바닥 가운데에서 상자 중심까지 상자 위쪽 방향 거리(cm). BoxKind 순서(0.7배 나무 상자, 선물)
 constexpr float HINT_BOX_SHOT_TARGET_HEIGHT = 30.0f; // 쏴서 열 때 막힘을 검사할 상자 쪽 끝점을 상자 바닥 가운데에서 올리는 높이(cm)
 constexpr float HINT_BOX_SHOT_END_MARGIN = 50.0f; // 쏴서 열 때 막힘 검사 선분의 상자 쪽 끝에서 빼는 길이(cm). 상자를 받친 가지나 바닥을 막힘으로 보지 않는다.
-// 떨어진 힌트. 기절하면 가진 힌트 중 하나를 그 자리에 떨어뜨리고, 게임이 끝날 때까지 남는다. 떨어뜨린 사람도 F키로 주울 수 있다.
-constexpr float HINT_DROP_PICKUP_DISTANCE = 150.0f; // F키로 주울 때 캡슐 중심에서 떨어진 위치까지 최대 수평 거리(cm)
-constexpr float HINT_DROP_PICKUP_HEIGHT = 100.0f; // 주울 때 캡슐 중심이 떨어진 위치보다 높아도 되는 거리이자, 그 아래 랜드스케이프에 선 높이보다 낮아도 되는 거리(cm)
 // 영역 지우기. 게임 시작부터 AREA_REMOVAL_INTERVAL_MS마다 배제 판 칸 중 보물 칸과 이미 지운 칸을 뺀 칸 하나를 골라 플레이 중인 전원의 배제 판에서 지운다.
 // 지울 칸이 없으면 그 차례는 건너뛴다.
 constexpr int AREA_REMOVAL_INTERVAL_MS = 180000;

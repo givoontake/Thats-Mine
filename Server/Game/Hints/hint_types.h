@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <variant>
 #include <vector>
 #include <DirectXMath.h>
 #include "game_packets.h"
@@ -35,15 +36,19 @@ struct DirectionArea {
 	float max_y;
 };
 
-// 보임 힌트 기준 영역 하나. region은 맵 영역 순서 번호이고, eyes는 판정 위치(눈 위치, cm)다.
-struct ViewRegion {
-	std::uint8_t region;
-	std::vector<DirectX::XMFLOAT3> eyes;
+// 방향 힌트 하나. area는 맵 영역 순서 번호, direction은 HintDirection이고, is_true면 보물이 그 영역보다 그 방위에 있다.
+struct DirectionHint {
+	std::uint8_t area;
+	std::uint8_t direction;
+	bool is_true;
 };
 
-// 기절한 플레이어가 떨어뜨린 힌트 하나. hint는 힌트 목록 번호, location은 떨어뜨린 플레이어의 캡슐 중심(cm)이다.
-struct HintDrop {
-	std::uint32_t hint;
-	DirectX::XMFLOAT3 location;
-	bool is_picked;
+// 개수 힌트 하나. 보물 바닥에서 HINT_OBJECT_COUNT_RADII의 radius번째 반경 안에 있는 object_kind(HintObjectKind) 물체 수(최대 255)다.
+struct CountHint {
+	std::uint8_t object_kind;
+	std::uint8_t radius;
+	std::uint8_t count;
 };
+
+// 이번 게임의 힌트 하나. 힌트 번호는 방의 힌트 목록 순서다.
+using Hint = std::variant<DirectionHint, CountHint>;

@@ -17,8 +17,7 @@ class MapData
 
 public:
 	// map_dir: Landscape.bin과 Meshes/항목 이름/(collision.bin, placements.bin)이 있는 폴더.
-	// tower_candidates: 탑 후보마다 탑 바닥 가운데 위치. 후보마다 종류별 탑과 기초 배치를 넣는다.
-	bool Load(const std::string& map_dir, const std::vector<DirectX::XMFLOAT3>& tower_candidates);
+	bool Load(const std::string& map_dir);
 	bool IsLoaded() const { return is_loaded_; }
 	const LandscapeData& GetLandscape() const { return landscape_; }
 	const CollisionObjectData& GetCollisionObjects() const { return collision_objects_; }

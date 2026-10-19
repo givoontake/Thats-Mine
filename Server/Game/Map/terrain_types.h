@@ -7,8 +7,6 @@
 // 배치물이 막는 채널. 추출 파일의 배치 플래그와 같은 값이다.
 constexpr std::uint8_t TERRAIN_BLOCKS_VISIBILITY = 1; // 총알(보이는 채널)을 막는다.
 constexpr std::uint8_t TERRAIN_BLOCKS_PAWN = 2; // 캐릭터 이동(폰 채널)을 막는다.
-// 힌트의 "장소가 보인다" 판정에서 시야를 막는다(건물, 동양 유적 뒤 절벽 바위). 그 밖의 식생·바위와 보이지 않는 물체, 수평 크기 20m 미만의 독립 구조물(탑 등)은 빠진다.
-constexpr std::uint8_t TERRAIN_BLOCKS_PLACE_VIEW = 8;
 
 // 메시 기준 상자. 회전은 쿼터니언(x, y, z, w)이다.
 struct TerrainBox {

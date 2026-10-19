@@ -66,6 +66,7 @@ void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_GAME_START, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleGameStartPacket));
 	network->RegisterPacketHandler(S2C_TREASURE_FOUND, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureFoundPacket));
 	network->RegisterPacketHandler(S2C_TIME_OVER, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTimeOverPacket));
+	network->RegisterPacketHandler(S2C_TREASURE_LOCATION, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureLocationPacket));
 	network->RegisterPacketHandler(S2C_TREASURE_REVEAL, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureRevealPacket));
 	prepare_start_time_ = world.GetRealTimeSeconds();
 	const AGameModeBase* game_mode = world.GetAuthGameMode();
@@ -91,6 +92,7 @@ void UGameStartSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_GAME_START);
 			network->UnregisterPacketHandler(S2C_TREASURE_FOUND);
 			network->UnregisterPacketHandler(S2C_TIME_OVER);
+			network->UnregisterPacketHandler(S2C_TREASURE_LOCATION);
 			network->UnregisterPacketHandler(S2C_TREASURE_REVEAL);
 		}
 		is_active_ = false;
@@ -163,21 +165,16 @@ void UGameStartSubsystem::SendLoadComplete()
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_LOAD_COMPLETE, TArray<uint8>());
 }
 
-// 로딩을 마친 플레이어들의 시작 좌표로 캐릭터를 만든다. 늦게 합류한 플레이어의 스폰도 플레이 중에 같은 패킷으로 온다.
+// 로딩을 마친 플레이어 한 명의 스폰 자리로 캐릭터를 만든다. 늦게 합류한 플레이어의 스폰도 플레이 중에 같은 패킷으로 온다.
 void UGameStartSubsystem::HandleSpawnPacket(const TArray<uint8>& payload)
 {
-	constexpr int32 ENTRIES_OFFSET = static_cast<int32>(offsetof(S2C_SPAWN_PACKET, entries) - sizeof(PACKET_HEADER));
-	if (payload.Num() < ENTRIES_OFFSET)
+	if (payload.Num() != sizeof(S2C_SPAWN_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
-	const int32 player_count = payload[0];
-	if (player_count > MAX_ROOM_PLAYER_COUNT || payload.Num() != ENTRIES_OFFSET + player_count * static_cast<int32>(sizeof(S2C_SPAWN_ENTRY)))
-	{
-		HandleInvalidPacket();
-		return;
-	}
+	S2C_SPAWN_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	UWorld* world = GetWorld();
 	AThatsMineGameMode* game_mode = world->GetAuthGameMode<AThatsMineGameMode>();
 	UMovementSyncSubsystem* movement = world->GetSubsystem<UMovementSyncSubsystem>();
@@ -187,23 +184,18 @@ void UGameStartSubsystem::HandleSpawnPacket(const TArray<uint8>& payload)
 		return;
 	}
 	const int64 local_player_key = world->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
-	for (int32 index = 0; index < player_count; ++index)
+	const FTransform transform = game_mode->FindStartTransform(FTransform(FRotator(0.0, packet.yaw, 0.0), FVector(packet.location[0], packet.location[1], packet.location[2])));
+	if (packet.player_id != local_player_key)
 	{
-		S2C_SPAWN_ENTRY entry;
-		FMemory::Memcpy(&entry, payload.GetData() + ENTRIES_OFFSET + index * sizeof(S2C_SPAWN_ENTRY), sizeof(entry));
-		const FTransform transform = game_mode->FindStartTransform(FTransform(FRotator(0.0, entry.yaw, 0.0), FVector(entry.location[0], entry.location[1], entry.location[2])));
-		if (entry.player_id != local_player_key)
+		movement->SpawnRemotePlayer(packet.player_id, transform);
+	}
+	else if (!controller->GetPawn())
+	{
+		game_mode->RestartPlayerAtTransform(controller, transform);
+		// 시작 대기에 들어갈 때까지(전원 로딩 완료) 움직이지 못하게 한다.
+		if (ACharacter* character = Cast<ACharacter>(controller->GetPawn()))
 		{
-			movement->SpawnRemotePlayer(entry.player_id, transform);
-		}
-		else if (!controller->GetPawn())
-		{
-			game_mode->RestartPlayerAtTransform(controller, transform);
-			// 시작 대기에 들어갈 때까지(전원 로딩 완료) 움직이지 못하게 한다.
-			if (ACharacter* character = Cast<ACharacter>(controller->GetPawn()))
-			{
-				character->GetCharacterMovement()->DisableMovement();
-			}
+			character->GetCharacterMovement()->DisableMovement();
 		}
 	}
 }
@@ -282,7 +274,7 @@ void UGameStartSubsystem::HandleGameStartPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고, 그 아래에 게임이 끝날 때까지 남은 초를 보이며 보물 위치를 공개한다.
+// 누군가 보물을 발견했다. 방으로 돌아갈 때까지 화면 상단에 발견한 플레이어의 닉네임으로 안내를 띄우고, 그 아래에 게임이 끝날 때까지 남은 초를 보인다. 보물 위치는 이어 온다.
 void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_TREASURE_FOUND_PACKET) - sizeof(PACKET_HEADER))
@@ -299,10 +291,9 @@ void UGameStartSubsystem::HandleTreasureFoundPacket(const TArray<uint8>& payload
 		timer->SetMessage(FText::Format(LOCTEXT("TreasureFound", "{0}님이 보물을 발견했습니다!"), finder ? FText::FromString(finder->nickname) : LOCTEXT("UnknownPlayer", "누군가")), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
 		timer->StartMessageCountdown(LOCTEXT("GameEndCountdown", "{0}초 후 게임이 종료됩니다"), GAME_END_WAIT_MS / 1000.0f);
 	}
-	RevealTreasure(packet.location, packet.yaw);
 }
 
-// 아무도 보물을 찾지 못한 채 게임 제한시간이 끝났다. 방으로 돌아갈 때까지 화면 상단에 안내를 띄우고 보물 위치를 공개한다.
+// 아무도 보물을 찾지 못한 채 게임 제한시간이 끝났다. 방으로 돌아갈 때까지 화면 상단에 안내를 띄운다. 보물 위치는 이어 온다.
 void UGameStartSubsystem::HandleTimeOverPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_TIME_OVER_PACKET) - sizeof(PACKET_HEADER))
@@ -310,12 +301,22 @@ void UGameStartSubsystem::HandleTimeOverPacket(const TArray<uint8>& payload)
 		HandleInvalidPacket();
 		return;
 	}
-	S2C_TIME_OVER_PACKET packet{};
-	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	if (UMatchTimerWidget* timer = ShowTimerWidget())
 	{
 		timer->SetMessage(LOCTEXT("TimeOver", "시간이 끝났습니다! 보물 위치를 공개합니다."), UMatchTimerWidget::MESSAGE_FONT_SIZE * 2);
 	}
+}
+
+// 보물 발견이나 시간 종료 뒤에 오는 보물 위치. 보물 상자를 세워 위치를 공개한다.
+void UGameStartSubsystem::HandleTreasureLocationPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_TREASURE_LOCATION_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_TREASURE_LOCATION_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	RevealTreasure(packet.location, packet.yaw);
 }
 

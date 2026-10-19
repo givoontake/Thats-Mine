@@ -76,9 +76,8 @@ void UMagnifierCountWidget::NativeTick(const FGeometry& geometry, float delta_ti
 	{
 		return character->GetAcquiredHints().ContainsByPredicate([kind, count](const FInventoryHint& hint)
 		{
-			const HINT_ENTRY& entry = hint.entry;
-			return entry.kind == static_cast<uint8>(HintKind::OBJECT_COUNT) && entry.radius < UE_ARRAY_COUNT(HINT_OBJECT_COUNT_RADII)
-				&& HINT_OBJECT_COUNT_RADII[entry.radius] == COUNT_RADIUS && entry.target == kind && entry.detail == count;
+			return hint.category == EHintCategory::CLUE && hint.radius < UE_ARRAY_COUNT(HINT_OBJECT_COUNT_RADII)
+				&& HINT_OBJECT_COUNT_RADII[hint.radius] == COUNT_RADIUS && hint.object_kind == kind && hint.count == count;
 		});
 	};
 	int32 line = 0;

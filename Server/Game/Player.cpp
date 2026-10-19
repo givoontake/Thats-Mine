@@ -6,11 +6,11 @@
 #include "random_seed.h"
 #include "shot_spread.h"
 
-// 땅에서 이동 상태의 최대 수평 속도(cm/s)
-static float GetMaxMoveSpeed(const MOVE_STATE& move_state)
+// 땅에서 이동 키 입력과 조준 여부로 낼 수 있는 최대 수평 속도(cm/s)
+static float GetMaxMoveSpeed(std::int8_t input_forward, bool is_aiming)
 {
-	if (move_state.is_aiming) return MOVE_SPEED_AIMING;
-	return move_state.input_forward < 0 ? MOVE_SPEED_BACKWARD : MOVE_SPEED_FORWARD;
+	if (is_aiming) return MOVE_SPEED_AIMING;
+	return input_forward < 0 ? MOVE_SPEED_BACKWARD : MOVE_SPEED_FORWARD;
 }
 
 Player::Player()
@@ -109,7 +109,7 @@ bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time
 	const float elapsed_seconds = (time_ms - ammo.spread_time_ms) / 1000.0f;
 	const bool has_state = HasMoveState();
 	const bool is_falling = has_state && move_state_.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
-	const bool is_unaimed = !has_state || (!move_state_.is_aiming && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
+	const bool is_unaimed = !has_state || (!is_aiming_ && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
 	ammo.last_shot_min_spread = GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), !is_unaimed, 0.0f, is_falling);
 	ammo.last_shot_index = ammo.shot_count++;
 	ammo.spread_heat = AddShotHeat(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds, info.fire_interval));
@@ -134,10 +134,11 @@ void Player::AddSpareRounds(std::uint8_t weapon, int count, const WeaponInfo& in
 	ammo_[weapon].spare_rounds += count;
 }
 
-void Player::AddHint(std::uint32_t hint)
+bool Player::AddHint(std::uint32_t hint)
 {
-	if (std::find(hint_indices_.begin(), hint_indices_.end(), hint) != hint_indices_.end()) return;
+	if (std::find(hint_indices_.begin(), hint_indices_.end(), hint) != hint_indices_.end()) return false;
 	hint_indices_.push_back(hint);
+	return true;
 }
 
 std::optional<std::uint32_t> Player::TakeRandomHint()
@@ -247,9 +248,8 @@ bool Player::ClaimShotTrace(std::uint8_t weapon)
 	return true;
 }
 
-void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change, bool is_on_steep_slope, bool is_open_air)
+void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_on_steep_slope, bool is_open_air)
 {
-	if (move_state.is_aiming != move_state_.is_aiming) aim_change_ms_ = time_ms;
 	if ((move_state.air_phase == AirPhase::GROUND) != (move_state_.air_phase == AirPhase::GROUND)) fall_change_ms_ = time_ms;
 	move_excess_ = GetMoveExcess(move_state, time_ms);
 	speed_bound_ = GetMoveReach(move_state, time_ms).second;
@@ -264,10 +264,33 @@ void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool 
 		previous_client_time_ms_ = move_state_.client_time_ms;
 	}
 	open_air_count_ = is_open_air ? open_air_count_ + 1 : 0;
+	has_urgent_move_state_ = has_urgent_move_state_ || move_state.air_phase != move_state_.air_phase;
 	move_state_ = move_state;
 	move_time_ms_ = time_ms;
 	has_new_move_state_ = true;
-	has_input_change_ = has_input_change_ || is_input_change;
+	// 지금 입력은 다음 위치까지 이어지므로 상한을 지금 입력으로 다시 시작한다.
+	move_speed_cap_ = GetMaxMoveSpeed(input_forward_, is_aiming_);
+}
+
+void Player::SetMoveInput(std::int8_t input_right, std::int8_t input_forward)
+{
+	input_right_ = input_right;
+	input_forward_ = input_forward;
+	move_speed_cap_ = std::max(move_speed_cap_, GetMaxMoveSpeed(input_forward_, is_aiming_));
+}
+
+void Player::SetAiming(bool is_aiming, long long time_ms)
+{
+	if (is_aiming != is_aiming_) aim_change_ms_ = time_ms;
+	is_aiming_ = is_aiming;
+	move_speed_cap_ = std::max(move_speed_cap_, GetMaxMoveSpeed(input_forward_, is_aiming_));
+	pose_.SetAiming(is_aiming);
+}
+
+void Player::SetWeapon(std::uint8_t weapon, long long time_ms)
+{
+	weapon_ = weapon;
+	pose_.ChangeWeapon(weapon, time_ms);
 }
 
 void Player::SetSpawnLocation(const float location[3], float yaw, long long time_ms)
@@ -322,16 +345,16 @@ std::pair<float, float> Player::GetMoveReach(const MOVE_STATE& move_state, long 
 	// 오래 보내지 않다가 한 번에 멀리 가는 것은 정해진 시간까지만 인정한다.
 	const float seconds = std::clamp(elapsed, 0.0f, MOVE_MAX_STEP_SECONDS);
 	if (move_state_.air_phase == AirPhase::GROUND && move_state.air_phase == AirPhase::GROUND) {
-		// 두 위치 사이에 상태가 바뀌었을 수 있어 앞뒤 상태 중 빠른 쪽 상한을 쓴다. 상한이 낮아지면 다음 구간부터 제동식으로 줄어든다.
+		// 두 위치 사이에 입력이 바뀌었을 수 있어 그 사이 입력 중 빠른 쪽 상한을 쓴다. 상한이 낮아지면 다음 구간부터 제동식으로 줄어든다.
 		// 기절해 입력이 없으면 상한이 0이라 제동식으로 멈춘다.
-		const float cap = IsInputLocked(time_ms) ? 0.0f : std::max(GetMaxMoveSpeed(move_state_), GetMaxMoveSpeed(move_state));
+		const float cap = IsInputLocked(time_ms) ? 0.0f : move_speed_cap_;
 		return GetWalkReach(speed_bound_, cap, seconds);
 	}
 	// 공중에서는 키로 속도를 바꿀 수 없어 속도를 바꾸는 것이 중력과 면에 닿는 것뿐이므로, 구간 끝 속도는 시작 속도에서 이번 구간에 내려간 높이만큼만 빨라지고 올라간 만큼 느려진다.
 	// 땅에서 떠나는 구간은 땅에서 낼 수 있는 수평 속도에 점프의 수직 속도를 더해 시작한다.
 	float start_speed = speed_bound_;
 	if (move_state_.air_phase == AirPhase::GROUND) {
-		const float ground_speed = GetWalkReach(speed_bound_, IsInputLocked(time_ms) ? 0.0f : GetMaxMoveSpeed(move_state_), seconds).second;
+		const float ground_speed = GetWalkReach(speed_bound_, IsInputLocked(time_ms) ? 0.0f : move_speed_cap_, seconds).second;
 		start_speed = move_state.air_phase == AirPhase::RISING ? std::hypot(ground_speed, JUMP_Z_VELOCITY) : ground_speed;
 	}
 	const float end_speed = std::sqrt(std::max(0.0f, start_speed * start_speed + 2.0f * GRAVITY * (move_state_.location[2] - move_state.location[2])));
@@ -387,7 +410,7 @@ void Player::MarkMoveStateRelayed(long long tick_time_ms)
 {
 	last_move_relay_ms_ = tick_time_ms;
 	has_new_move_state_ = false;
-	has_input_change_ = false;
+	has_urgent_move_state_ = false;
 }
 
 void Player::ClearStun()
@@ -395,6 +418,7 @@ void Player::ClearStun()
 	stun_gauge_ = 0.0f;
 	stun_gauge_time_ms_ = 0;
 	stun_end_ms_ = 0;
+	has_pending_stun_release_ = false;
 }
 
 float Player::GetStunGauge(long long time_ms) const
@@ -414,6 +438,14 @@ bool Player::AddStunGauge(float amount, long long time_ms)
 	stun_end_ms_ = time_ms + STUN_DURATION_MS;
 	stun_gauge_ = 0.0f;
 	stun_gauge_time_ms_ = stun_end_ms_;
+	has_pending_stun_release_ = true;
+	return true;
+}
+
+bool Player::TakeStunRelease(long long time_ms)
+{
+	if (!has_pending_stun_release_ || IsStunned(time_ms)) return false;
+	has_pending_stun_release_ = false;
 	return true;
 }
 
@@ -421,11 +453,8 @@ void Player::StopMovement()
 {
 	move_state_.velocity[0] = 0.0f;
 	move_state_.velocity[1] = 0.0f;
-	move_state_.input_right = 0;
-	move_state_.input_forward = 0;
-	move_state_.is_aiming = false;
 	has_new_move_state_ = true;
-	has_input_change_ = true;
+	has_urgent_move_state_ = true;
 }
 
 std::uint32_t Player::StartMoveCorrection(const float location[3], float velocity_z, const AirState& air, long long time_ms)
@@ -467,7 +496,12 @@ void Player::ClearMoveState()
 	has_client_time_ = false;
 	last_move_relay_ms_ = 0;
 	has_new_move_state_ = false;
-	has_input_change_ = false;
+	has_urgent_move_state_ = false;
+	input_right_ = 0;
+	input_forward_ = 0;
+	is_aiming_ = false;
+	weapon_ = 0;
+	move_speed_cap_ = MOVE_SPEED_FORWARD;
 	is_awaiting_move_correction_ = false;
 }
 

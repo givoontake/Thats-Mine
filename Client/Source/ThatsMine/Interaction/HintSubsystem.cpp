@@ -34,7 +34,8 @@ void UHintSubsystem::OnWorldBeginPlay(UWorld& world)
 		return;
 	}
 	UGameNetworkSubsystem* network = game_instance->GetSubsystem<UGameNetworkSubsystem>();
-	is_active_ = network->RegisterPacketHandler(S2C_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintPacket))
+	is_active_ = network->RegisterPacketHandler(S2C_DIRECTION_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleDirectionHintPacket))
+		&& network->RegisterPacketHandler(S2C_COUNT_HINT, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleCountHintPacket))
 		&& network->RegisterPacketHandler(S2C_HINT_LOST, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleHintLostPacket))
 		&& network->RegisterPacketHandler(S2C_EXCLUSION_BOARD, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleExclusionBoardPacket))
 		&& network->RegisterPacketHandler(S2C_AREA_REMOVAL_TIME, FNetworkPacketHandler::CreateUObject(this, &UHintSubsystem::HandleAreaRemovalTimePacket))
@@ -49,7 +50,8 @@ void UHintSubsystem::Deinitialize()
 		UGameInstance* game_instance = GetWorld()->GetGameInstance();
 		if (UGameNetworkSubsystem* network = game_instance ? game_instance->GetSubsystem<UGameNetworkSubsystem>() : nullptr)
 		{
-			network->UnregisterPacketHandler(S2C_HINT);
+			network->UnregisterPacketHandler(S2C_DIRECTION_HINT);
+			network->UnregisterPacketHandler(S2C_COUNT_HINT);
 			network->UnregisterPacketHandler(S2C_HINT_LOST);
 			network->UnregisterPacketHandler(S2C_EXCLUSION_BOARD);
 			network->UnregisterPacketHandler(S2C_AREA_REMOVAL_TIME);
@@ -98,59 +100,69 @@ FString UHintSubsystem::FindText(const FString& key) const
 	return *text;
 }
 
-// 힌트 종류의 문장 틀에 이름을 채운다. 이름 키는 종류 이름 뒤에 번호를 붙인 것이다(REGION_3, OBJECT_2 등).
-FString UHintSubsystem::BuildSentence(const HINT_ENTRY& hint) const
+// 내가 얻은 방향 힌트. 상자 열림이나 기절 적용 뒤에 이어 온다. 문장 틀에 영역 이름(REGION_번호)과 방위 이름(DIRECTION_번호)을 채운다.
+void UHintSubsystem::HandleDirectionHintPacket(const TArray<uint8>& payload)
 {
-	const FString target = FString::FromInt(hint.target);
-	const FString detail = FString::FromInt(hint.detail);
-	switch (static_cast<HintKind>(hint.kind))
-	{
-	case HintKind::DIRECTION:
-		return FString::Format(*FindText(hint.is_true ? TEXT("DIRECTION_TRUE") : TEXT("DIRECTION_FALSE")), { FindText(TEXT("REGION_") + target), FindText(TEXT("DIRECTION_") + detail) });
-	case HintKind::VIEW:
-		return FString::Format(*FindText(hint.is_true ? TEXT("VIEW_TRUE") : TEXT("VIEW_FALSE")), { FindText(TEXT("REGION_") + target) });
-	case HintKind::OBJECT_COUNT:
-	{
-		const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADII[hint.radius] / 100.0f));
-		const FString name = FindText(TEXT("OBJECT_") + target);
-		if (hint.detail > 0)
-		{
-			return FString::Format(*FindText(TEXT("OBJECT_COUNT")), { radius, name, detail });
-		}
-		// 0개 문장의 조사는 이름 마지막 글자에 받침이 있으면 "이", 없으면 "가"다.
-		const TCHAR last = name.IsEmpty() ? 0 : name[name.Len() - 1];
-		const bool has_final = last >= 0xAC00 && last <= 0xD7A3 && (last - 0xAC00) % 28 != 0;
-		return FString::Format(*FindText(TEXT("OBJECT_COUNT_ZERO")), { radius, name, has_final ? TEXT("이") : TEXT("가") });
-	}
-	default:
-		return FString();
-	}
-}
-
-// 내가 연 상자나 주운 두루마리의 힌트. 상자 열림이나 줍기 패킷 뒤에 이어 온다.
-void UHintSubsystem::HandleHintPacket(const TArray<uint8>& payload)
-{
-	S2C_HINT_PACKET packet;
+	S2C_DIRECTION_HINT_PACKET packet;
 	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
 	{
-		UE_LOG(LogHint, Warning, TEXT("Invalid hint packet."));
+		UE_LOG(LogHint, Warning, TEXT("Invalid direction hint packet."));
 		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
 		return;
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
-	const bool is_count = packet.hint.kind == static_cast<uint8>(HintKind::OBJECT_COUNT);
-	if (!character || (is_count && packet.hint.radius >= UE_ARRAY_COUNT(HINT_OBJECT_COUNT_RADII)))
+	if (!character)
 	{
 		return;
 	}
 	FInventoryHint hint;
-	hint.entry = packet.hint;
-	hint.text = FText::FromString(BuildSentence(packet.hint));
+	hint.hint_id = packet.hint_id;
+	hint.category = EHintCategory::LOCATION;
+	hint.text = FText::FromString(FString::Format(*FindText(packet.is_true ? TEXT("DIRECTION_TRUE") : TEXT("DIRECTION_FALSE")),
+		{ FindText(TEXT("REGION_") + FString::FromInt(packet.area)), FindText(TEXT("DIRECTION_") + FString::FromInt(packet.direction)) }));
 	character->AddHint(hint);
 }
 
-// 기절해서 떨어뜨린 힌트. 드랍 패킷 뒤에 이어 온다. 같은 힌트를 인벤토리에서 뺀다.
+// 내가 얻은 개수 힌트. 상자 열림이나 기절 적용 뒤에 이어 온다. 문장 틀에 반경(m), 물체 종류 이름(OBJECT_번호), 개수를 채운다.
+void UHintSubsystem::HandleCountHintPacket(const TArray<uint8>& payload)
+{
+	S2C_COUNT_HINT_PACKET packet;
+	if (payload.Num() != sizeof(packet) - sizeof(PACKET_HEADER))
+	{
+		UE_LOG(LogHint, Warning, TEXT("Invalid count hint packet."));
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->Disconnect();
+		return;
+	}
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0));
+	if (!character || packet.radius >= UE_ARRAY_COUNT(HINT_OBJECT_COUNT_RADII))
+	{
+		return;
+	}
+	const FString radius = FString::FromInt(FMath::RoundToInt32(HINT_OBJECT_COUNT_RADII[packet.radius] / 100.0f));
+	const FString name = FindText(TEXT("OBJECT_") + FString::FromInt(packet.object_kind));
+	FInventoryHint hint;
+	hint.hint_id = packet.hint_id;
+	hint.category = EHintCategory::CLUE;
+	hint.object_kind = packet.object_kind;
+	hint.radius = packet.radius;
+	hint.count = packet.count;
+	if (packet.count > 0)
+	{
+		hint.text = FText::FromString(FString::Format(*FindText(TEXT("OBJECT_COUNT")), { radius, name, FString::FromInt(packet.count) }));
+	}
+	else
+	{
+		// 0개 문장의 조사는 이름 마지막 글자에 받침이 있으면 "이", 없으면 "가"다.
+		const TCHAR last = name.IsEmpty() ? 0 : name[name.Len() - 1];
+		const bool has_final = last >= 0xAC00 && last <= 0xD7A3 && (last - 0xAC00) % 28 != 0;
+		hint.text = FText::FromString(FString::Format(*FindText(TEXT("OBJECT_COUNT_ZERO")), { radius, name, has_final ? TEXT("이") : TEXT("가") }));
+	}
+	character->AddHint(hint);
+}
+
+// 기절해서 빼앗긴 힌트의 번호. 기절 적용 뒤에 이어 온다. 그 번호의 힌트를 인벤토리에서 뺀다.
 void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 {
 	S2C_HINT_LOST_PACKET packet;
@@ -163,7 +175,7 @@ void UHintSubsystem::HandleHintLostPacket(const TArray<uint8>& payload)
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	if (APlayerCharacter* character = Cast<APlayerCharacter>(UGameplayStatics::GetPlayerCharacter(GetWorld(), 0)))
 	{
-		character->RemoveHint(FText::FromString(BuildSentence(packet.hint)));
+		character->RemoveHint(packet.hint_id);
 	}
 }
 

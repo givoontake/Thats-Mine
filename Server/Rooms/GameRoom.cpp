@@ -18,12 +18,14 @@
 #include "spawn_points.h"
 #include "random_seed.h"
 #include "shot_spread.h"
-#include "spread_selection.h"
 #include "hitbox_raycast.h"
 #include "hint_types.h"
 #include "treasure_placement.h"
 #include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
+
+// 종류별 힌트 패킷 중 가장 큰 크기. 힌트를 이어 붙일 버퍼를 잡을 때 쓴다.
+constexpr std::size_t MAX_HINT_PACKET_SIZE = std::max(sizeof(S2C_DIRECTION_HINT_PACKET), sizeof(S2C_COUNT_HINT_PACKET));
 
 // 배제 판의 칸마다 칸 번호와 x·y 범위(cm)를 is_covered(cell, x0, x1, y0, y1)에 넘겨 참인 칸을 모은다.
 template <typename CoverCheck>
@@ -89,7 +91,8 @@ void GameRoom::Reset()
 	for (auto& room_player : room_players_) room_player.ClearPlayer();
 	host_id_ = -1;
 	current_player_count_.store(0);
-	pending_action_count_ = 0;
+	pending_relays_.clear();
+	pending_relay_count_ = 0;
 	room_state_.store(RoomState::EMPTY);
 }
 
@@ -100,7 +103,6 @@ bool GameRoom::TryGetRoomInfoSnapshot(RoomInfoSnapshot& snapshot) const
 	if (room_key == 0) return false;
 	snapshot.room_key = room_key;
 	snapshot.room_state = room_state_.load();
-	snapshot.max_player_count = MAX_ROOM_PLAYER_COUNT;
 	snapshot.current_player_count = static_cast<int>(current_player_count_.load());
 	memcpy(snapshot.room_name, room_name_, sizeof(snapshot.room_name));
 	snapshot.is_private = is_private_.load();
@@ -182,8 +184,6 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char
 		S2C_ADD_PUBLIC_ROOM_PACKET public_p;
 		public_p.header.size = static_cast<std::uint16_t>(sizeof(public_p));
 		public_p.header.type = S2C_ADD_PUBLIC_ROOM;
-		public_p.room_key = GetRoomKey();
-		public_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
 		memcpy(public_p.room_name, room_name_, sizeof(public_p.room_name));
 		new_session.SendPacket(reinterpret_cast<char*>(&public_p), public_p.header.size);
 	}
@@ -191,10 +191,7 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char
 		S2C_ADD_PRIVATE_ROOM_PACKET private_p;
 		private_p.header.size = static_cast<std::uint16_t>(sizeof(private_p));
 		private_p.header.type = S2C_ADD_PRIVATE_ROOM;
-		private_p.room_key = GetRoomKey();
-		private_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
 		memcpy(private_p.room_name, room_name_, sizeof(private_p.room_name));
-		memcpy(private_p.room_password, room_password_, sizeof(private_p.room_password));
 		new_session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
 	}
 
@@ -273,20 +270,14 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		AddRoomTask(std::move(task));
 		break;
 	}
-	case C2S_MOVE:
-	case C2S_MOVE_INPUT: {
+	case C2S_MOVE: {
 		// 전원 로딩을 기다리는 동안에는 움직이지 못하므로 이동 상태를 받지 않는다.
 		if (room_state_.load() != RoomState::PLAY || match_phase_ == MatchPhase::LOADING) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		// 되돌리기 확인을 기다리는 동안 받은 이동 상태는 버린다.
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingMoveCorrection()) break;
-		MOVE_STATE move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
-		// 기절 중에는 조작을 받지 않으므로 이동 키 입력과 조준을 버린다. 위치와 공중 단계는 중력과 관성으로 움직인 결과라 평소처럼 검사한다.
-		if (room_player->IsStunned(tick_time_ms_)) {
-			move_state.input_right = 0;
-			move_state.input_forward = 0;
-			move_state.is_aiming = false;
-		}
+		// 기절 중에도 위치와 공중 단계는 중력과 관성으로 움직인 결과라 평소처럼 검사한다.
+		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
 		// 이동 시각은 받은 순간의 서버 시각으로 잡는다. 처리한 틱 시각을 쓰면 같은 간격으로 온 패킷도 틱 하나만큼 간격이 흔들려 빠를수록 속도 검사 오차가 커진다.
 		const bool is_on_steep_slope = move_state.air_phase == AirPhase::FALLING && IsTouchingSteepSlope(move_state.location);
 		const bool is_open_air = move_state.air_phase != AirPhase::GROUND && !IsTouchingSurface(*room_player, move_state.location);
@@ -296,8 +287,38 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 			CorrectMove(*room_player, request_session, result == MoveCheckResult::AIR_CORRECTION);
 			break;
 		}
-		const bool is_input_change = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_MOVE_INPUT;
-		room_player->SetMoveState(move_state, receive_time_ms, is_input_change, is_on_steep_slope, is_open_air);
+		room_player->SetMoveState(move_state, receive_time_ms, is_on_steep_slope, is_open_air);
+		break;
+	}
+	case C2S_MOVE_INPUT:
+	case C2S_AIM:
+	case C2S_EQUIP: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		const int player_id = request_session.GetSessionKey().player_id;
+		const std::uint8_t type = reinterpret_cast<PACKET_HEADER*>(packet)->type;
+		// 기절 중에는 조작을 받지 않으므로 이동 키 입력과 조준을 버린다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
+		if (type != C2S_EQUIP && room_player->IsStunned(tick_time_ms_)) break;
+		if (type == C2S_MOVE_INPUT) {
+			const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
+			room_player->SetMoveInput(request_p->input_right, request_p->input_forward);
+			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, request_p->input_right, request_p->input_forward };
+			QueueRelay(&input_p, sizeof(input_p));
+		}
+		else if (type == C2S_AIM) {
+			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
+			room_player->SetAiming(is_aiming, tick_time_ms_);
+			const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, is_aiming };
+			QueueRelay(&aim_p, sizeof(aim_p));
+		}
+		else {
+			const std::uint8_t weapon = reinterpret_cast<C2S_EQUIP_PACKET*>(packet)->weapon;
+			if (!server_->GetHitboxData().GetWeaponInfo(weapon)) break;
+			room_player->SetWeapon(weapon, tick_time_ms_);
+			const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, weapon };
+			QueueRelay(&equip_p, sizeof(equip_p));
+		}
 		break;
 	}
 	case C2S_MOVE_CORRECTION_ACK: {
@@ -306,27 +327,34 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (room_player) room_player->CompleteMoveCorrection(reinterpret_cast<C2S_MOVE_CORRECTION_ACK_PACKET*>(packet)->correction_id);
 		break;
 	}
-	case C2S_ACTION: {
-		// 인정하지 않은 총 발사는 쏜 사람에게 알려 클라이언트가 발사 번호를 되돌리게 한다.
-		const auto* request_p = reinterpret_cast<C2S_ACTION_PACKET*>(packet);
+	case C2S_ACTION:
+	case C2S_RELOAD: {
+		// 동작은 손에 든 장비로, 재장전은 재장전 패킷의 무기로 판정한다. 인정하지 않은 총 발사는 쏜 사람에게 알려 클라이언트가 발사 번호를 되돌리게 한다.
 		auto* room_player = room_state_.load() == RoomState::PLAY ? FindPlayer(request_session.GetSessionKey()) : nullptr;
-		const bool can_act = room_player && pending_action_count_ < pending_actions_.size() && room_player->GetRoomPlayerState() == RoomPlayerState::PLAY && !room_player->IsStunned(tick_time_ms_);
-		if (!can_act || !AcceptAction(*room_player, request_session, *request_p)) {
-			if (request_p->action == static_cast<std::uint8_t>(PlayerAction::FIRE)) {
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		const bool is_reload = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_RELOAD;
+		const PlayerAction action = is_reload ? PlayerAction::RELOAD : static_cast<PlayerAction>(reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action);
+		const std::uint8_t weapon = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->weapon : room_player->GetWeapon();
+		const bool can_act = pending_relay_count_ < MAX_ROOM_RELAYS_PER_TICK && action <= PlayerAction::PICKUP && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_time_ms_);
+		if (!can_act || !AcceptAction(*room_player, request_session, action, weapon)) {
+			if (action == PlayerAction::FIRE) {
 				S2C_FIRE_REJECTED_PACKET rejected_p;
 				rejected_p.header = { static_cast<std::uint16_t>(sizeof(rejected_p)), S2C_FIRE_REJECTED };
-				rejected_p.weapon = request_p->weapon;
+				rejected_p.weapon = weapon;
 				request_session.SendPacket(reinterpret_cast<char*>(&rejected_p), rejected_p.header.size);
 			}
 			break;
 		}
-		auto& action_p = pending_actions_[pending_action_count_++];
-		action_p.header = { sizeof(action_p), S2C_ACTION };
-		action_p.player_id = request_session.GetSessionKey().player_id;
-		action_p.server_time_ms = tick_time_ms_;
-		action_p.action = request_p->action;
-		action_p.weapon = request_p->weapon;
-		room_player->GetPose().StartAction(request_p->action, request_p->weapon, tick_time_ms_);
+		const int player_id = request_session.GetSessionKey().player_id;
+		if (is_reload) {
+			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, player_id, weapon };
+			QueueRelay(&reload_p, sizeof(reload_p));
+		}
+		else {
+			const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, player_id, static_cast<std::uint8_t>(action) };
+			QueueRelay(&action_p, sizeof(action_p));
+		}
+		room_player->GetPose().StartAction(static_cast<std::uint8_t>(action), weapon, tick_time_ms_);
 		break;
 	}
 	case C2S_SHOT_TRACE: {
@@ -343,18 +371,16 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		ProcessHit(*room_player, *reinterpret_cast<C2S_HIT_PACKET*>(packet));
 		break;
 	}
-	case C2S_BOX_OPEN: {
+	case C2S_BOX_OPEN:
+	case C2S_BOX_SHOT: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
-		ProcessBoxOpen(*room_player, *reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet));
-		break;
-	}
-	case C2S_HINT_PICKUP: {
-		if (room_state_.load() != RoomState::PLAY) break;
-		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
-		ProcessHintPickup(*room_player, *reinterpret_cast<C2S_HINT_PICKUP_PACKET*>(packet));
+		if (reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_BOX_SHOT) {
+			const auto* shot_p = reinterpret_cast<C2S_BOX_SHOT_PACKET*>(packet);
+			ProcessBoxOpen(*room_player, shot_p->box, shot_p->weapon);
+		}
+		else ProcessBoxOpen(*room_player, reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet)->box, std::nullopt);
 		break;
 	}
 	case C2S_BLOCK_USE: {
@@ -518,7 +544,8 @@ void GameRoom::ClearGame()
 	game_start_ms_ = 0;
 	game_end_ms_ = 0;
 	award_end_ms_ = 0;
-	pending_action_count_ = 0;
+	pending_relays_.clear();
+	pending_relay_count_ = 0;
 	S2C_RETURN_TO_ROOM_PACKET return_p;
 	return_p.header = { static_cast<std::uint16_t>(sizeof(return_p)), S2C_RETURN_TO_ROOM };
 	for (auto& room_player : room_players_) {
@@ -551,11 +578,9 @@ void GameRoom::CompletePlayerRemoval(SessionKey session_key, RoomExitType exit_t
 	if (exit_type == RoomExitType::KICK) {
 		auto* session = server_->GetSessionManager().FindSession(session_key);
 		if (session) {
-			S2C_INFO_PACKET info_p;
-			info_p.header.size = static_cast<std::uint16_t>(sizeof(info_p));
-			info_p.header.type = S2C_INFO;
-			info_p.info_code = InfoCode::KICKED;
-			session->SendPacket(reinterpret_cast<char*>(&info_p), info_p.header.size);
+			S2C_KICK_PACKET kick_p;
+			kick_p.header = { static_cast<std::uint16_t>(sizeof(kick_p)), S2C_KICK };
+			session->SendPacket(reinterpret_cast<char*>(&kick_p), kick_p.header.size);
 		}
 	}
 	room_player->ClearPlayer();
@@ -576,8 +601,6 @@ void GameRoom::SendCreateRoom(Session& session)
 		S2C_ADD_PUBLIC_ROOM_PACKET public_p;
 		public_p.header.size = static_cast<std::uint16_t>(sizeof(public_p));
 		public_p.header.type = S2C_ADD_PUBLIC_ROOM;
-		public_p.room_key = GetRoomKey();
-		public_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
 		memcpy(public_p.room_name, room_name_, sizeof(public_p.room_name));
 		session.SendPacket(reinterpret_cast<char*>(&public_p), public_p.header.size);
 	}
@@ -585,10 +608,7 @@ void GameRoom::SendCreateRoom(Session& session)
 		S2C_ADD_PRIVATE_ROOM_PACKET private_p;
 		private_p.header.size = static_cast<std::uint16_t>(sizeof(private_p));
 		private_p.header.type = S2C_ADD_PRIVATE_ROOM;
-		private_p.room_key = GetRoomKey();
-		private_p.max_player_count = MAX_ROOM_PLAYER_COUNT;
 		memcpy(private_p.room_name, room_name_, sizeof(private_p.room_name));
-		memcpy(private_p.room_password, room_password_, sizeof(private_p.room_password));
 		session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
 	}
 	S2C_UPDATE_HOST_PACKET host_p{};
@@ -700,36 +720,18 @@ void GameRoom::StartGame(int requester_id)
 	game_start_ms_ = 0;
 	match_phase_ = MatchPhase::LOADING;
 	last_pose_tick_ms_ = 0;
-	// 이번 게임의 탑 자리를 후보 중에서 고르게 퍼뜨려 고른다. 고른 순서대로 종류를 번갈아 정해 종류마다 고르게 퍼지게 한다. 보물은 놓인 탑을 피한다.
-	// TOWER_SPAWN_ENABLED가 거짓이면 탑 없이 빈 배치를 보낸다.
-	const std::vector<DirectX::XMFLOAT3>& tower_candidates = server_->GetTowerCandidateData().GetCandidates();
-	const std::vector<std::size_t> tower_indices = TOWER_SPAWN_ENABLED ? SelectSpreadIndices(tower_candidates, TOWER_COUNT, TOWER_MIN_DISTANCE) : std::vector<std::size_t>{};
-	tower_placements_.clear();
-	tower_layout_p_ = {};
-	for (std::size_t order = 0; order < tower_indices.size(); ++order) {
-		const TowerPlacement& placement = tower_placements_.emplace_back(TowerPlacement{ tower_indices[order], static_cast<TowerKind>(order % TOWER_KIND_COUNT) });
-		const DirectX::XMFLOAT3& location = tower_candidates[placement.candidate_index];
-		TOWER_ENTRY& entry = tower_layout_p_.entries[tower_layout_p_.tower_count++];
-		entry.kind = static_cast<std::uint8_t>(placement.kind);
-		entry.location[0] = location.x;
-		entry.location[1] = location.y;
-		entry.location[2] = location.z;
-	}
-	tower_layout_p_.header = { static_cast<std::uint16_t>(offsetof(S2C_TOWER_LAYOUT_PACKET, entries) + tower_layout_p_.tower_count * sizeof(TOWER_ENTRY)), S2C_TOWER_LAYOUT };
-	placed_objects_ = server_->GetMapData().GetCollisionObjects().CollectPlacedObjects(tower_placements_);
-	// 보물을 놓고 그 위치로 힌트를 만든 뒤, 힌트 수에 맞춰 상자를 놓는다. 보물은 탑만 피하므로 상자보다 먼저 놓는다.
+	// 보물을 놓고 그 위치로 힌트를 만든 뒤, 힌트 수에 맞춰 상자를 놓는다.
 	PlaceTreasure();
 	shot_seed_ = static_cast<std::uint64_t>(CreateRandomSeed()) << 32 | CreateRandomSeed();
 	GenerateHints();
 	PlaceBoxes(player_count);
-	hint_drops_.clear();
 	removed_cells_ = 0;
 	next_area_removal_ms_ = 0;
 	game_end_ms_ = 0;
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·꽃밭) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
-// 보물을 감싼 구가 배치물(건물·나무·바위·탑)과 겹치지 않는 곳이 나올 때까지 다시 뽑는다.
+// 보물을 감싼 구가 배치물(건물·나무·바위)과 겹치지 않는 곳이 나올 때까지 다시 뽑는다.
 // 바닥은 그 사각형 안 가장 낮은 땅에 맞춰 뜨지 않게 한다.
 void GameRoom::PlaceTreasure()
 {
@@ -741,7 +743,7 @@ void GameRoom::PlaceTreasure()
 	for (int attempt = 0; attempt < TREASURE_PLACE_ATTEMPTS; ++attempt) {
 		const float x = random_x(random);
 		const float y = random_y(random);
-		const std::optional<float> ground = FindTreasureGround(server_->GetMapData(), server_->GetMapRegionData(), x, y, placed_objects_);
+		const std::optional<float> ground = FindTreasureGround(server_->GetMapData(), server_->GetMapRegionData(), x, y);
 		if (!ground) continue;
 		treasure_placement_ = { { x, y, *ground }, random_yaw(random) };
 		return;
@@ -749,7 +751,7 @@ void GameRoom::PlaceTreasure()
 	std::cerr << "Treasure place fail.. " << std::endl;
 }
 
-// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 보임, 물체 종류마다 반경마다 개수 순서다. 보임은 HINT_VIEW_ENABLED일 때만 만든다.
+// 최종 보물 위치로 이번 게임의 힌트 목록을 만든다. 방향, 물체 종류마다 반경마다 개수 순서다.
 // 거리는 보물 바닥에서 잰다.
 void GameRoom::GenerateHints()
 {
@@ -757,14 +759,10 @@ void GameRoom::GenerateHints()
 	const float y = treasure_placement_.location.y;
 	const float z = treasure_placement_.location.z;
 	hints_ = server_->GetDirectionHintData().JudgeDirections(x, y);
-	if (HINT_VIEW_ENABLED) {
-		const std::vector<HINT_ENTRY> view_hints = server_->GetViewHintData().JudgeViews(server_->GetMapData(), x, y);
-		hints_.insert(hints_.end(), view_hints.begin(), view_hints.end());
-	}
 	for (std::uint8_t radius = 0; radius < std::size(HINT_OBJECT_COUNT_RADII); ++radius) {
 		const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, z, HINT_OBJECT_COUNT_RADII[radius]);
 		for (std::size_t kind = 0; kind < object_counts.size(); ++kind) {
-			hints_.push_back({ static_cast<std::uint8_t>(HintKind::OBJECT_COUNT), static_cast<std::uint8_t>(kind), static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)), true, radius });
+			hints_.push_back(CountHint{ static_cast<std::uint8_t>(kind), radius, static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)) });
 		}
 	}
 }
@@ -855,6 +853,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	ProcessLoadedPlayers();
 	ProcessGameStart();
 	ProcessAreaRemoval();
+	ProcessStunRelease();
 	ProcessTimeLimit();
 	// 시상식 중에는 게임 진행을 멈추고, 끝날 시각이 되면 방으로 돌려보낸다.
 	if (award_end_ms_ != 0) {
@@ -895,35 +894,49 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		send_data_size += packet_size;
 	};
 
-	S2C_MOVE_PACKET move_p;
-	move_p.player_count = 0;
 	for (auto& room_player : room_players_) {
 		if (!room_player.HasSession() || !room_player.CanRelayMoveState(tick_time_ms)) continue;
-		auto& entry = move_p.entries[move_p.player_count++];
-		entry.player_id = room_player.GetSessionKey().player_id;
-		entry.server_time_ms = room_player.GetMoveTimeMs();
-		entry.move_state = room_player.GetMoveState();
+		const MOVE_STATE& state = room_player.GetMoveState();
+		S2C_MOVE_PACKET move_p;
+		move_p.header = { static_cast<std::uint16_t>(sizeof(move_p)), S2C_MOVE };
+		move_p.player_id = room_player.GetSessionKey().player_id;
+		std::memcpy(move_p.location, state.location, sizeof(move_p.location));
+		std::memcpy(move_p.velocity, state.velocity, sizeof(move_p.velocity));
+		move_p.yaw = state.yaw;
+		move_p.view_pitch = state.view_pitch;
+		move_p.air_phase = state.air_phase;
+		append(&move_p, sizeof(move_p));
 		room_player.MarkMoveStateRelayed(tick_time_ms);
 	}
-	if (move_p.player_count > 0) {
-		const int move_size = static_cast<int>(offsetof(S2C_MOVE_PACKET, entries) + move_p.player_count * sizeof(S2C_MOVE_ENTRY));
-		move_p.header = { static_cast<std::uint16_t>(move_size), S2C_MOVE };
-		append(&move_p, move_size);
+	for (std::size_t offset = 0; offset < pending_relays_.size();) {
+		const int packet_size = reinterpret_cast<const PACKET_HEADER*>(pending_relays_.data() + offset)->size;
+		append(pending_relays_.data() + offset, packet_size);
+		offset += packet_size;
 	}
-	for (std::size_t i = 0; i < pending_action_count_; ++i) append(&pending_actions_[i], sizeof(pending_actions_[i]));
-	pending_action_count_ = 0;
+	pending_relays_.clear();
+	pending_relay_count_ = 0;
 	flush();
 }
 
-static S2C_HINT_DROP_PACKET MakeHintDropPacket(std::uint16_t drop, const HintDrop& hint_drop)
+bool GameRoom::QueueRelay(const void* packet, int packet_size)
 {
-	S2C_HINT_DROP_PACKET drop_p;
-	drop_p.header = { static_cast<std::uint16_t>(sizeof(drop_p)), S2C_HINT_DROP };
-	drop_p.drop = drop;
-	drop_p.location[0] = hint_drop.location.x;
-	drop_p.location[1] = hint_drop.location.y;
-	drop_p.location[2] = hint_drop.location.z;
-	return drop_p;
+	if (pending_relay_count_ >= MAX_ROOM_RELAYS_PER_TICK) return false;
+	const char* bytes = static_cast<const char*>(packet);
+	pending_relays_.insert(pending_relays_.end(), bytes, bytes + packet_size);
+	++pending_relay_count_;
+	return true;
+}
+
+int GameRoom::AppendInputState(char* buffer, const Player& player) const
+{
+	const int player_id = player.GetSessionKey().player_id;
+	const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, player.GetInputRight(), player.GetInputForward() };
+	const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, player.IsAiming() };
+	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, player.GetWeapon() };
+	std::memcpy(buffer, &input_p, sizeof(input_p));
+	std::memcpy(buffer + sizeof(input_p), &aim_p, sizeof(aim_p));
+	std::memcpy(buffer + sizeof(input_p) + sizeof(aim_p), &equip_p, sizeof(equip_p));
+	return sizeof(input_p) + sizeof(aim_p) + sizeof(equip_p);
 }
 
 // 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.
@@ -937,26 +950,42 @@ void GameRoom::ProcessLoadedPlayers()
 	}
 	if (!has_loaded_player) return;
 
-	// 시작 좌표는 방 슬롯 번호로 정한다. 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
-	S2C_SPAWN_PACKET joined_p;
-	S2C_SPAWN_PACKET all_p;
-	joined_p.player_count = 0;
-	all_p.player_count = 0;
+	// 합류하는 플레이어의 시작 좌표는 방 슬롯 번호로 정하고, 이미 플레이 중인 플레이어는 지금 자리를 보낸다.
+	// 플레이어마다 스폰 뒤에 이동 키 입력·조준·장비를 이어 붙여, 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
+	constexpr int SPAWN_STATE_SIZE = sizeof(S2C_SPAWN_PACKET) + sizeof(S2C_MOVE_INPUT_PACKET) + sizeof(S2C_AIM_PACKET) + sizeof(S2C_EQUIP_PACKET);
+	char joined_buffer[MAX_ROOM_PLAYER_COUNT * SPAWN_STATE_SIZE];
+	char all_buffer[MAX_ROOM_PLAYER_COUNT * SPAWN_STATE_SIZE];
+	int joined_size = 0;
+	int all_size = 0;
 	for (int slot = 0; slot < MAX_ROOM_PLAYER_COUNT; ++slot) {
 		auto& room_player = room_players_[slot];
 		if (!FindSession(room_player)) continue;
 		const RoomPlayerState state = room_player.GetRoomPlayerState();
 		if (state != RoomPlayerState::LOADED && state != RoomPlayerState::PLAY) continue;
-		const SpawnPoint& point = START_SPAWN_POINTS[slot];
-		const S2C_SPAWN_ENTRY entry{ room_player.GetSessionKey().player_id, { point.x, point.y, point.z }, point.yaw };
-		all_p.entries[all_p.player_count++] = entry;
+		S2C_SPAWN_PACKET spawn_p;
+		spawn_p.header = { static_cast<std::uint16_t>(sizeof(spawn_p)), S2C_SPAWN };
+		spawn_p.player_id = room_player.GetSessionKey().player_id;
 		if (state == RoomPlayerState::LOADED) {
-			joined_p.entries[joined_p.player_count++] = entry;
-			room_player.SetSpawnLocation(entry.location, entry.yaw, tick_time_ms_);
+			const SpawnPoint& point = START_SPAWN_POINTS[slot];
+			spawn_p.location[0] = point.x;
+			spawn_p.location[1] = point.y;
+			spawn_p.location[2] = point.z;
+			spawn_p.yaw = point.yaw;
+			room_player.SetSpawnLocation(spawn_p.location, spawn_p.yaw, tick_time_ms_);
+		}
+		else {
+			std::memcpy(spawn_p.location, room_player.GetMoveState().location, sizeof(spawn_p.location));
+			spawn_p.yaw = room_player.GetMoveState().yaw;
+		}
+		char* entry = all_buffer + all_size;
+		std::memcpy(entry, &spawn_p, sizeof(spawn_p));
+		const int entry_size = sizeof(spawn_p) + AppendInputState(entry + sizeof(spawn_p), room_player);
+		all_size += entry_size;
+		if (state == RoomPlayerState::LOADED) {
+			std::memcpy(joined_buffer + joined_size, entry, entry_size);
+			joined_size += entry_size;
 		}
 	}
-	joined_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + joined_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
-	all_p.header = { static_cast<std::uint16_t>(offsetof(S2C_SPAWN_PACKET, entries) + all_p.player_count * sizeof(S2C_SPAWN_ENTRY)), S2C_SPAWN };
 	S2C_PLAY_START_PACKET start_p;
 	start_p.header = { static_cast<std::uint16_t>(sizeof(start_p)), S2C_PLAY_START };
 	S2C_GAME_READY_PACKET ready_p;
@@ -966,13 +995,12 @@ void GameRoom::ProcessLoadedPlayers()
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 	game_start_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, game_start_ms_ + GAME_TIME_LIMIT_MS - tick_time_ms_));
 
-	// 합류하는 플레이어는 탑·상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
+	// 합류하는 플레이어는 상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			room_player.GetPose().Reset(server_->GetHitboxData());
-			session->SendPacket(reinterpret_cast<char*>(&tower_layout_p_), tower_layout_p_.header.size);
 			S2C_SHOT_SEED_PACKET seed_p;
 			seed_p.header = { static_cast<std::uint16_t>(sizeof(seed_p)), S2C_SHOT_SEED };
 			seed_p.seed = shot_seed_;
@@ -980,16 +1008,11 @@ void GameRoom::ProcessLoadedPlayers()
 			if (match_phase_ == MatchPhase::STARTED) {
 				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
 				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
-				for (std::size_t index = 0; index < hint_drops_.size(); ++index) {
-					if (hint_drops_[index].is_picked) continue;
-					const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(index), hint_drops_[index]);
-					session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
-				}
 			}
 			else {
 				session->SendLargePacket(box_layout_packet_.data(), static_cast<int>(box_layout_packet_.size()));
 			}
-			session->SendPacket(reinterpret_cast<char*>(&all_p), all_p.header.size);
+			session->SendPacket(all_buffer, all_size);
 			session->SendPacket(reinterpret_cast<char*>(&start_p), start_p.header.size);
 			if (match_phase_ == MatchPhase::STARTED) {
 				session->SendPacket(reinterpret_cast<char*>(&game_start_p), game_start_p.header.size);
@@ -1003,7 +1026,7 @@ void GameRoom::ProcessLoadedPlayers()
 			room_player.SetRoomPlayerState(RoomPlayerState::PLAY);
 		}
 		else if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) {
-			session->SendPacket(reinterpret_cast<char*>(&joined_p), joined_p.header.size);
+			session->SendPacket(joined_buffer, joined_size);
 		}
 	}
 }
@@ -1021,10 +1044,9 @@ static S2C_AMMO_PACKET MakeAmmoPacket(std::uint8_t weapon, const WeaponAmmo& amm
 
 // 총 발사와 재장전은 서버 탄약 상태로, 곡괭이 휘두르기는 사용 가능 횟수로 확인해 인정한다.
 // 인정하지 않으면 그 사람에게 서버 상태를 보내 클라이언트를 맞춘다. 그 밖의 동작은 그대로 인정한다.
-bool GameRoom::AcceptAction(Player& player, Session& session, const C2S_ACTION_PACKET& request_p)
+bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon_value)
 {
-	const PlayerAction action = static_cast<PlayerAction>(request_p.action);
-	if (action == PlayerAction::MELEE && request_p.weapon == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
+	if (action == PlayerAction::MELEE && weapon_value == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
 		if (player.TryUsePickaxe(tick_time_ms_)) {
 			DigTreasure(player);
 			return true;
@@ -1036,12 +1058,12 @@ bool GameRoom::AcceptAction(Player& player, Session& session, const C2S_ACTION_P
 		session.SendPacket(reinterpret_cast<char*>(&charges_p), charges_p.header.size);
 		return false;
 	}
-	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(request_p.weapon);
+	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(weapon_value);
 	if (!weapon || !weapon->is_hitscan || (action != PlayerAction::FIRE && action != PlayerAction::RELOAD)) return true;
-	if (action == PlayerAction::FIRE ? player.TryFire(request_p.weapon, *weapon, tick_time_ms_) : player.TryStartReload(request_p.weapon, *weapon, tick_time_ms_)) return true;
-	const WeaponAmmo* ammo = player.GetAmmo(request_p.weapon);
+	if (action == PlayerAction::FIRE ? player.TryFire(weapon_value, *weapon, tick_time_ms_) : player.TryStartReload(weapon_value, *weapon, tick_time_ms_)) return true;
+	const WeaponAmmo* ammo = player.GetAmmo(weapon_value);
 	if (!ammo) return false;
-	S2C_AMMO_PACKET ammo_p = MakeAmmoPacket(request_p.weapon, *ammo);
+	S2C_AMMO_PACKET ammo_p = MakeAmmoPacket(weapon_value, *ammo);
 	session.SendPacket(reinterpret_cast<char*>(&ammo_p), ammo_p.header.size);
 	return false;
 }
@@ -1059,11 +1081,7 @@ void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
 	S2C_HIT_PACKET hit_p;
 	hit_p.header = { static_cast<std::uint16_t>(sizeof(hit_p)), S2C_HIT };
 	hit_p.shooter_player_id = shooter.GetSessionKey().player_id;
-	hit_p.target_player_id = request_p.target_player_id;
-	hit_p.part = request_p.part;
-	for (const Player* receiver : { static_cast<const Player*>(&shooter), static_cast<const Player*>(target) }) {
-		if (auto session = FindSession(*receiver)) session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
-	}
+	if (auto session = FindSession(*target)) session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
 	AddStunGauge(shooter, *target, request_p);
 }
 
@@ -1096,22 +1114,44 @@ void GameRoom::ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& re
 }
 
 // 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
-// 최대치에 닿으면 기절을 방 전체에 알리고 이동을 멈춘 상태로 중계한 뒤 가진 힌트 하나를 떨어뜨리고, 쏜 사람의 기절왕 기록을 늘린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
+// 최대치에 닿으면 기절을 방 전체에 알리고 입력이 없는 상태로 중계한 뒤, 기절한 사람의 힌트 하나를 쏜 사람에게 넘기고 쏜 사람의 기절왕 기록을 늘린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
 void GameRoom::AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p)
 {
 	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
 	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
-		target.StopMovement();
-		S2C_STUN_PACKET stun_p;
-		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN };
+		// 기절하면 조작을 받지 않으므로 이동 키 입력과 조준을 지우고 다른 플레이어에게 중계한다. 이동은 중력과 관성대로 이어진다.
+		target.SetMoveInput(0, 0);
+		target.SetAiming(false, tick_time_ms_);
+		const int target_id = target.GetSessionKey().player_id;
+		const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, target_id, 0, 0 };
+		const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, target_id, false };
+		QueueRelay(&input_p, sizeof(input_p));
+		QueueRelay(&aim_p, sizeof(aim_p));
+		S2C_STUN_APPLY_PACKET stun_p;
+		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN_APPLY };
 		stun_p.player_id = request_p.target_player_id;
-		stun_p.duration_ms = STUN_DURATION_MS;
-		stun_p.protection_ms = static_cast<std::uint32_t>(target.GetStunProtectionMs());
+		// 기절한 사람의 힌트 하나를 무작위로 골라 쏜 사람에게 넘긴다. 쏜 사람에게는 새로 얻은 힌트를, 기절한 사람에게는 잃은 힌트 번호를 기절 적용 뒤에 붙인다.
+		char shooter_buffer[sizeof(stun_p) + MAX_HINT_PACKET_SIZE];
+		char target_buffer[sizeof(stun_p) + sizeof(S2C_HINT_LOST_PACKET)];
+		std::memcpy(shooter_buffer, &stun_p, sizeof(stun_p));
+		std::memcpy(target_buffer, &stun_p, sizeof(stun_p));
+		int shooter_size = sizeof(stun_p);
+		int target_size = sizeof(stun_p);
+		if (const std::optional<std::uint32_t> hint = target.TakeRandomHint()) {
+			if (shooter.AddHint(*hint)) shooter_size += AppendHintPacket(shooter_buffer + shooter_size, *hint);
+			S2C_HINT_LOST_PACKET lost_p;
+			lost_p.header = { static_cast<std::uint16_t>(sizeof(lost_p)), S2C_HINT_LOST };
+			lost_p.hint_id = static_cast<std::uint16_t>(*hint);
+			std::memcpy(target_buffer + target_size, &lost_p, sizeof(lost_p));
+			target_size += sizeof(lost_p);
+		}
 		for (auto& room_player : room_players_) {
 			auto session = FindSession(room_player);
-			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&stun_p), stun_p.header.size);
+			if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+			if (&room_player == &shooter) session->SendPacket(shooter_buffer, shooter_size);
+			else if (&room_player == &target) session->SendPacket(target_buffer, target_size);
+			else session->SendPacket(reinterpret_cast<char*>(&stun_p), stun_p.header.size);
 		}
-		DropHint(target);
 		shooter.AddAwardCount(AwardCategory::STUN, tick_time_ms_);
 		return;
 	}
@@ -1175,7 +1215,7 @@ bool GameRoom::CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& c
 	const MOVE_STATE& state = shooter.GetMoveState();
 	const float yaw = DirectX::XMConvertToRadians(state.yaw);
 	const float tolerance = CAMERA_POSITION_TOLERANCE + std::hypot(state.velocity[0], state.velocity[1], state.velocity[2]) * CAMERA_FRAME_ALLOWANCE_SECONDS;
-	if (state.is_aiming) {
+	if (shooter.IsAiming()) {
 		const float horizontal = std::hypot(camera.x - (state.location[0] + AIM_CAMERA_FORWARD * std::cos(yaw)), camera.y - (state.location[1] + AIM_CAMERA_FORWARD * std::sin(yaw)));
 		if (horizontal > tolerance || std::abs(camera.z - (state.location[2] + AIM_CAMERA_UP)) > tolerance + AIM_CAMERA_BOB_RANGE) return false;
 		return !IsShotPathBlocked(camera, hit_point);
@@ -1197,13 +1237,13 @@ bool GameRoom::CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& c
 			DirectX::XMStoreFloat3(&probe_end, DirectX::XMVectorAdd(DirectX::XMLoadFloat3(&camera), DirectX::XMVectorScale(DirectX::XMVectorSet(offset[0], offset[1], offset[2], 0.0f), probe / std::max(distance, 1.0f))));
 			const std::optional<float> ground = landscape.GetGroundHeight(camera.x, camera.y);
 			bool is_touching = (ground && camera.z - probe <= *ground) || landscape.IsSegmentBlockedByLandscape(camera, probe_end)
-				|| collision_objects.IsCapsuleOverlappingObjects(camera, probe, probe, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN, placed_objects_);
+				|| collision_objects.IsCapsuleOverlappingObjects(camera, probe, probe, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN);
 			for (const auto& room_player : room_players_) {
 				if (&room_player == &shooter || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
 				const MOVE_STATE& other = room_player.GetMoveState();
 				is_touching = is_touching || IsInsideCharacterCapsule(camera, other.location, probe + std::hypot(other.velocity[0], other.velocity[1], other.velocity[2]) * HIT_LATENCY_ALLOWANCE_SECONDS);
 			}
-			if (!is_touching || landscape.IsSegmentBlockedByLandscape(pivot, camera) || collision_objects.IsSegmentBlockedByObjects(pivot, camera, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN, placed_objects_)) return false;
+			if (!is_touching || landscape.IsSegmentBlockedByLandscape(pivot, camera) || collision_objects.IsSegmentBlockedByObjects(pivot, camera, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN)) return false;
 		}
 		// 팔은 시선 반대 방향 팔 길이와 시선 기준 오른쪽·위 오프셋을 더한 모양이다. 높이로 상하 각도를, 수평 방향으로 좌우 각도를 구한다.
 		// 팔 시작점 가까이 당겨졌으면 방향을 구할 수 없으므로 보지 않는다.
@@ -1224,7 +1264,7 @@ bool GameRoom::CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& c
 	if (horizontal > arm_length) return false;
 	const float raise = camera.z - state.location[2] + std::sqrt(arm_length * arm_length - horizontal * horizontal);
 	const DirectX::XMFLOAT3 below(camera.x, camera.y, camera.z - CAMERA_GROUND_CLEARANCE - tolerance);
-	if (raise <= 0.0f || (!landscape.IsSegmentBlockedByLandscape(camera, below) && !collision_objects.IsSegmentBlockedByObjects(camera, below, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN, placed_objects_))) return false;
+	if (raise <= 0.0f || (!landscape.IsSegmentBlockedByLandscape(camera, below) && !collision_objects.IsSegmentBlockedByObjects(camera, below, TERRAIN_BLOCKS_VISIBILITY | TERRAIN_BLOCKS_PAWN))) return false;
 	return is_arm_camera(state.location[2] + raise) && !IsShotPathBlocked(camera, hit_point);
 }
 
@@ -1241,7 +1281,7 @@ bool GameRoom::IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::
 	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorLerp(start_v, end_v, HIT_OCCLUSION_MARGIN / length));
 	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorLerp(start_v, end_v, 1.0f - HIT_OCCLUSION_MARGIN / length));
 	return server_->GetMapData().GetLandscape().IsSegmentBlockedByLandscape(segment_start, segment_end)
-		|| server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+		|| server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY);
 }
 
 // 명중에 쓴 발사의 탄 퍼짐을 확인한다. 쓴 퍼짐 크기는 그 발의 최소치와 무기 최대 사이여야 한다.
@@ -1265,24 +1305,24 @@ bool GameRoom::CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& requ
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
 // 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
 // 아이템 상자는 그 아이템을, 블록 상자는 그 블록을 가진 것으로 기록하고 보낸다.
-void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request_p)
+void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box, std::optional<std::uint8_t> shot_weapon)
 {
 	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
-	if (request_p.is_shot && !opener.ClaimShot(request_p.weapon)) return;
-	if (match_phase_ != MatchPhase::STARTED || request_p.box >= is_box_opened_.size() || is_box_opened_[request_p.box] || !CheckBoxOpen(opener, request_p)) return;
-	is_box_opened_[request_p.box] = true;
+	if (shot_weapon && !opener.ClaimShot(*shot_weapon)) return;
+	if (match_phase_ != MatchPhase::STARTED || box >= is_box_opened_.size() || is_box_opened_[box] || !CheckBoxOpen(opener, box, shot_weapon)) return;
+	is_box_opened_[box] = true;
 	opener.AddAwardCount(AwardCategory::BOX_OPEN, tick_time_ms_);
 
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
-	open_p.box = request_p.box;
+	open_p.box = box;
 	// 연 사람에게 보내는 열림만 연 사람 표시를 켠다.
 	open_p.is_opener = true;
-	char opener_buffer[sizeof(open_p) + std::max({ sizeof(S2C_HINT_PACKET), sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET), sizeof(S2C_BLOCK_PACKET) })];
+	char opener_buffer[sizeof(open_p) + std::max({ MAX_HINT_PACKET_SIZE, sizeof(S2C_AMMO_PACKET), sizeof(S2C_ITEM_PACKET), sizeof(S2C_BLOCK_PACKET) })];
 	std::memcpy(opener_buffer, &open_p, sizeof(open_p));
 	open_p.is_opener = false;
 	int opener_size = sizeof(open_p);
-	const BoxContent& content = box_contents_[request_p.box];
+	const BoxContent& content = box_contents_[box];
 	if (content.kind == BoxContentKind::HINT) {
 		opener.AddHint(content.value);
 		opener_size += AppendHintPacket(opener_buffer + opener_size, content.value);
@@ -1324,17 +1364,17 @@ void GameRoom::ProcessBoxOpen(Player& opener, const C2S_BOX_OPEN_PACKET& request
 
 // F키로 열면 캡슐 중심에서 상자 중심까지 HINT_BOX_OPEN_DISTANCE 안이어야 한다.
 // 쏴서 열면 선물이어야 하고, 총의 사거리 안이며, 캡슐 중심에서 상자까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않아야 한다.
-bool GameRoom::CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const
+bool GameRoom::CheckBoxOpen(const Player& opener, std::uint16_t box, std::optional<std::uint8_t> shot_weapon) const
 {
 	if (!opener.HasMoveState()) return false;
-	const BoxPlacement& placement = server_->GetBoxCandidateData().GetPlacements()[box_placement_indices_[request_p.box]];
+	const BoxPlacement& placement = server_->GetBoxCandidateData().GetPlacements()[box_placement_indices_[box]];
 	const float* location = opener.GetMoveState().location;
 	const DirectX::XMFLOAT3 start(location[0], location[1], location[2]);
-	if (!request_p.is_shot) return std::hypot(placement.center.x - start.x, placement.center.y - start.y, placement.center.z - start.z) <= HINT_BOX_OPEN_DISTANCE;
+	if (!shot_weapon) return std::hypot(placement.center.x - start.x, placement.center.y - start.y, placement.center.z - start.z) <= HINT_BOX_OPEN_DISTANCE;
 
 	const DirectX::XMFLOAT3 target(placement.location.x, placement.location.y, placement.location.z + HINT_BOX_SHOT_TARGET_HEIGHT);
 	const float distance = std::hypot(target.x - start.x, target.y - start.y, target.z - start.z);
-	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(request_p.weapon);
+	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(*shot_weapon);
 	if (placement.kind != BoxKind::GIFT || !weapon || !weapon->is_hitscan || distance > weapon->hitscan_distance) return false;
 	if (distance <= HIT_OCCLUSION_MARGIN + HINT_BOX_SHOT_END_MARGIN) return true;
 	const DirectX::XMVECTOR start_v = DirectX::XMLoadFloat3(&start);
@@ -1345,41 +1385,31 @@ bool GameRoom::CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& req
 	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(start_v, DirectX::XMVectorScale(direction_v, distance - HINT_BOX_SHOT_END_MARGIN)));
 	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
 	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
-	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY, placed_objects_);
+	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY);
 }
 
 // 힌트 목록 번호의 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다.
 int GameRoom::AppendHintPacket(char* buffer, std::uint32_t hint) const
 {
-	S2C_HINT_PACKET hint_p;
-	hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_HINT };
-	hint_p.hint = hints_[hint];
+	if (const DirectionHint* direction = std::get_if<DirectionHint>(&hints_[hint])) {
+		S2C_DIRECTION_HINT_PACKET hint_p;
+		hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_DIRECTION_HINT };
+		hint_p.hint_id = static_cast<std::uint16_t>(hint);
+		hint_p.area = direction->area;
+		hint_p.direction = direction->direction;
+		hint_p.is_true = direction->is_true;
+		std::memcpy(buffer, &hint_p, sizeof(hint_p));
+		return sizeof(hint_p);
+	}
+	const CountHint& count = std::get<CountHint>(hints_[hint]);
+	S2C_COUNT_HINT_PACKET hint_p;
+	hint_p.header = { static_cast<std::uint16_t>(sizeof(hint_p)), S2C_COUNT_HINT };
+	hint_p.hint_id = static_cast<std::uint16_t>(hint);
+	hint_p.object_kind = count.object_kind;
+	hint_p.radius = count.radius;
+	hint_p.count = count.count;
 	std::memcpy(buffer, &hint_p, sizeof(hint_p));
 	return sizeof(hint_p);
-}
-
-// 기절한 플레이어가 가진 힌트 중 하나를 서버가 마지막으로 인정한 위치에 떨어뜨린다. 가진 힌트가 없으면 아무것도 하지 않는다.
-// 플레이 중인 방 전체에 드랍을 보내고, 떨어뜨린 사람에게는 드랍 뒤에 잃은 힌트를 이어 보낸다.
-void GameRoom::DropHint(Player& target)
-{
-	if (!target.HasMoveState()) return;
-	const std::optional<std::uint32_t> hint = target.TakeRandomHint();
-	if (!hint) return;
-	const float* location = target.GetMoveState().location;
-	const HintDrop& hint_drop = hint_drops_.emplace_back(HintDrop{ *hint, { location[0], location[1], location[2] }, false });
-	const S2C_HINT_DROP_PACKET drop_p = MakeHintDropPacket(static_cast<std::uint16_t>(hint_drops_.size() - 1), hint_drop);
-	S2C_HINT_LOST_PACKET lost_p;
-	lost_p.header = { static_cast<std::uint16_t>(sizeof(lost_p)), S2C_HINT_LOST };
-	lost_p.hint = hints_[*hint];
-	char target_buffer[sizeof(drop_p) + sizeof(lost_p)];
-	std::memcpy(target_buffer, &drop_p, sizeof(drop_p));
-	std::memcpy(target_buffer + sizeof(drop_p), &lost_p, sizeof(lost_p));
-	for (auto& room_player : room_players_) {
-		auto session = FindSession(room_player);
-		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		if (&room_player == &target) session->SendPacket(target_buffer, sizeof(target_buffer));
-		else session->SendPacket(reinterpret_cast<const char*>(&drop_p), drop_p.header.size);
-	}
 }
 
 // 지우기 차례가 되면 보물 칸과 이미 지운 칸을 뺀 배제 판 칸 하나를 무작위로 골라 지운다. 지울 칸이 없으면 그 차례는 건너뛴다.
@@ -1397,8 +1427,7 @@ void GameRoom::ProcessAreaRemoval()
 	removal_p.header = { static_cast<std::uint16_t>(sizeof(removal_p)), S2C_AREA_REMOVAL };
 	if (!candidates.empty()) {
 		std::mt19937 random(CreateRandomSeed());
-		removal_p.cell = candidates[std::uniform_int_distribution<std::size_t>(0, candidates.size() - 1)(random)];
-		removed_cells_ |= 1ULL << removal_p.cell;
+		removed_cells_ |= 1ULL << candidates[std::uniform_int_distribution<std::size_t>(0, candidates.size() - 1)(random)];
 	}
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
@@ -1456,13 +1485,12 @@ void GameRoom::DigTreasure(const Player& digger)
 	S2C_TREASURE_FOUND_PACKET found_p;
 	found_p.header = { static_cast<std::uint16_t>(sizeof(found_p)), S2C_TREASURE_FOUND };
 	found_p.player_id = digger.GetSessionKey().player_id;
-	found_p.location[0] = treasure_placement_.location.x;
-	found_p.location[1] = treasure_placement_.location.y;
-	found_p.location[2] = treasure_placement_.location.z;
-	found_p.yaw = treasure_placement_.yaw;
+	char buffer[sizeof(found_p) + sizeof(S2C_TREASURE_LOCATION_PACKET)];
+	std::memcpy(buffer, &found_p, sizeof(found_p));
+	AppendTreasureLocation(buffer + sizeof(found_p));
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
-		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&found_p), found_p.header.size);
+		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(buffer, sizeof(buffer));
 	}
 }
 
@@ -1472,13 +1500,39 @@ void GameRoom::ProcessTimeLimit()
 	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
 	S2C_TIME_OVER_PACKET over_p;
 	over_p.header = { static_cast<std::uint16_t>(sizeof(over_p)), S2C_TIME_OVER };
-	over_p.location[0] = treasure_placement_.location.x;
-	over_p.location[1] = treasure_placement_.location.y;
-	over_p.location[2] = treasure_placement_.location.z;
-	over_p.yaw = treasure_placement_.yaw;
+	char buffer[sizeof(over_p) + sizeof(S2C_TREASURE_LOCATION_PACKET)];
+	std::memcpy(buffer, &over_p, sizeof(over_p));
+	AppendTreasureLocation(buffer + sizeof(over_p));
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
-		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&over_p), over_p.header.size);
+		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(buffer, sizeof(buffer));
+	}
+}
+
+void GameRoom::AppendTreasureLocation(char* buffer) const
+{
+	S2C_TREASURE_LOCATION_PACKET location_p;
+	location_p.header = { static_cast<std::uint16_t>(sizeof(location_p)), S2C_TREASURE_LOCATION };
+	location_p.location[0] = treasure_placement_.location.x;
+	location_p.location[1] = treasure_placement_.location.y;
+	location_p.location[2] = treasure_placement_.location.z;
+	location_p.yaw = treasure_placement_.yaw;
+	std::memcpy(buffer, &location_p, sizeof(location_p));
+}
+
+// 기절이 끝난 플레이어마다 기절 해제와 그 사람의 보호 시간을 플레이 중인 방 전체에 알린다.
+void GameRoom::ProcessStunRelease()
+{
+	for (auto& target : room_players_) {
+		if (!target.TakeStunRelease(tick_time_ms_)) continue;
+		S2C_STUN_RELEASE_PACKET release_p;
+		release_p.header = { static_cast<std::uint16_t>(sizeof(release_p)), S2C_STUN_RELEASE };
+		release_p.player_id = target.GetSessionKey().player_id;
+		release_p.protection_ms = static_cast<std::uint32_t>(target.GetStunProtectionMs());
+		for (auto& room_player : room_players_) {
+			auto session = FindSession(room_player);
+			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&release_p), release_p.header.size);
+		}
 	}
 }
 
@@ -1496,16 +1550,15 @@ void GameRoom::StartAward()
 			if (a->GetAwardCount(award) != b->GetAwardCount(award)) return a->GetAwardCount(award) > b->GetAwardCount(award);
 			return a->GetAwardReachMs(award) < b->GetAwardReachMs(award);
 		});
-		S2C_AWARD_PACKET award_p{};
-		award_p.header = { static_cast<std::uint16_t>(sizeof(award_p)), S2C_AWARD };
-		award_p.category = category;
-		award_p.entry_count = static_cast<std::uint8_t>(std::min(ranked.size(), AWARD_RANK_COUNT));
-		for (std::uint8_t rank = 0; rank < award_p.entry_count; ++rank) {
-			award_p.entries[rank] = { ranked[rank]->GetSessionKey().player_id, ranked[rank]->GetAwardCount(award) };
+		// 순위 순서대로 한 자리씩 이어 붙여 보낸다.
+		S2C_AWARD_PACKET award_ps[AWARD_RANK_COUNT];
+		const std::size_t rank_count = std::min(ranked.size(), AWARD_RANK_COUNT);
+		for (std::size_t rank = 0; rank < rank_count; ++rank) {
+			award_ps[rank] = { { static_cast<std::uint16_t>(sizeof(S2C_AWARD_PACKET)), S2C_AWARD }, category, ranked[rank]->GetSessionKey().player_id, ranked[rank]->GetAwardCount(award) };
 		}
 		for (auto& room_player : room_players_) {
 			auto session = FindSession(room_player);
-			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&award_p), award_p.header.size);
+			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(award_ps), static_cast<int>(rank_count * sizeof(S2C_AWARD_PACKET)));
 		}
 		++scene_count;
 	}
@@ -1524,44 +1577,8 @@ void GameRoom::SendAreaRemovalTime(Session& session) const
 	session.SendPacket(reinterpret_cast<char*>(&time_p), time_p.header.size);
 }
 
-// 게임이 시작된 뒤 아직 줍지 않은 떨어진 힌트만 줍는다. 주우면 플레이 중인 방 전체에 줍기를 보내고, 주운 사람에게는 줍기 뒤에 힌트를 이어 보낸다.
-// 이미 가진 힌트도 보내고, 가진 힌트 목록에는 다시 넣지 않는다.
-void GameRoom::ProcessHintPickup(Player& picker, const C2S_HINT_PICKUP_PACKET& request_p)
-{
-	if (match_phase_ != MatchPhase::STARTED || request_p.drop >= hint_drops_.size() || hint_drops_[request_p.drop].is_picked || !CheckHintPickup(picker, hint_drops_[request_p.drop])) return;
-	HintDrop& hint_drop = hint_drops_[request_p.drop];
-	hint_drop.is_picked = true;
-
-	S2C_HINT_PICKUP_PACKET pickup_p;
-	pickup_p.header = { static_cast<std::uint16_t>(sizeof(pickup_p)), S2C_HINT_PICKUP };
-	pickup_p.drop = request_p.drop;
-	char picker_buffer[sizeof(pickup_p) + sizeof(S2C_HINT_PACKET)];
-	std::memcpy(picker_buffer, &pickup_p, sizeof(pickup_p));
-	int picker_size = sizeof(pickup_p);
-	picker.AddHint(hint_drop.hint);
-	picker_size += AppendHintPacket(picker_buffer + picker_size, hint_drop.hint);
-	for (auto& room_player : room_players_) {
-		auto session = FindSession(room_player);
-		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		if (&room_player == &picker) session->SendPacket(picker_buffer, picker_size);
-		else session->SendPacket(reinterpret_cast<char*>(&pickup_p), pickup_p.header.size);
-	}
-}
-
-// 캡슐 중심에서 떨어진 위치까지 수평 거리가 HINT_DROP_PICKUP_DISTANCE 안이어야 한다.
-// 공중에서 떨어뜨린 힌트는 그 아래 바닥에 놓이므로, 높이는 떨어진 위치보다 많이 높지 않고 그 아래 랜드스케이프에 선 높이보다 많이 낮지 않으면 된다.
-bool GameRoom::CheckHintPickup(const Player& picker, const HintDrop& drop) const
-{
-	if (!picker.HasMoveState()) return false;
-	const float* location = picker.GetMoveState().location;
-	if (std::hypot(location[0] - drop.location.x, location[1] - drop.location.y) > HINT_DROP_PICKUP_DISTANCE) return false;
-	if (location[2] > drop.location.z + HINT_DROP_PICKUP_HEIGHT) return false;
-	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(drop.location.x, drop.location.y);
-	return !ground || location[2] >= *ground + CHARACTER_CAPSULE_HALF_HEIGHT - HINT_DROP_PICKUP_HEIGHT;
-}
-
 // 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
-// 두 위치의 캡슐 중심을 이은 선분이 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨·탑)을 지나면 관통이다.
+// 두 위치의 캡슐 중심을 이은 선분이 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨)을 지나면 관통이다.
 // 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 게임 시작 전에는 시작 구역 밖으로 나간 위치도 인정하지 않는다. 첫 이동은 스폰 자리와 비교한다.
 // 이번 이동이나 누적으로 갈 수 있는 거리보다 허용치 넘게 더 움직이면 속도 조작으로 보고 인정하지 않는다. 여기까지 어기면 되돌린다.
 // 마지막으로 공중 높이와 땅 위라는 알림을 본다. 땅에서 떠나는 이동은 떠난 뒤의 공중 상태로, 공중에서 오는 이동은 지금 공중 상태로 높이를 본다.
@@ -1578,11 +1595,11 @@ MoveCheckResult GameRoom::CheckMove(const Player& player, const MOVE_STATE& move
 	const std::optional<float> ground = landscape.GetGroundHeight(next[0], next[1]);
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
 	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
-	if (collision_objects.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, placed_objects_)) return MoveCheckResult::ROLLBACK;
+	if (collision_objects.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN)) return MoveCheckResult::ROLLBACK;
 	if (match_phase_ != MatchPhase::STARTED && (next[0] < START_AREA_MIN[0] || next[0] > START_AREA_MAX[0] || next[1] < START_AREA_MIN[1] || next[1] > START_AREA_MAX[1])) return MoveCheckResult::ROLLBACK;
 	const float* previous = player.GetMoveState().location;
 	if (player.GetMoveStepExcess(move_state, time_ms) > MOVE_MAX_STEP_EXCESS_DISTANCE || player.GetMoveExcess(move_state, time_ms) > MOVE_MAX_EXCESS_DISTANCE) return MoveCheckResult::ROLLBACK;
-	if (collision_objects.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN, placed_objects_)) return MoveCheckResult::ROLLBACK;
+	if (collision_objects.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN)) return MoveCheckResult::ROLLBACK;
 	const AirState air = player.GetAirState(time_ms);
 	const AirState judged = air.phase == AirPhase::GROUND ? player.GetNextAirState(move_state, time_ms, false) : air;
 	const MoveCheckResult air_failure = air.phase == AirPhase::GROUND ? MoveCheckResult::ROLLBACK : MoveCheckResult::AIR_CORRECTION;
@@ -1609,7 +1626,7 @@ bool GameRoom::IsOnGround(const float location[3]) const
 	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(location[0], location[1]);
 	if (ground && location[2] - CHARACTER_CAPSULE_HALF_HEIGHT <= *ground + GROUND_CHECK_DEPTH) return true;
 	return server_->GetMapData().GetCollisionObjects().IsCapsuleOverlappingObjects({ location[0], location[1], location[2] - GROUND_CHECK_DEPTH },
-		CHARACTER_CAPSULE_RADIUS - GROUND_CHECK_RADIUS_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN, placed_objects_);
+		CHARACTER_CAPSULE_RADIUS - GROUND_CHECK_RADIUS_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN);
 }
 
 // 캡슐 아래 반구 중심에서 그 자리 랜드스케이프 면까지의 거리(cm)와 면 법선의 위쪽 성분(cos 기울기). 면은 앞뒤·좌우 높이로 구한 기울기의 평면으로 본다.
@@ -1643,7 +1660,7 @@ bool GameRoom::IsTouchingSurface(const Player& player, const float location[3]) 
 	const std::optional<std::pair<float, float>> contact = GetLandscapeContact(server_->GetMapData().GetLandscape(), location);
 	if (contact && contact->first <= CHARACTER_CAPSULE_RADIUS + AIR_CONTACT_MARGIN) return true;
 	if (server_->GetMapData().GetCollisionObjects().IsCapsuleOverlappingObjects({ location[0], location[1], location[2] },
-		CHARACTER_CAPSULE_RADIUS + AIR_CONTACT_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT + AIR_CONTACT_MARGIN, TERRAIN_BLOCKS_PAWN, placed_objects_)) return true;
+		CHARACTER_CAPSULE_RADIUS + AIR_CONTACT_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT + AIR_CONTACT_MARGIN, TERRAIN_BLOCKS_PAWN)) return true;
 	// 두 캡슐은 서 있으므로 높이 차이에서 원기둥 부분 길이를 뺀 만큼이 위아래 거리다.
 	for (const Player& other : room_players_) {
 		if (&other == &player || other.GetRoomPlayerState() != RoomPlayerState::PLAY || !other.HasMoveState()) continue;
@@ -1671,7 +1688,7 @@ void GameRoom::CorrectMove(Player& player, Session& session, bool is_on_air_curv
 			curve_z = *ground + CHARACTER_CAPSULE_HALF_HEIGHT;
 			curve_air = {};
 		}
-		if (server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { previous[0], previous[1], curve_z }, TERRAIN_BLOCKS_PAWN, placed_objects_)) {
+		if (server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { previous[0], previous[1], curve_z }, TERRAIN_BLOCKS_PAWN)) {
 			air = { AirPhase::FALLING, previous[2], tick_time_ms_ };
 		}
 		else {

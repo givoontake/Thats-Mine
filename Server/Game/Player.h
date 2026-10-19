@@ -23,15 +23,22 @@ class Player
 	int send_data_size_ = 0;
 	std::atomic<RoomPlayerState> room_player_state_;
 
-	// 중계 간격 안에 여러 번 받으면 최신 이동 상태만 남긴다. 입력 변화가 섞여 있으면 간격을 기다리지 않고 다음 틱에 중계한다.
+	// 중계 간격 안에 여러 번 받으면 최신 이동 상태만 남긴다. 공중 단계가 바뀌었거나 서버가 이동을 멈췄으면 간격을 기다리지 않고 다음 틱에 중계한다.
 	MOVE_STATE move_state_{};
 	long long move_time_ms_ = 0;
-	// 이동 상태의 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
+	// 마지막으로 받은 이동 키 입력(-127~127), 조준 여부, 손에 든 장비(WeaponType)
+	std::int8_t input_right_ = 0;
+	std::int8_t input_forward_ = 0;
+	bool is_aiming_ = false;
+	std::uint8_t weapon_ = 0;
+	// 마지막으로 인정한 위치 뒤로 받은 입력과 조준 중 가장 빠른 땅 이동 속도 상한(cm/s). 다음 위치를 검사할 때 쓴다.
+	float move_speed_cap_ = MOVE_SPEED_FORWARD;
+	// 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
 	long long aim_change_ms_ = 0;
 	long long fall_change_ms_ = 0;
 	long long last_move_relay_ms_ = 0;
 	bool has_new_move_state_ = false;
-	bool has_input_change_ = false;
+	bool has_urgent_move_state_ = false;
 	// 마지막으로 인정한 위치까지 갈 수 있는 거리보다 더 움직인 거리의 누적(cm). 덜 움직이면 0까지만 줄어든다.
 	float move_excess_ = 0.0f;
 	// 마지막으로 인정한 상태에서 나올 수 있는 최대 속도(cm/s). 땅에서는 언리얼 가감속 식으로 따라간 수평 속도이고,
@@ -55,6 +62,8 @@ class Player
 	float stun_gauge_ = 0.0f;
 	long long stun_gauge_time_ms_ = 0;
 	long long stun_end_ms_ = 0;
+	// 기절을 알린 뒤 아직 기절 해제를 알리지 않았는지
+	bool has_pending_stun_release_ = false;
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
 	std::uint32_t move_correction_id_ = 0;
 	bool is_awaiting_move_correction_ = false;
@@ -129,11 +138,17 @@ public:
 	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
 	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + GetStunProtectionMs(); }
 	int GetStunProtectionMs() const;
+	// 알린 기절이 time_ms에 끝났으면 한 번만 참을 돌려준다. 방이 기절 해제를 보낼 때 쓴다.
+	bool TakeStunRelease(long long time_ms);
 	bool IsAwaitingMoveCorrection() const { return is_awaiting_move_correction_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
-	bool CanRelayMoveState(long long tick_time_ms) const { return has_new_move_state_ && (has_input_change_ || tick_time_ms - last_move_relay_ms_ >= MOVE_RELAY_INTERVAL_MS); }
+	bool CanRelayMoveState(long long tick_time_ms) const { return has_new_move_state_ && (has_urgent_move_state_ || tick_time_ms - last_move_relay_ms_ >= MOVE_RELAY_INTERVAL_MS); }
+	std::int8_t GetInputRight() const { return input_right_; }
+	std::int8_t GetInputForward() const { return input_forward_; }
+	bool IsAiming() const { return is_aiming_; }
+	std::uint8_t GetWeapon() const { return weapon_; }
 
 	void SetRoomPlayerState(RoomPlayerState new_state) { return room_player_state_.store(new_state); }
 
@@ -143,16 +158,20 @@ public:
 	bool AddToSendBuffer(const char* data, int data_size);
 	void ClearSendBuffer();
 	// is_on_steep_slope는 move_state가 비탈 접촉인지, is_open_air는 공중이고 어떤 면에도 닿지 않았는지다.
-	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_input_change, bool is_on_steep_slope, bool is_open_air);
+	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_on_steep_slope, bool is_open_air);
+	void SetMoveInput(std::int8_t input_right, std::int8_t input_forward);
+	void SetAiming(bool is_aiming, long long time_ms);
+	// 손에 든 장비를 바꾼다. 판정용 자세도 꺼내기 동작을 시작한다.
+	void SetWeapon(std::uint8_t weapon, long long time_ms);
 	// 스폰 자리를 마지막으로 인정한 위치로 둔다. 첫 이동 상태도 이 위치와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
 	void SetSpawnLocation(const float location[3], float yaw, long long time_ms);
 	void MarkMoveStateRelayed(long long tick_time_ms);
 	// 기절 게이지를 올린다. 기절 중이거나 보호 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
 	bool AddStunGauge(float amount, long long time_ms);
-	// 기절을 시작할 때 이동을 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
+	// 이동을 되돌릴 때 수평으로 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
 	void StopMovement();
-	// 힌트를 가진다. 이미 가진 힌트면 그대로 둔다.
-	void AddHint(std::uint32_t hint);
+	// 힌트를 가진다. 이미 가진 힌트면 그대로 두고 거짓을 돌려준다.
+	bool AddHint(std::uint32_t hint);
 	// 가진 힌트 중 하나를 무작위로 골라 빼고 돌려준다. 가진 힌트가 없으면 비어 있다.
 	std::optional<std::uint32_t> TakeRandomHint();
 	void ResetHints() { hint_indices_.clear(); }

@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include "error_code.h"
-#include "info_code.h"
 
 enum class OPType { SEND, POOLED_SEND, LARGE_SEND, RECV, ACCEPT, DB };
 

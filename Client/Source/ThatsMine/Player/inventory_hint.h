@@ -13,7 +13,7 @@ enum class EHintGrade : uint8
 	C
 };
 
-// 힌트 분류. 위치 힌트는 지역을 기준으로 한 방향·보임 힌트, 단서 힌트는 보물 주변 물체 개수 힌트다.
+// 힌트 분류. 위치 힌트는 지역을 기준으로 한 방향 힌트, 단서 힌트는 보물 주변 물체 개수 힌트다.
 UENUM(BlueprintType)
 enum class EHintCategory : uint8
 {
@@ -26,8 +26,13 @@ struct FInventoryHint
 {
 	GENERATED_BODY()
 
-	// 서버가 보낸 힌트 값. 분류와 돋보기 개수 비교에 쓴다.
-	HINT_ENTRY entry{};
+	// 서버 힌트 번호. 같은 힌트를 다시 받았는지와 잃은 힌트를 찾을 때 쓴다.
+	uint16 hint_id = 0;
+	EHintCategory category = EHintCategory::LOCATION;
+	// 단서 힌트의 물체 종류(HintObjectKind), 반경 번호, 개수. 돋보기가 주변 개수와 맞춰 본다.
+	uint8 object_kind = 0;
+	uint8 radius = 0;
+	uint8 count = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FText text;
@@ -39,8 +44,3 @@ struct FInventoryHint
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool is_favorite = false;
 };
-
-inline EHintCategory GetHintCategory(const HINT_ENTRY& entry)
-{
-	return entry.kind == static_cast<uint8>(HintKind::OBJECT_COUNT) ? EHintCategory::CLUE : EHintCategory::LOCATION;
-}

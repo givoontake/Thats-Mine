@@ -16,6 +16,10 @@ public:
 	URemoteMovementComponent();
 
 	void ApplyState(const FRemoteMoveState& state);
+	// 받은 이동 키 입력. X가 오른쪽, Y가 앞쪽이다.
+	void SetMoveInput(const FVector2D& move_input) { move_input_ = move_input; }
+	void SetAiming(bool is_aiming);
+	void SetWeapon(EWeaponType weapon);
 	float GetViewPitch() const { return view_pitch_; }
 
 protected:
@@ -32,6 +36,7 @@ private:
 	static constexpr float SNAP_DISTANCE = 100.0f;
 
 	FRemoteMoveState state_;
+	FVector2D move_input_ = FVector2D::ZeroVector;
 	bool has_state_ = false;
 	double state_time_ = 0.0;
 	float view_pitch_ = 0.0f;

@@ -18,5 +18,5 @@ public:
 	bool Build(const MapRegionData& regions);
 	bool IsLoaded() const { return is_loaded_; }
 	// (x, y)가 기준 영역마다 네 방위 쪽에 있는지 판정한다. 기준 영역 순서로, 영역마다 HintDirection 순서의 힌트 네 개를 돌려준다.
-	std::vector<HINT_ENTRY> JudgeDirections(float x, float y) const;
+	std::vector<Hint> JudgeDirections(float x, float y) const;
 };

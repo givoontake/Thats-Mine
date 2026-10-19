@@ -17,13 +17,17 @@ class CharacterPose
 	float jump_time_ = 0.0f;
 	std::uint8_t weapon_ = 0;
 	bool has_weapon_ = false;
+	bool is_aiming_ = false;
 	const MontageInfo* montage_ = nullptr;
 	long long montage_start_ms_ = 0;
 
 public:
 	void Reset(const HitboxData& data);
-	// 매 틱 이동 상태로 이동 재생 위치와 점프 시간을 진행한다. 무기가 바뀌면 꺼내기 동작을 시작한다.
+	// 매 틱 이동 상태로 이동 재생 위치와 점프 시간을 진행한다.
 	void Update(const MOVE_STATE& move_state, float delta_seconds, long long time_ms);
+	// 손에 든 장비를 바꾼다. 처음 정할 때가 아니고 장비가 바뀌면 꺼내기 동작을 시작한다.
+	void ChangeWeapon(std::uint8_t weapon, long long time_ms);
+	void SetAiming(bool is_aiming) { is_aiming_ = is_aiming; }
 	// 동작 이벤트를 받은 시각부터 동작과 무기에 맞는 몽타주를 재생한다. 맞는 몽타주가 없으면 재생 중인 동작을 그대로 둔다.
 	void StartAction(std::uint8_t action, std::uint8_t weapon, long long time_ms);
 	// time_ms 시각의 뼈 자세를 액터 기준(캐릭터 위치·좌우 방향 적용 전)으로 계산한다.

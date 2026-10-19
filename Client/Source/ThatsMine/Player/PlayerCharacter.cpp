@@ -29,7 +29,6 @@
 #include "Player/ControlSettingsSubsystem.h"
 #include "Settings/KeyBindingSubsystem.h"
 #include "Interaction/BoxLayoutSubsystem.h"
-#include "Interaction/HintDropSubsystem.h"
 #include "Interaction/HintBox.h"
 #include "Interaction/ItemSubsystem.h"
 #include "Interaction/PingSubsystem.h"
@@ -234,7 +233,6 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 		GetWorldTimerManager().ClearTimer(ammo.reload_timer);
 		GetWorldTimerManager().ClearTimer(ammo.shot_wait_timer);
 	}
-	GetWorldTimerManager().ClearTimer(stun_timer_);
 	GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
 	GetWorldTimerManager().ClearTimer(protection_timer_);
 	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
@@ -353,10 +351,7 @@ void APlayerCharacter::Interact()
 	if (const AHintBox* box = FindInteractBox())
 	{
 		GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, false, 0);
-		return;
 	}
-	// 조준한 상자가 없으면 발밑 근처의 떨어진 두루마리를 줍는다.
-	GetWorld()->GetSubsystem<UHintDropSubsystem>()->RequestPickup(GetCapsuleComponent()->GetComponentLocation());
 }
 
 void APlayerCharacter::PlacePing()
@@ -414,7 +409,7 @@ const AHintBox* APlayerCharacter::FindInteractBox() const
 
 void APlayerCharacter::UpdateInteractPrompt()
 {
-	const bool can_interact = !is_stunned_ && (FindInteractBox() || GetWorld()->GetSubsystem<UHintDropSubsystem>()->FindPickupDrop(GetCapsuleComponent()->GetComponentLocation()) != INDEX_NONE);
+	const bool can_interact = !is_stunned_ && FindInteractBox();
 	interact_prompt_widget_->SetVisibility(can_interact ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
@@ -1292,9 +1287,8 @@ void APlayerCharacter::UpdateStunGaugeDisplay()
 	}
 }
 
-void APlayerCharacter::StartStun(float duration_seconds, float protection_seconds)
+void APlayerCharacter::StartStun()
 {
-	protection_seconds_ = protection_seconds;
 	EndProtection();
 	SetHeadEffectActive(stun_effect_, stun_effect_component_, true);
 	is_stunned_ = true;
@@ -1309,10 +1303,9 @@ void APlayerCharacter::StartStun(float duration_seconds, float protection_second
 			stun_gauge_widget_->SetStunProgress(1.0f);
 		}
 	}
-	GetWorldTimerManager().SetTimer(stun_timer_, this, &APlayerCharacter::EndStun, FMath::Max(duration_seconds, 0.01f), false);
 }
 
-void APlayerCharacter::EndStun()
+void APlayerCharacter::EndStun(float protection_seconds)
 {
 	is_stunned_ = false;
 	SetHeadEffectActive(stun_effect_, stun_effect_component_, false);
@@ -1322,7 +1315,7 @@ void APlayerCharacter::EndStun()
 		stun_gauge_widget_->SetStunProgress(0.0f);
 	}
 	SetHeadEffectActive(protection_effect_, protection_effect_component_, true);
-	protection_end_time_ = GetWorld()->GetTimeSeconds() + protection_seconds_;
+	protection_end_time_ = GetWorld()->GetTimeSeconds() + protection_seconds;
 	UpdateProtection();
 	GetWorldTimerManager().SetTimer(protection_timer_, this, &APlayerCharacter::UpdateProtection, PROTECTION_DISPLAY_INTERVAL, true);
 }
@@ -1526,7 +1519,7 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 
 void APlayerCharacter::AddHint(const FInventoryHint& hint)
 {
-	if (!acquired_hints_.ContainsByPredicate([&hint](const FInventoryHint& acquired) { return acquired.text.EqualTo(hint.text); }))
+	if (!acquired_hints_.ContainsByPredicate([&hint](const FInventoryHint& acquired) { return acquired.hint_id == hint.hint_id; }))
 	{
 		acquired_hints_.Add(hint);
 		on_hints_changed_.Broadcast();
@@ -1614,9 +1607,9 @@ float APlayerCharacter::GetStunGaugeDecayDelay() const
 	return (grade ? ITEM_STUN_GAUGE_DECAY_DELAYS_MS[static_cast<int32>(*grade)] : STUN_GAUGE_DECAY_DELAY_MS) / 1000.0f;
 }
 
-void APlayerCharacter::RemoveHint(const FText& text)
+void APlayerCharacter::RemoveHint(uint16 hint_id)
 {
-	const int32 index = acquired_hints_.IndexOfByPredicate([&text](const FInventoryHint& hint) { return hint.text.EqualTo(text); });
+	const int32 index = acquired_hints_.IndexOfByPredicate([hint_id](const FInventoryHint& hint) { return hint.hint_id == hint_id; });
 	if (index != INDEX_NONE)
 	{
 		acquired_hints_.RemoveAt(index);

@@ -48,9 +48,7 @@ private:
 	static bool ShouldBeListed(const SessionState& state);
 	static bool IsInLobby(ModeState mode_state);
 	Session* FindLobbySession(int lobby_index);
-	void BroadcastToLobby(char* packet);
 	void SendRoomList(Session& session);
-	void SendLobbyPlayerList(Session& session);
 
 public:
 	explicit LobbyThreadManager(GameServer& game_server);

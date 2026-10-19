@@ -40,18 +40,10 @@ Session* LoginManager::FindLoginSession(int login_index)
 	return game_server_.GetSessionManager().FindSessionByIndex(session_index);
 }
 
-// 새 접속 세션을 로그인 목록에 넣고, 들어갔으면 로그인 요청을 받을 수 있다고 알린다.
-// 준비 완료 전에 온 로그인 요청도 세션 작업 큐에 남아 있다가 목록에 들어간 뒤 처리되므로, 알림은 클라이언트를 위한 것이다.
+// 새 접속 세션을 로그인 목록에 넣는다. 목록에 들어가기 전에 온 로그인 요청은 세션 작업 큐에 남아 있다가 목록에 들어간 뒤 처리된다.
 void LoginManager::AddSession(SessionKey session_key)
 {
-	const int session_index = session_key.session_index;
-	SyncLoginList(session_index);
-	auto* session = game_server_.GetSessionManager().FindSession(session_key);
-	if (!session || !login_list_.IsListed(session_index)) return;
-
-	S2C_LOGIN_READY_PACKET packet{};
-	packet.header = { sizeof(packet), S2C_LOGIN_READY };
-	session->SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet));
+	SyncLoginList(session_key.session_index);
 }
 
 // 로그인 전 세션의 패킷을 처리한다. 로그인 요청만 받는다.

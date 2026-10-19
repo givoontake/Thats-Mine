@@ -125,13 +125,13 @@ static BroadphaseCapsule ComputeBroadphaseCapsule(const HitboxData& data)
 			if (is_aiming && data.GetWeaponInfo(weapon)->pose_type != WeaponPoseType::RIFLE) continue;
 			for (const float pitch : CAPSULE_SAMPLE_PITCHES) {
 				MOVE_STATE base{};
-				base.weapon = weapon;
-				base.is_aiming = is_aiming;
 				base.view_pitch = pitch;
 				const auto run = [&](const MOVE_STATE& state, const MOVE_STATE* cardinal_state)
 				{
 					CharacterPose pose;
 					pose.Reset(data);
+					pose.ChangeWeapon(weapon, start_ms);
+					pose.SetAiming(is_aiming);
 					long long time_ms = start_ms;
 					// 기준 방향을 먼저 정해 두고, 그 기준을 유지하는 범위 안의 실제 이동 방향으로 진행한다.
 					if (cardinal_state) pose.Update(*cardinal_state, 0.0f, time_ms);
@@ -186,6 +186,8 @@ static BroadphaseCapsule ComputeBroadphaseCapsule(const HitboxData& data)
 						state.velocity[0] = speed;
 						CharacterPose pose;
 						pose.Reset(data);
+						pose.ChangeWeapon(weapon, start_ms);
+						pose.SetAiming(is_aiming);
 						pose.Update(state, 0.0f, start_ms);
 						pose.StartAction(montage.action, weapon, start_ms);
 						for (int step = 0; step <= CAPSULE_MONTAGE_STEPS; ++step) {

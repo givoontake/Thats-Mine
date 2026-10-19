@@ -4,7 +4,6 @@
 #include "GameServer.h"
 #include "HintObjectTree.h"
 #include "MapData.h"
-#include "TowerCandidateData.h"
 
 HANDLE console_close_event = nullptr;
 
@@ -27,10 +26,9 @@ BOOL WINAPI HandleConsoleClose(DWORD signal)
 // 서버를 띄우지 않고 맵 데이터로 힌트 물체 트리를 만들어 클라이언트 돋보기용 파일로 쓴다.
 static int ExportHintObjects(const char* file_path)
 {
-    TowerCandidateData tower_candidates;
     MapData map;
     HintObjectTree tree;
-    if (!tower_candidates.Load("Data/tower_candidates.txt") || !map.Load("Data/Map", tower_candidates.GetCandidates()) || !tree.Build(map) || !tree.Export(file_path)) {
+    if (!map.Load("Data/Map") || !tree.Build(map) || !tree.Export(file_path)) {
         std::cerr << "Hint object export fail.. " << std::endl;
         return 1;
     }

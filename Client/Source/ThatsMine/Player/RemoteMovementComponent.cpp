@@ -65,23 +65,33 @@ void URemoteMovementComponent::ApplyState(const FRemoteMoveState& state)
 		movement->SetMovementMode(is_falling ? MOVE_Falling : MOVE_Walking);
 	}
 
-	// 조준 중에는 무기를 바꿀 수 없으므로 조준 해제, 무기 교체, 조준 순서로 맞춘다.
-	if (character->IsAiming() && (!state.is_aiming || character->GetCurrentWeapon() != state.weapon))
-	{
-		character->ToggleAim();
-	}
-	if (character->GetCurrentWeapon() != state.weapon)
-	{
-		character->SelectWeapon(state.weapon);
-	}
-	if (character->IsAiming() != state.is_aiming)
-	{
-		character->ToggleAim();
-	}
-
 	state_ = state;
 	has_state_ = true;
 	state_time_ = GetWorld()->GetTimeSeconds();
+}
+
+void URemoteMovementComponent::SetAiming(bool is_aiming)
+{
+	APlayerCharacter* character = CastChecked<APlayerCharacter>(GetOwner());
+	if (character->IsAiming() != is_aiming)
+	{
+		character->ToggleAim();
+	}
+}
+
+// 조준 중에는 무기를 바꿀 수 없으므로 조준을 풀고 바꾼다. 조준은 뒤에 오는 조준 패킷으로 다시 맞춘다.
+void URemoteMovementComponent::SetWeapon(EWeaponType weapon)
+{
+	APlayerCharacter* character = CastChecked<APlayerCharacter>(GetOwner());
+	if (character->GetCurrentWeapon() == weapon)
+	{
+		return;
+	}
+	if (character->IsAiming())
+	{
+		character->ToggleAim();
+	}
+	character->SelectWeapon(weapon);
 }
 
 void URemoteMovementComponent::TickComponent(float delta_seconds, ELevelTick tick_type, FActorComponentTickFunction* this_tick_function)
@@ -112,6 +122,6 @@ void URemoteMovementComponent::TickComponent(float delta_seconds, ELevelTick tic
 	// 받은 입력으로 이동 계산을 이어 간다. 새 상태가 오래 끊기면 멈춘다.
 	if (GetWorld()->GetTimeSeconds() - state_time_ <= STALE_SECONDS)
 	{
-		character->ApplyMovementInput(state_.move_input);
+		character->ApplyMovementInput(move_input_);
 	}
 }

@@ -66,21 +66,29 @@ void UAwardSubsystem::HandleAwardPacket(const TArray<uint8>& payload)
 		return;
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.category >= static_cast<uint8>(AwardCategory::COUNT) || packet.entry_count == 0 || packet.entry_count > AWARD_RANK_COUNT || scene_index_ != INDEX_NONE)
+	if (packet.category >= static_cast<uint8>(AwardCategory::COUNT) || scene_index_ != INDEX_NONE)
 	{
 		return;
 	}
-	FAwardScene& scene = scenes_.AddDefaulted_GetRef();
-	const bool is_box_open = packet.category == static_cast<uint8>(AwardCategory::BOX_OPEN);
-	scene.title = is_box_open ? NSLOCTEXT("Award", "BoxOpen", "탐색왕") : NSLOCTEXT("Award", "Stun", "기절왕");
-	const TArray<FRoomMemberInfo>& members = GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetMembers();
-	for (uint8 rank = 0; rank < packet.entry_count; ++rank)
+	// 순위는 부문마다 1위부터 이어 온다. 부문이 바뀌면 새 장면을 만들고, 같은 부문이면 그 장면에 다음 순위를 더한다.
+	const bool is_new_scene = scenes_.IsEmpty() || scenes_.Last().category != packet.category;
+	if (!is_new_scene && scenes_.Last().nicknames.Num() >= AWARD_RANK_COUNT)
 	{
-		const FRoomMemberInfo* member = members.FindByPredicate([&packet, rank](const FRoomMemberInfo& info) { return info.player_key == packet.entries[rank].player_id; });
-		scene.nicknames.Add(member ? member->nickname : FString());
-		scene.records.Add(FText::Format(is_box_open ? NSLOCTEXT("Award", "BoxOpenRecord", "상자 {0}개") : NSLOCTEXT("Award", "StunRecord", "기절 {0}회"), FText::AsNumber(packet.entries[rank].count)));
+		return;
 	}
-	if (scenes_.Num() == 1)
+	const bool is_box_open = packet.category == static_cast<uint8>(AwardCategory::BOX_OPEN);
+	if (is_new_scene)
+	{
+		FAwardScene& scene = scenes_.AddDefaulted_GetRef();
+		scene.category = packet.category;
+		scene.title = is_box_open ? NSLOCTEXT("Award", "BoxOpen", "탐색왕") : NSLOCTEXT("Award", "Stun", "기절왕");
+	}
+	FAwardScene& scene = scenes_.Last();
+	const TArray<FRoomMemberInfo>& members = GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetMembers();
+	const FRoomMemberInfo* member = members.FindByPredicate([&packet](const FRoomMemberInfo& info) { return info.player_key == packet.player_id; });
+	scene.nicknames.Add(member ? member->nickname : FString());
+	scene.records.Add(FText::Format(is_box_open ? NSLOCTEXT("Award", "BoxOpenRecord", "상자 {0}개") : NSLOCTEXT("Award", "StunRecord", "기절 {0}회"), FText::AsNumber(packet.count)));
+	if (is_new_scene && scenes_.Num() == 1)
 	{
 		GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAwardSubsystem::StartCeremony);
 	}

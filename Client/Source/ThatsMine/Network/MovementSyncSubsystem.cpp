@@ -41,32 +41,28 @@ static MOVE_STATE ToMoveState(const FRemoteMoveState& state)
 	move_state.velocity[2] = static_cast<float>(state.velocity.Z);
 	move_state.yaw = state.yaw;
 	move_state.view_pitch = state.view_pitch;
-	move_state.input_right = QuantizeInput(state.move_input.X);
-	move_state.input_forward = QuantizeInput(state.move_input.Y);
 	move_state.air_phase = state.air_phase;
-	move_state.is_aiming = state.is_aiming;
-	move_state.weapon = static_cast<uint8>(state.weapon);
 	return move_state;
 }
 
-static FRemoteMoveState ToRemoteMoveState(const MOVE_STATE& move_state)
+static FRemoteMoveState ToRemoteMoveState(const S2C_MOVE_PACKET& packet)
 {
 	FRemoteMoveState state;
-	state.location = FVector(move_state.location[0], move_state.location[1], move_state.location[2]);
-	state.velocity = FVector(move_state.velocity[0], move_state.velocity[1], move_state.velocity[2]);
-	state.yaw = move_state.yaw;
-	state.view_pitch = move_state.view_pitch;
-	state.move_input = FVector2D(move_state.input_right / 127.0, move_state.input_forward / 127.0);
-	state.air_phase = move_state.air_phase;
-	state.is_aiming = move_state.is_aiming;
-	state.weapon = ToWeaponType(move_state.weapon);
+	state.location = FVector(packet.location[0], packet.location[1], packet.location[2]);
+	state.velocity = FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]);
+	state.yaw = packet.yaw;
+	state.view_pitch = packet.view_pitch;
+	state.air_phase = packet.air_phase;
 	return state;
 }
 
-// 이동 키, 공중 단계(점프·하강·착지), 조준, 무기가 바뀌었는지 확인한다. 입력 변화는 간격 제한 없이 즉시 보낸다.
-static bool HasInputChanged(const FRemoteMoveState& previous, const FRemoteMoveState& current)
+// 패킷 구조체의 헤더 뒤 내용을 보낸다.
+template<typename T>
+static bool SendPacketBody(UGameNetworkSubsystem* network, uint8 type, const T& packet)
 {
-	return QuantizeInput(previous.move_input.X) != QuantizeInput(current.move_input.X) || QuantizeInput(previous.move_input.Y) != QuantizeInput(current.move_input.Y) || previous.air_phase != current.air_phase || previous.is_aiming != current.is_aiming || previous.weapon != current.weapon;
+	TArray<uint8> payload;
+	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	return network->SendPacket(type, payload);
 }
 
 // 마우스 회전 등으로 이동 방향이 기준 이상 꺾였는지 확인한다.
@@ -97,7 +93,11 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	{
 		return;
 	}
+	network->RegisterPacketHandler(S2C_MOVE_INPUT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveInputPacket));
+	network->RegisterPacketHandler(S2C_AIM, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAimPacket));
+	network->RegisterPacketHandler(S2C_EQUIP, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleEquipPacket));
 	network->RegisterPacketHandler(S2C_ACTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleActionPacket));
+	network->RegisterPacketHandler(S2C_RELOAD, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadPacket));
 	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
 	network->RegisterPacketHandler(S2C_STUN_GAUGE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunGaugePacket));
 	network->RegisterPacketHandler(S2C_AMMO, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoPacket));
@@ -105,7 +105,8 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_FIRE_REJECTED, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleFireRejectedPacket));
 	network->RegisterPacketHandler(S2C_SHOT_TRACE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleShotTracePacket));
 	network->RegisterPacketHandler(S2C_PICKAXE_CHARGES, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandlePickaxeChargesPacket));
-	network->RegisterPacketHandler(S2C_STUN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunPacket));
+	network->RegisterPacketHandler(S2C_STUN_APPLY, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunApplyPacket));
+	network->RegisterPacketHandler(S2C_STUN_RELEASE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunReleasePacket));
 	network->RegisterPacketHandler(S2C_MOVE_CORRECTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveCorrectionPacket));
 	game_instance->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &UMovementSyncSubsystem::RemoveLeftPlayers);
 }
@@ -119,7 +120,11 @@ void UMovementSyncSubsystem::Deinitialize()
 		if (UGameNetworkSubsystem* network = game_instance ? game_instance->GetSubsystem<UGameNetworkSubsystem>() : nullptr)
 		{
 			network->UnregisterPacketHandler(S2C_MOVE);
+			network->UnregisterPacketHandler(S2C_MOVE_INPUT);
+			network->UnregisterPacketHandler(S2C_AIM);
+			network->UnregisterPacketHandler(S2C_EQUIP);
 			network->UnregisterPacketHandler(S2C_ACTION);
+			network->UnregisterPacketHandler(S2C_RELOAD);
 			network->UnregisterPacketHandler(S2C_HIT);
 			network->UnregisterPacketHandler(S2C_STUN_GAUGE);
 			network->UnregisterPacketHandler(S2C_AMMO);
@@ -127,7 +132,8 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_FIRE_REJECTED);
 			network->UnregisterPacketHandler(S2C_SHOT_TRACE);
 			network->UnregisterPacketHandler(S2C_PICKAXE_CHARGES);
-			network->UnregisterPacketHandler(S2C_STUN);
+			network->UnregisterPacketHandler(S2C_STUN_APPLY);
+			network->UnregisterPacketHandler(S2C_STUN_RELEASE);
 			network->UnregisterPacketHandler(S2C_MOVE_CORRECTION);
 		}
 		if (UOnlineSessionSubsystem* online = game_instance ? game_instance->GetSubsystem<UOnlineSessionSubsystem>() : nullptr)
@@ -191,6 +197,7 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	{
 		return;
 	}
+	SendInputChanges(*character);
 
 	const UCharacterMovementComponent* movement = character->GetCharacterMovement();
 	FRemoteMoveState state;
@@ -198,20 +205,16 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	state.velocity = character->GetVelocity();
 	state.yaw = character->GetActorRotation().Yaw;
 	state.view_pitch = FRotator::NormalizeAxis(character->GetViewRotation().Pitch);
-	// 이번 프레임에 넣은 이동 키 입력을 보낸다. 서버 속도 검증과 원격 이동 계산이 키 입력 기준으로 앞뒤를 나눈다.
-	state.move_input = character->GetMovementInput();
 	// 공중이면 수직 속도로 상승과 하강을 나눈다. 정점을 지나거나 천장에 부딪혀 위로 가는 속도가 없어지면 하강이 되어 그 순간 바로 보낸다.
 	state.air_phase = !movement->IsFalling() ? AirPhase::GROUND : state.velocity.Z > 0.0 ? AirPhase::RISING : AirPhase::FALLING;
-	state.is_aiming = character->IsAiming();
-	state.weapon = character->GetCurrentWeapon();
 
 	const double now = GetWorld()->GetRealTimeSeconds();
 	const double elapsed = now - last_send_time_;
-	// 입력 변화는 즉시, 위치는 주기마다, 방향이 꺾이면 최소 간격을 두고 보낸다.
-	const bool is_input_changed = is_forced || (has_sent_state_ && HasInputChanged(last_sent_state_, state));
+	// 위치는 주기마다, 방향이 꺾이면 최소 간격을 두고 보내고, 공중 단계가 바뀌면 바로 보낸다.
+	const bool is_air_phase_changed = has_sent_state_ && last_sent_state_.air_phase != state.air_phase;
 	const bool is_periodic = elapsed >= MOVE_SEND_INTERVAL_MS / 1000.0;
 	const bool is_direction_changed = elapsed >= MOVE_EXTRA_SEND_INTERVAL_MS / 1000.0 && HasDirectionChanged(last_sent_state_, state);
-	if (has_sent_state_ && !is_input_changed && !is_periodic && !is_direction_changed)
+	if (has_sent_state_ && !is_forced && !is_air_phase_changed && !is_periodic && !is_direction_changed)
 	{
 		return;
 	}
@@ -220,7 +223,7 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	move_state.client_time_ms = static_cast<uint32>(static_cast<uint64>(GetWorld()->GetTimeSeconds() * 1000.0));
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&move_state), sizeof(move_state));
-	if (GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(is_input_changed ? C2S_MOVE_INPUT : C2S_MOVE, payload))
+	if (GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_MOVE, payload))
 	{
 		last_sent_state_ = state;
 		last_send_time_ = now;
@@ -228,19 +231,60 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	}
 }
 
-// 총을 쏘면 서버가 발사 순간의 위치·방향으로 총구와 조준을 판정하도록, 동작보다 먼저 지금 이동 상태를 바로 보낸다.
+// 이동 키 입력, 조준 여부, 손에 든 장비가 마지막으로 보낸 값과 다르면 바로 보낸다. 처음에는 모두 보낸다.
+// 이동 키 입력은 이번 프레임에 넣은 값이고, 서버 속도 검증과 원격 이동 계산이 이 입력으로 앞뒤를 나눈다.
+void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
+{
+	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
+	const FVector2D move_input = character.GetMovementInput();
+	C2S_MOVE_INPUT_PACKET input_packet{};
+	input_packet.input_right = QuantizeInput(move_input.X);
+	input_packet.input_forward = QuantizeInput(move_input.Y);
+	if ((!has_sent_input_ || input_packet.input_right != sent_input_right_ || input_packet.input_forward != sent_input_forward_) && SendPacketBody(network, C2S_MOVE_INPUT, input_packet))
+	{
+		sent_input_right_ = input_packet.input_right;
+		sent_input_forward_ = input_packet.input_forward;
+	}
+	C2S_AIM_PACKET aim_packet{};
+	aim_packet.is_aiming = character.IsAiming();
+	if ((!has_sent_input_ || aim_packet.is_aiming != is_sent_aiming_) && SendPacketBody(network, C2S_AIM, aim_packet))
+	{
+		is_sent_aiming_ = aim_packet.is_aiming;
+	}
+	const EWeaponType weapon = character.GetCurrentWeapon();
+	C2S_EQUIP_PACKET equip_packet{};
+	equip_packet.weapon = static_cast<uint8>(weapon);
+	if ((!has_sent_input_ || weapon != sent_weapon_) && SendPacketBody(network, C2S_EQUIP, equip_packet))
+	{
+		sent_weapon_ = weapon;
+	}
+	has_sent_input_ = true;
+}
+
+// 동작보다 먼저 바뀐 입력과 장비를 보내, 서버가 동작을 지금 손에 든 장비로 판정하게 한다.
+// 총을 쏘면 서버가 발사 순간의 위치·방향으로 총구와 조준을 판정하도록 지금 위치도 바로 보낸다.
+// 재장전은 장비를 바꿔도 이어져 손에 든 장비가 아닌 무기일 수 있으므로 재장전 패킷으로 그 무기를 보낸다.
 void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponType weapon)
 {
+	if (const APlayerCharacter* character = local_character_.Get())
+	{
+		SendInputChanges(*character);
+	}
 	if (action == EPlayerAction::FIRE)
 	{
 		SendMoveState(true);
 	}
+	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
+	if (action == EPlayerAction::RELOAD)
+	{
+		C2S_RELOAD_PACKET packet{};
+		packet.weapon = static_cast<uint8>(weapon);
+		SendPacketBody(network, C2S_RELOAD, packet);
+		return;
+	}
 	C2S_ACTION_PACKET packet{};
 	packet.action = static_cast<uint8>(action);
-	packet.weapon = static_cast<uint8>(weapon);
-	TArray<uint8> payload;
-	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_ACTION, payload);
+	SendPacketBody(network, C2S_ACTION, packet);
 }
 
 // 맞은 뼈를 서버 판정 데이터와 같은 부위 값으로 바꾼다.
@@ -325,11 +369,6 @@ void UMovementSyncSubsystem::HandleHitPacket(const TArray<uint8>& payload)
 	}
 	S2C_HIT_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	UE_LOG(LogMovementSync, Log, TEXT("Hit confirmed: shooter=%d target=%d part=%d"), packet.shooter_player_id, packet.target_player_id, packet.part);
-	if (packet.target_player_id != GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
-	{
-		return;
-	}
 	APlayerCharacter* character = local_character_.Get();
 	const APlayerCharacter* shooter = FindRemotePlayer(packet.shooter_player_id);
 	if (character && shooter)
@@ -432,19 +471,35 @@ void UMovementSyncSubsystem::HandlePickaxeChargesPacket(const TArray<uint8>& pay
 }
 
 // 나 또는 다른 플레이어가 기절했다. 기절이 끝나면 받은 보호 시간 동안 보호된다.
-void UMovementSyncSubsystem::HandleStunPacket(const TArray<uint8>& payload)
+void UMovementSyncSubsystem::HandleStunApplyPacket(const TArray<uint8>& payload)
 {
-	if (payload.Num() != sizeof(S2C_STUN_PACKET) - sizeof(PACKET_HEADER))
+	if (payload.Num() != sizeof(S2C_STUN_APPLY_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
-	S2C_STUN_PACKET packet{};
+	S2C_STUN_APPLY_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	const bool is_local = packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
 	if (APlayerCharacter* character = is_local ? local_character_.Get() : FindRemotePlayer(packet.player_id))
 	{
-		character->StartStun(packet.duration_ms / 1000.0f, packet.protection_ms / 1000.0f);
+		character->StartStun();
+	}
+}
+
+void UMovementSyncSubsystem::HandleStunReleasePacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_STUN_RELEASE_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_STUN_RELEASE_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const bool is_local = packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
+	if (APlayerCharacter* character = is_local ? local_character_.Get() : FindRemotePlayer(packet.player_id))
+	{
+		character->EndStun(packet.protection_ms / 1000.0f);
 	}
 }
 
@@ -480,38 +535,76 @@ void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& pay
 
 void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)
 {
-	constexpr int32 ENTRIES_OFFSET = static_cast<int32>(offsetof(S2C_MOVE_PACKET, entries) - sizeof(PACKET_HEADER));
-	if (payload.Num() < ENTRIES_OFFSET)
+	if (payload.Num() != sizeof(S2C_MOVE_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
-	const int32 player_count = payload[0];
-	if (player_count > MAX_ROOM_PLAYER_COUNT || payload.Num() != ENTRIES_OFFSET + player_count * static_cast<int32>(sizeof(S2C_MOVE_ENTRY)))
+	S2C_MOVE_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
+	{
+		return;
+	}
+	const FRemoteMoveState state = ToRemoteMoveState(packet);
+	APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
+	if (!remote)
+	{
+		// 스폰 패킷보다 이동 패킷이 먼저 온 플레이어는 받은 위치에 만든다.
+		remote = SpawnRemotePlayer(packet.player_id, FTransform(FRotator(0.0f, state.yaw, 0.0f), state.location));
+	}
+	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
+	{
+		remote_movement->ApplyState(state);
+	}
+}
+
+// 다른 플레이어의 이동 키 입력·조준·장비. 아직 스폰되지 않았거나 내 것이면 버린다.
+void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_MOVE_INPUT_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
-	const int64 local_player_key = GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
-	for (int32 index = 0; index < player_count; ++index)
+	S2C_MOVE_INPUT_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
+	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
-		S2C_MOVE_ENTRY entry;
-		FMemory::Memcpy(&entry, payload.GetData() + ENTRIES_OFFSET + index * sizeof(S2C_MOVE_ENTRY), sizeof(entry));
-		if (entry.player_id == local_player_key)
-		{
-			continue;
-		}
-		const FRemoteMoveState state = ToRemoteMoveState(entry.move_state);
-		APlayerCharacter* remote = FindRemotePlayer(entry.player_id);
-		if (!remote)
-		{
-			// 스폰 패킷보다 이동 패킷이 먼저 온 플레이어는 받은 위치에 만든다.
-			remote = SpawnRemotePlayer(entry.player_id, FTransform(FRotator(0.0f, state.yaw, 0.0f), state.location));
-		}
-		if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
-		{
-			remote_movement->ApplyState(state);
-		}
+		remote_movement->SetMoveInput(FVector2D(packet.input_right / 127.0, packet.input_forward / 127.0));
+	}
+}
+
+void UMovementSyncSubsystem::HandleAimPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_AIM_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_AIM_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
+	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
+	{
+		remote_movement->SetAiming(packet.is_aiming);
+	}
+}
+
+void UMovementSyncSubsystem::HandleEquipPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_EQUIP_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_EQUIP_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
+	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
+	{
+		remote_movement->SetWeapon(ToWeaponType(packet.weapon));
 	}
 }
 
@@ -528,10 +621,25 @@ void UMovementSyncSubsystem::HandleActionPacket(const TArray<uint8>& payload)
 	{
 		return;
 	}
-	// 아직 스폰되지 않아 캐릭터가 없는 플레이어의 동작은 버린다.
+	// 아직 스폰되지 않아 캐릭터가 없는 플레이어의 동작은 버린다. 동작은 손에 든 장비로 재생한다.
 	if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
 	{
-		remote->PlayRemoteAction(static_cast<EPlayerAction>(packet.action), ToWeaponType(packet.weapon));
+		remote->PlayRemoteAction(static_cast<EPlayerAction>(packet.action), remote->GetCurrentWeapon());
+	}
+}
+
+void UMovementSyncSubsystem::HandleReloadPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_RELOAD_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_RELOAD_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
+	{
+		remote->PlayRemoteAction(EPlayerAction::RELOAD, ToWeaponType(packet.weapon));
 	}
 }
 

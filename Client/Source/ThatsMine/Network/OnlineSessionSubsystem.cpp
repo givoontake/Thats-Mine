@@ -12,7 +12,7 @@
 #include "game_protocol.h"
 
 #define LOCTEXT_NAMESPACE "OnlineSession"
-constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_RETURN_TO_ROOM, S2C_INFO};
+constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_RETURN_TO_ROOM, S2C_KICK};
 
 template<typename T>
 static TOptional<T> ReadPacket(const TArray<uint8>& payload)
@@ -157,13 +157,11 @@ void UOnlineSessionSubsystem::CreateRoom(const FString& room_name, bool is_priva
 	bool sent = false;
 	if (is_private) {
 		C2S_ADD_PRIVATE_ROOM_PACKET packet{};
-		packet.max_player_count = MAX_ROOM_PLAYER_COUNT;
 		FMemory::Memcpy(packet.room_name, name->data(), sizeof(packet.room_name));
 		FMemory::Memcpy(packet.room_password, secret->data(), sizeof(packet.room_password));
 		sent = SendPacket(network, C2S_ADD_PRIVATE_ROOM, packet);
 	} else {
 		C2S_ADD_PUBLIC_ROOM_PACKET packet{};
-		packet.max_player_count = MAX_ROOM_PLAYER_COUNT;
 		FMemory::Memcpy(packet.room_name, name->data(), sizeof(packet.room_name));
 		sent = SendPacket(network, C2S_ADD_PUBLIC_ROOM, packet);
 	}
@@ -198,7 +196,6 @@ void UOnlineSessionSubsystem::QuickJoin()
 {
 	if (!CanRequest(EClientState::LOBBY)) return;
 	C2S_FAST_MATCHING_PACKET packet{};
-	packet.max_player_count = MAX_ROOM_PLAYER_COUNT;
 	if (SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_FAST_MATCHING, packet)) BeginRequest(OnlineRequest::ENTER_ROOM);
 	else ShowStatus(LOCTEXT("SendFailed", "요청을 전송하지 못했습니다."));
 }
@@ -291,7 +288,6 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		room.room_key = static_cast<int64>(packet->room_key);
 		room.room_name = DecodeText(packet->room_name);
 		room.player_count = packet->current_player_count;
-		room.max_player_count = packet->max_player_count;
 		room.is_private = packet->is_private;
 		room.is_playing = packet->is_play;
 		if (auto* current = rooms_.FindByPredicate([&room](const auto& item) { return item.room_key == room.room_key; })) *current = room;
@@ -303,9 +299,7 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		if (!packet) { valid = false; break; }
 		if (state != EClientState::LOBBY || pending_request_ != OnlineRequest::ENTER_ROOM) return;
 		FLobbyRoomInfo room;
-		room.room_key = static_cast<int64>(packet->room_key);
 		room.room_name = DecodeText(packet->room_name);
-		room.max_player_count = packet->max_player_count;
 		EnterRoom(room);
 		break;
 	}
@@ -314,9 +308,7 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		if (!packet) { valid = false; break; }
 		if (state != EClientState::LOBBY || pending_request_ != OnlineRequest::ENTER_ROOM) return;
 		FLobbyRoomInfo room;
-		room.room_key = static_cast<int64>(packet->room_key);
 		room.room_name = DecodeText(packet->room_name);
-		room.max_player_count = packet->max_player_count;
 		room.is_private = true;
 		EnterRoom(room);
 		break;
@@ -390,10 +382,10 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Lvl_Lobby"));
 		break;
 	}
-	case S2C_INFO: {
-		const auto packet = ReadPacket<S2C_INFO_PACKET>(payload);
-		if (!packet) { valid = false; break; }
-		if (packet->info_code == KICKED) { is_kicked_ = true; status_ = LOCTEXT("Kicked", "방에서 퇴장되었습니다."); }
+	case S2C_KICK: {
+		if (!ReadPacket<S2C_KICK_PACKET>(payload)) { valid = false; break; }
+		is_kicked_ = true;
+		status_ = LOCTEXT("Kicked", "방에서 퇴장되었습니다.");
 		break;
 	}
 	default: return;

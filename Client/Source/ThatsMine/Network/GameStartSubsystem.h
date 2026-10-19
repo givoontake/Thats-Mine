@@ -46,6 +46,7 @@ private:
 	void HandleGameStartPacket(const TArray<uint8>& payload);
 	void HandleTreasureFoundPacket(const TArray<uint8>& payload);
 	void HandleTimeOverPacket(const TArray<uint8>& payload);
+	void HandleTreasureLocationPacket(const TArray<uint8>& payload);
 	void HandleTreasureRevealPacket(const TArray<uint8>& payload);
 	// 보물 자리에 보물 상자를 놓고 지도가 보물 위치를 표시하도록 알린다. 남은 시간 표시는 멈춘다.
 	void RevealTreasure(const float location[3], float yaw);

@@ -26,7 +26,6 @@ add_executable(GameServer
     Game/Boxes/BoxCandidateData.cpp
     Game/Hints/DirectionHintData.cpp
     Game/Hints/HintObjectTree.cpp
-    Game/Hints/ViewHintData.cpp
     Game/Treasure/treasure_placement.cpp
     Game/Hitbox/CharacterPose.cpp
     Game/Hitbox/HitboxData.cpp
@@ -38,7 +37,6 @@ add_executable(GameServer
     Game/Map/MapFileReader.cpp
     Game/Map/map_geometry.cpp
     Game/Regions/MapRegionData.cpp
-    Game/Towers/TowerCandidateData.cpp
     Lobby/LoginManager.cpp
     Lobby/Matchmaker.cpp
     Managers/ActivePlayerManager.cpp
@@ -72,7 +70,6 @@ add_executable(GameServer
     Common/hint_meshes.h
     Common/hint_object_file.h
     Common/IndexRegistry.h
-    Common/info_code.h
     Common/settings.h
     Common/random_seed.h
     Common/shot_spread.h
@@ -90,7 +87,6 @@ add_executable(GameServer
     Game/Boxes/BoxCandidateData.h
     Game/Hints/DirectionHintData.h
     Game/Hints/HintObjectTree.h
-    Game/Hints/ViewHintData.h
     Game/Hints/hint_types.h
     Game/Hitbox/CharacterPose.h
     Game/Hitbox/HitboxData.h
@@ -105,8 +101,6 @@ add_executable(GameServer
     Game/Map/terrain_types.h
     Game/Regions/MapRegionData.h
     Game/Regions/region_types.h
-    Game/Towers/TowerCandidateData.h
-    Game/Towers/tower_types.h
     Game/Treasure/treasure_placement.h
     Game/Treasure/treasure_types.h
     Lobby/lobby_tasks.h
@@ -122,7 +116,6 @@ add_executable(GameServer
     Packets/common_packets.h
     Packets/database_packets.h
     Packets/game_packets.h
-    Packets/lobby_packets.h
     Packets/packet_types.h
     Packets/room_packets.h
     Rooms/GameRoom.h
@@ -150,7 +143,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Towers Game/Treasure Lobby Managers Network Packets Rooms Threads
+    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Managers Network Packets Rooms Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)

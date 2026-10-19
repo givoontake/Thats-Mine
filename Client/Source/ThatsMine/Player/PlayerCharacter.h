@@ -77,7 +77,10 @@ public:
 	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
 	// 기절이 끝나면 보호 시간 동안 머리 위에 방패 이펙트를 켜고, 내 캐릭터면 게이지 아이콘을 방패로 바꿔 남은 초를 표시한다. 진행 중인 탐색은 취소한다.
-	void StartStun(float duration_seconds, float protection_seconds);
+	// 서버가 알린 기절을 시작한다. 기절은 서버가 기절 해제를 알릴 때 끝난다.
+	void StartStun();
+	// 기절을 끝내고 protection_seconds초 동안 보호 표시를 띄운다.
+	void EndStun(float protection_seconds);
 	virtual void Jump() override;
 
 	// 공격한 쪽 위치를 받아 화면 중앙 둘레에 피격 방향을 표시한다. 내가 조종하는 캐릭터에만 위젯이 있다.
@@ -100,8 +103,8 @@ public:
 	// 얻은 힌트를 인벤토리에 넣고 힌트 획득 안내를 띄운다. 이미 가진 힌트는 인벤토리에 다시 넣지 않고 안내만 띄운다.
 	UFUNCTION(BlueprintCallable, Category = "Player|Inventory")
 	void AddHint(const FInventoryHint& hint);
-	// 문장이 같은 힌트를 인벤토리에서 뺀다.
-	void RemoveHint(const FText& text);
+	// 번호가 hint_id인 힌트를 인벤토리에서 뺀다.
+	void RemoveHint(uint16 hint_id);
 
 	void MarkHintsRead();
 	// 가진 힌트 목록의 index번째 힌트의 즐겨찾기를 켜거나 끈다.
@@ -306,10 +309,8 @@ private:
 	float stun_gauge_ = 0.0f;
 	double stun_gauge_time_ = 0.0;
 	bool is_stunned_ = false;
-	FTimerHandle stun_timer_;
 	FTimerHandle stun_gauge_timer_;
 	// 기절이 끝난 뒤 보호 시간과, 보호가 끝나는 시각
-	float protection_seconds_ = 0.0f;
 	double protection_end_time_ = 0.0;
 	FTimerHandle protection_timer_;
 
@@ -335,7 +336,6 @@ private:
 	void UpdateStunGaugeDisplay();
 	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채우고 장비·인벤토리 표시를 고친다. 다 차면 충전 표시 타이머를 멈춘다.
 	void UpdatePickaxeCharges();
-	void EndStun();
 	// 남은 보호 시간을 게이지에 표시하고, 다 되면 보호를 끝낸다.
 	void UpdateProtection();
 	void EndProtection();

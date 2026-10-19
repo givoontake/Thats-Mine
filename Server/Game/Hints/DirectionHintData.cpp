@@ -33,16 +33,16 @@ bool DirectionHintData::Build(const MapRegionData& regions)
 	return is_loaded_;
 }
 
-std::vector<HINT_ENTRY> DirectionHintData::JudgeDirections(float x, float y) const
+std::vector<Hint> DirectionHintData::JudgeDirections(float x, float y) const
 {
 	constexpr int DIRECTION_COUNT = static_cast<int>(HintDirection::COUNT);
-	std::vector<HINT_ENTRY> hints;
+	std::vector<Hint> hints;
 	hints.reserve(areas_.size() * DIRECTION_COUNT);
 	for (const DirectionArea& area : areas_) {
 		// HintDirection 순서(북, 동, 남, 서)
 		const bool is_in_direction[DIRECTION_COUNT] = { x < area.min_x, y < area.min_y, x > area.max_x, y > area.max_y };
 		for (int direction = 0; direction < DIRECTION_COUNT; ++direction) {
-			hints.push_back({ static_cast<std::uint8_t>(HintKind::DIRECTION), area.region, static_cast<std::uint8_t>(direction), is_in_direction[direction], 0 });
+			hints.push_back(DirectionHint{ area.region, static_cast<std::uint8_t>(direction), is_in_direction[direction] });
 		}
 	}
 	return hints;

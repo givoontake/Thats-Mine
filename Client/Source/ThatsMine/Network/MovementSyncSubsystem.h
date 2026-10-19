@@ -34,8 +34,9 @@ protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;
 
 private:
-	// is_forced면 보내는 간격과 관계없이 지금 상태를 입력 변화로 바로 보낸다.
+	// is_forced면 보내는 간격과 관계없이 지금 위치를 바로 보낸다.
 	void SendMoveState(bool is_forced);
+	void SendInputChanges(const APlayerCharacter& character);
 	void HandleActionStarted(EPlayerAction action, EWeaponType weapon);
 	UFUNCTION()
 	void HandleShotFired(const FShotResult& shot);
@@ -46,10 +47,15 @@ private:
 	void HandleFireRejectedPacket(const TArray<uint8>& payload);
 	void HandleShotTracePacket(const TArray<uint8>& payload);
 	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
-	void HandleStunPacket(const TArray<uint8>& payload);
+	void HandleStunApplyPacket(const TArray<uint8>& payload);
+	void HandleStunReleasePacket(const TArray<uint8>& payload);
 	void HandleMoveCorrectionPacket(const TArray<uint8>& payload);
 	void HandleMovePacket(const TArray<uint8>& payload);
+	void HandleMoveInputPacket(const TArray<uint8>& payload);
+	void HandleAimPacket(const TArray<uint8>& payload);
+	void HandleEquipPacket(const TArray<uint8>& payload);
 	void HandleActionPacket(const TArray<uint8>& payload);
+	void HandleReloadPacket(const TArray<uint8>& payload);
 	void RemoveLeftPlayers();
 	void HandleInvalidPacket();
 	APlayerCharacter* FindRemotePlayer(int32 player_id) const;
@@ -59,6 +65,12 @@ private:
 	FRemoteMoveState last_sent_state_;
 	double last_send_time_ = 0.0;
 	bool has_sent_state_ = false;
+	// 마지막으로 보낸 이동 키 입력·조준 여부·장비. 처음에는 has_sent_input_이 거짓이라 모두 보낸다.
+	int8 sent_input_right_ = 0;
+	int8 sent_input_forward_ = 0;
+	bool is_sent_aiming_ = false;
+	EWeaponType sent_weapon_ = EWeaponType::PICKAXE;
+	bool has_sent_input_ = false;
 	bool is_active_ = false;
 	uint64 shot_seed_ = 0;
 };

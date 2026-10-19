@@ -11,8 +11,6 @@
 #include "HitboxData.h"
 #include "MapData.h"
 #include "MapRegionData.h"
-#include "TowerCandidateData.h"
-#include "ViewHintData.h"
 #include "session_tasks.h"
 #pragma comment(lib, "MSWSock.lib")
 #pragma comment(lib, "Ws2_32.lib")
@@ -42,11 +40,9 @@ class GameServer
 	HitboxData hitbox_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 히트박스 판정 데이터
 	MapData map_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 데이터(랜드스케이프, 충돌 배치물)
 	BoxCandidateData box_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 배치 후보
-	TowerCandidateData tower_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 탑 배치 후보
 	MapRegionData map_region_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 영역
 	HintObjectTree hint_object_tree_; // 서버 시작 시 맵 데이터로 만든 뒤 읽기만 하는 힌트 물체 트리
 	DirectionHintData direction_hint_data_; // 서버 시작 시 맵 영역으로 만든 뒤 읽기만 하는 방향 힌트 기준
-	ViewHintData view_hint_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 보임 힌트 판정 위치
 
 	void PostAccept(AcceptOverlapped& accept_over);
 
@@ -63,11 +59,9 @@ public:
 	const HitboxData& GetHitboxData() const { return hitbox_data_; }
 	const MapData& GetMapData() const { return map_data_; }
 	const BoxCandidateData& GetBoxCandidateData() const { return box_candidate_data_; }
-	const TowerCandidateData& GetTowerCandidateData() const { return tower_candidate_data_; }
 	const MapRegionData& GetMapRegionData() const { return map_region_data_; }
 	const HintObjectTree& GetHintObjectTree() const { return hint_object_tree_; }
 	const DirectionHintData& GetDirectionHintData() const { return direction_hint_data_; }
-	const ViewHintData& GetViewHintData() const { return view_hint_data_; }
 
 	void SyncLobbyList(int session_index);
 

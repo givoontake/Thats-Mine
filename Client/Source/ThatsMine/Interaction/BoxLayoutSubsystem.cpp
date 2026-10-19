@@ -119,13 +119,21 @@ void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box, bool is_shot, uint8 w
 	{
 		return;
 	}
-	C2S_BOX_OPEN_PACKET packet{};
-	packet.box = static_cast<uint16>(box_index);
-	packet.is_shot = is_shot;
-	packet.weapon = weapon;
 	TArray<uint8> payload;
-	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BOX_OPEN, payload);
+	if (is_shot)
+	{
+		C2S_BOX_SHOT_PACKET packet{};
+		packet.box = static_cast<uint16>(box_index);
+		packet.weapon = weapon;
+		payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	}
+	else
+	{
+		C2S_BOX_OPEN_PACKET packet{};
+		packet.box = static_cast<uint16>(box_index);
+		payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	}
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(is_shot ? C2S_BOX_SHOT : C2S_BOX_OPEN, payload);
 }
 
 // 서버가 인정한 상자 열림. 플레이 중인 방 전체가 받고, 내가 연 상자면 여는 소리를 재생한다.

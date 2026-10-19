@@ -15,7 +15,7 @@ static std::vector<char> ReadFileBytes(const std::filesystem::path& path)
 
 // 폴더 구성: Landscape.bin(랜드스케이프 충돌 조각), Meshes/항목 이름/collision.bin(충돌 모양), Meshes/항목 이름/placements.bin(충돌 배치, 충돌 없는 물체)
 // 항목 파일을 이름 순서로 모두 메모리에 읽은 뒤 부분마다 자기 파일을 읽게 하고, 다 읽으면 파일 내용은 버린다.
-bool MapData::Load(const std::string& map_dir, const std::vector<XMFLOAT3>& tower_candidates)
+bool MapData::Load(const std::string& map_dir)
 {
 	is_loaded_ = false;
 	const std::filesystem::path root(map_dir);
@@ -34,7 +34,7 @@ bool MapData::Load(const std::string& map_dir, const std::vector<XMFLOAT3>& towe
 	}
 	if (error || meshes.empty()) return false;
 	std::sort(meshes.begin(), meshes.end(), [](const MapMeshFile& first, const MapMeshFile& second) { return first.name < second.name; });
-	if (!collision_objects_.Load(meshes, tower_candidates)) return false;
+	if (!collision_objects_.Load(meshes)) return false;
 	if (!decor_objects_.Load(meshes)) return false;
 	is_loaded_ = true;
 	return true;
