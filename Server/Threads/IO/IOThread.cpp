@@ -7,7 +7,6 @@
 #include "packet_types.h"
 #include "packet_size_table.h"
 #include "session_tasks.h"
-#include "DBOverlapped.h"
 
 IOThread::IOThread(GameServer& game_server)
 	: game_server_(game_server)
@@ -29,11 +28,10 @@ void IOThread::Run()
 			ProcessAcceptCompletion(result, ex_over);
 			break;
 
-		case DB_SESSION_COMPLETION: {
-			std::unique_ptr<DBOverlapped> db_over(reinterpret_cast<DBOverlapped*>(ex_over));
-			game_server_.GetSessionManager().EnqueueSessionTask(db_over->ex_over.session_key, std::make_unique<SessionDBResultTask>(std::move(db_over->result)));
+		case DISCONNECT_CLEANUP_COMPLETION:
+			game_server_.ProcessDisconnects();
 			break;
-		}
+
 		case SESSION_IO_COMPLETION:
 			ProcessSessionCompletion(result, transferred_bytes, ex_over);
 			break;
@@ -79,7 +77,7 @@ void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, Ex
 
 	case OPType::LARGE_SEND: {
 		const SessionKey session_key = ex_over->session_key;
-		if (!result || transferred_bytes == 0) game_server_.GetSessionManager().RequestDisconnect(session_key);
+		if (!result || transferred_bytes == 0) game_server_.RequestDisconnect(session_key);
 		delete reinterpret_cast<LargeSendBuffer*>(ex_over);
 		game_server_.GetSessionManager().CompleteSessionIO(session_key);
 		break;
@@ -93,7 +91,12 @@ void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, Ex
 void IOThread::ProcessReceiveCompletion(BOOL result, DWORD transferred_bytes, Session& session, SessionKey session_key)
 {
 	if (!result || transferred_bytes == 0) {
-		game_server_.GetSessionManager().RequestDisconnect(session_key);
+		game_server_.RequestDisconnect(session_key);
+		game_server_.GetSessionManager().CompleteSessionIO(session_key);
+		return;
+	}
+	// 연결 종료가 예약된 세션의 수신은 처리하지 않고 다시 걸지도 않는다.
+	if (session.GetLifeState() != LifeState::ACTIVE) {
 		game_server_.GetSessionManager().CompleteSessionIO(session_key);
 		return;
 	}
@@ -108,7 +111,7 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 	const SessionKey session_key = session.GetSessionKey();
 	const int current_data_size = session.GetRemainingDataSize();
 	if (recv_bytes < 0 || current_data_size < 0 || current_data_size > BUF_SIZE || recv_bytes > BUF_SIZE - current_data_size) {
-		game_server_.GetSessionManager().RequestDisconnect(session_key);
+		game_server_.RequestDisconnect(session_key);
 		return false;
 	}
 
@@ -125,21 +128,20 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 		const auto* header = reinterpret_cast<const PACKET_HEADER*>(packet);
 		const int packet_size = header->size;
 		if (packet_size < PACKET_HEADER_SIZE || packet_size > BUF_SIZE) {
-			game_server_.GetSessionManager().RequestDisconnect(session_key);
+			game_server_.RequestDisconnect(session_key);
 			should_receive = false;
 			break;
 		}
 		// 처리 함수는 종류만 보고 구조체로 읽으므로, 종류별 허용 크기와 다르면 받은 범위를 넘어 읽게 된다. 정상 클라이언트가 만들 수 없는 패킷이라 연결을 끊는다.
 		const PacketSizeRange& size_range = CLIENT_PACKET_SIZE_TABLE[header->type];
 		if (packet_size < size_range.min_size || packet_size > size_range.max_size) {
-			game_server_.GetSessionManager().RequestDisconnect(session_key);
+			game_server_.RequestDisconnect(session_key);
 			should_receive = false;
 			break;
 		}
 		if (remaining_data_size - offset < packet_size) break;
 
-		auto task = std::make_unique<SessionPacketTask>(packet, packet_size, receive_time_ms);
-		if (!game_server_.GetSessionManager().EnqueueSessionTask(session_key, std::move(task))) {
+		if (!game_server_.RoutePacket(session, std::make_unique<SessionPacketTask>(session_key, packet, packet_size, receive_time_ms))) {
 			should_receive = false;
 			break;
 		}
@@ -154,7 +156,7 @@ bool IOThread::ProcessRecvBuffer(Session& session, int recv_bytes)
 
 void IOThread::ProcessSendCompletion(BOOL result, DWORD transferred_bytes, SendBuffer* send_buffer, SessionKey session_key)
 {
-	if (!result || transferred_bytes == 0) game_server_.GetSessionManager().RequestDisconnect(session_key);
+	if (!result || transferred_bytes == 0) game_server_.RequestDisconnect(session_key);
 
 	if (send_buffer->ex_over.op_type == OPType::POOLED_SEND) send_buffer->Clear();
 	else delete send_buffer;

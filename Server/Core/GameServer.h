@@ -19,7 +19,6 @@ class ServerThreadManager;
 class SessionManager;
 class Session;
 class GameRoom;
-struct LobbyTask;
 struct RoomLifecycleTask;
 
 class GameServer
@@ -34,6 +33,9 @@ class GameServer
 	// 수락 요청마다 자기 소켓과 OVERLAPPED를 가진다. 완료된 요청은 같은 자리에서 다시 건다.
 	std::array<AcceptOverlapped, ACCEPT_COUNT> accept_overs_;
 	std::unique_ptr<SessionManager> session_manager_;
+	// 타이머가 연결 종료 정리를 입출력 스레드에 맡길 때 넣는 완료. 정리가 끝나기 전에는 다시 넣지 않아, 정리 단계는 한 번에 하나만 돈다.
+	ExOverlapped disconnect_cleanup_over_;
+	std::atomic<bool> is_disconnect_cleanup_posted_ = false;
 
 	std::atomic<bool> is_running_ = true;
 	std::unique_ptr<ServerThreadManager> thread_manager_;
@@ -63,6 +65,7 @@ public:
 	const HintObjectTree& GetHintObjectTree() const { return hint_object_tree_; }
 	const DirectionHintData& GetDirectionHintData() const { return direction_hint_data_; }
 
+	void SyncLoginList(int session_index);
 	void SyncLobbyList(int session_index);
 
 	void StartServer();
@@ -70,10 +73,10 @@ public:
 	void StartThreads();
 	void CloseThreads();
 	void JoinThreads();
-	void RoutePacket(char* packet, Session& session, GameRoom* room, long long receive_time_ms);
-	void ProcessSessionTask(Session& session, std::unique_ptr<SessionTask> task, GameRoom* room);
-	SessionDrainResult DrainSessionTasks(Session& session, GameRoom* room);
-	void EnqueueLobbyTask(std::unique_ptr<LobbyTask> task);
+	bool RoutePacket(Session& session, std::unique_ptr<SessionPacketTask> task);
+	void RequestDisconnect(SessionKey session_key);
+	void PostDisconnectCleanup();
+	void ProcessDisconnects();
 	void EnqueueRoomLifecycleTask(std::unique_ptr<RoomLifecycleTask> task);
 	void SendError(Session& session, int error_code);
 };

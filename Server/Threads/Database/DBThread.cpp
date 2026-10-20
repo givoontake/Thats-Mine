@@ -9,7 +9,6 @@
 #include <jdbc/cppconn/connection.h>
 #include <jdbc/cppconn/driver.h>
 #include "DBThread.h"
-#include "DBOverlapped.h"
 
 
 // -------------------- 유틸(로컬) --------------------
@@ -31,9 +30,8 @@ DBThread::~DBThread()
 {
 }
 
-void DBThread::Init(HANDLE iocp_handle, sql::mysql::MySQL_Driver* driver)
+void DBThread::Init(sql::mysql::MySQL_Driver* driver)
 {
-	iocp_handle_ = iocp_handle;
 	driver_ = driver;
 }
 
@@ -110,20 +108,6 @@ bool DBThread::Enqueue(DBLoginTask task)
 	}
 	cv_.notify_one();
 	return true;
-}
-
-DBLoginResult DBThread::ProcessTask(const DBLoginTask&)
-{
-	return {};
-}
-
-void DBThread::HandleResult(SessionKey session_key, DBLoginResult result)
-{
-	auto over = std::make_unique<DBOverlapped>();
-	over->ex_over.op_type = OPType::DB;
-	over->ex_over.session_key = session_key;
-	over->result = std::move(result);
-	PostQueuedCompletionStatus(iocp_handle_, 0, DB_SESSION_COMPLETION, reinterpret_cast<WSAOVERLAPPED*>(over.release()));
 }
 
 void DBThread::Run()

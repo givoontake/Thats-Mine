@@ -1,6 +1,5 @@
 #include "SessionManager.h"
 #include <bcrypt.h>
-#include "session_tasks.h"
 
 // 빈 세션 하나를 차지해 새 접속에 배정한다. 빈 세션이 없거나 아이디를 만들지 못하면 nullptr을 반환한다.
 Session* SessionManager::AcquireSession(SOCKET new_socket, HANDLE iocp_handle)
@@ -38,40 +37,36 @@ Session* SessionManager::FindSession(SessionKey session_key)
 	return session;
 }
 
-bool SessionManager::EnqueueSessionTask(SessionKey session_key, std::unique_ptr<SessionTask> task)
+// 세션의 연결 종료를 예약하고 종료 후보에 넣는다. 이미 예약됐거나 재사용된 세션이면 아무것도 하지 않고 false를 반환한다.
+// 수신은 더 걸지 않고, 소속 정리와 소켓 닫기, 해제는 정리 단계가 이어서 한다.
+bool SessionManager::RequestDisconnect(SessionKey session_key)
 {
-	if (!task) return false;
 	auto* session = FindSession(session_key);
-	if (!session) return false;
-	task->session_key = session_key;
-	return session->TryEnqueueTask(session_key, std::move(task));
-}
-
-void SessionManager::RequestDisconnect(SessionKey session_key)
-{
-	EnqueueSessionTask(session_key, std::make_unique<SessionDisconnectTask>());
+	if (!session || !session->BeginDisconnect(session_key)) return false;
+	SyncDisconnectList(session_key.session_index);
+	return true;
 }
 
 void SessionManager::CompleteSessionIO(SessionKey session_key)
 {
 	auto* session = FindSession(session_key);
-	if (session && session->CompleteIO(session_key)) TryReleaseSession(*session);
+	if (session) session->CompleteIO(session_key);
 }
 
-// 연결이 닫힌 세션을, 세션이 속한 로비나 방이 자기 목록에서 뺀 뒤 호출한다. 모드를 비우고 세션 정리를 시도한다.
-void SessionManager::ReleaseOwnership(Session& session)
+// 연결 종료 후보 등록 여부를 현재 세션 상태에 맞춘다. 종료 예약 상태인 세션만 후보에 있다.
+void SessionManager::SyncDisconnectList(int session_index)
 {
-	if (session.GetLifeState() != LifeState::CLOSED) return;
-	session.ReleaseMode();
-	TryReleaseSession(session);
+	disconnect_list_.Sync(session_index, [this, session_index]() {
+		auto* session = FindSessionByIndex(session_index);
+		return session && session->GetLifeState() == LifeState::DISCONNECTING;
+	});
 }
 
-// 로비·방의 목록 정리와 마지막 입출력 완료 중 늦게 끝난 쪽이 세션을 비운다.
+// 정리 단계가 소속 정리와 소켓 닫기를 마친 세션을 비운다. 남은 입출력이 있으면 비우지 않고 다음 정리 주기에 다시 시도한다.
 void SessionManager::TryReleaseSession(Session& session)
 {
-	if (!session.TryBeginRelease()) return;
 	const SessionKey session_key = session.GetSessionKey();
+	if (!session.TryRelease()) return;
 	active_players_.RemovePlayer(session_key.player_id, session_key);
-	session.DiscardTasks();
-	session.CompleteRelease();
+	SyncDisconnectList(session_key.session_index);
 }

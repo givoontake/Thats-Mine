@@ -1,42 +1,15 @@
 #pragma once
-#include <memory>
-#include <utility>
 #include <vector>
 #include "types.h"
-#include "db_login_result.h"
 
-enum class SessionTaskType { PACKET, DISCONNECT, DB_RESULT };
-
-// 담당자가 세션 작업을 처리한 뒤의 결과
-// OWNED: 계속 담당 중, HANDED_OVER: 다른 담당자로 넘어감(남은 작업은 보존), CLOSED: 연결이 닫혀 담당자가 정리해야 함
-enum class SessionDrainResult { OWNED, HANDED_OVER, CLOSED };
-
-struct SessionTask
+// 입출력 스레드가 받은 패킷 하나. 받을 때의 세션 상태로 정한 처리 단위(로그인, 로비, 방)의 큐에 넣는다.
+// 처리하는 쪽은 세션 키로 세션을 찾고, 지금도 자기 소속일 때만 처리한다.
+struct SessionPacketTask
 {
-	SessionTaskType task_type;
 	SessionKey session_key;
-
-	explicit SessionTask(SessionTaskType task_type) : task_type(task_type) {}
-	virtual ~SessionTask() = default;
-};
-
-struct SessionPacketTask final : SessionTask
-{
 	std::vector<char> packet;
 	long long receive_time_ms; // 받은 순간의 서버 시각. 틱 시각과 같은 시계이고, 처리할 틱을 기다린 시간이 섞이지 않는다.
 
-	SessionPacketTask(const char* packet_data, int packet_size, long long receive_time_ms)
-		: SessionTask(SessionTaskType::PACKET), packet(packet_data, packet_data + packet_size), receive_time_ms(receive_time_ms) {}
-};
-
-struct SessionDisconnectTask final : SessionTask
-{
-	SessionDisconnectTask() : SessionTask(SessionTaskType::DISCONNECT) {}
-};
-
-struct SessionDBResultTask final : SessionTask
-{
-	DBLoginResult result;
-	explicit SessionDBResultTask(DBLoginResult result)
-		: SessionTask(SessionTaskType::DB_RESULT), result(std::move(result)) {}
+	SessionPacketTask(SessionKey session_key, const char* packet_data, int packet_size, long long receive_time_ms)
+		: session_key(session_key), packet(packet_data, packet_data + packet_size), receive_time_ms(receive_time_ms) {}
 };

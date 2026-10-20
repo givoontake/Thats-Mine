@@ -16,6 +16,8 @@ void TimerThread::Run()
     const auto frame_time = std::chrono::milliseconds(TICK_INTERVAL_MS);
     // 현재는 시각을 공유하지 않고, 타이머 실행 시점부터 한 주기 뒤를 첫 틱으로 예약한다.
     auto next_tick = Clock::now() + frame_time;
+    // 마지막으로 연결 종료 정리를 맡긴 틱 시각
+    long long disconnect_cleanup_time_ms = 0;
     // 0x00000002는 고해상도 타이머 생성 옵션이다. 타이머는 한 번 만들고 매 틱 재설정하여 사용한다.
     constexpr DWORD HIGH_RESOLUTION_WAITABLE_TIMER_FLAG = 0x00000002;
     HANDLE high_resolution_timer = CreateWaitableTimerExW(nullptr, nullptr, HIGH_RESOLUTION_WAITABLE_TIMER_FLAG, TIMER_MODIFY_STATE | SYNCHRONIZE);
@@ -67,6 +69,11 @@ void TimerThread::Run()
         // 사용 가능한 스레드를 확보하고 같은 틱의 처리 정보를 전달한다. 이전 틱의 전체 완료는 기다리지 않는다.
 		manager_.lobby_thread_manager_.StartLobbyPhase(tick_time_ms);
         manager_.game_thread_manager_.StartGamePhase(tick_time_ms);
+        // 정리 주기마다 연결 종료 정리를 입출력 스레드에 맡긴다.
+        if (tick_time_ms - disconnect_cleanup_time_ms >= DISCONNECT_CLEANUP_INTERVAL_MS) {
+            disconnect_cleanup_time_ms = tick_time_ms;
+            manager_.game_server_.PostDisconnectCleanup();
+        }
     }
 
     CloseHandle(high_resolution_timer);

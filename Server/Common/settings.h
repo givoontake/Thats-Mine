@@ -10,6 +10,7 @@ constexpr int MAX_PLAYER_COUNT = 10000;
 constexpr int MAX_ROOM_COUNT = 500;
 constexpr int MAX_ROOM_PLAYER_COUNT = 20;
 constexpr int ROOM_LIST_REFRESH_INTERVAL_MS = 1000; // 로비가 방 목록 응답을 새로 만드는 간격. 방 목록 요청에는 마지막으로 만든 목록을 보낸다.
+constexpr int DISCONNECT_CLEANUP_INTERVAL_MS = 1000; // 타이머가 연결 종료 정리를 입출력 스레드에 맡기는 간격
 constexpr int MIN_START_PLAYER_COUNT = 1; // 게임을 시작할 수 있는 최소 인원. 당분간 혼자서도 시작할 수 있게 1로 둔다(원래 2).
 constexpr int MAX_ROOM_NAME_SIZE = 48; // 16자 * UTF-8 1문자 크기(3)
 constexpr int MAX_ROOM_PASSWORD_SIZE = 48;

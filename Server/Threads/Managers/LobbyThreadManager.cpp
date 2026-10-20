@@ -13,7 +13,7 @@
 #include "room_lifecycle_tasks.h"
 
 LobbyThreadManager::LobbyThreadManager(GameServer& game_server)
-	: game_server_(game_server), login_manager_(game_server), matchmaker_(game_server)
+	: game_server_(game_server), matchmaker_(game_server)
 {
 }
 
@@ -38,28 +38,37 @@ void LobbyThreadManager::StartLobbyPhase(long long tick_time_ms)
 	tick_time_ms_.store(tick_time_ms);
 	const bool should_refresh_room_list = tick_time_ms - room_list_refresh_time_ms_ >= ROOM_LIST_REFRESH_INTERVAL_MS;
 	if (should_refresh_room_list) room_list_refresh_time_ms_ = tick_time_ms;
-	const auto phase_context = std::make_shared<LobbyPhaseContext>(lifecycle_tasks_.ClaimTaskCount(), THREAD_COUNT, tick_time_ms, should_refresh_room_list);
+	const auto phase_context = std::make_shared<LobbyPhaseContext>(request_tasks_.ClaimTaskCount(), THREAD_COUNT, tick_time_ms, should_refresh_room_list);
 	{
 		std::lock_guard<std::mutex> lock(lobby_mutex_);
 		for (const auto& lobby_thread : thread_objects_) {
 			lobby_thread->state_.store(LobbyThreadState::PROCESSING);
 			lobby_thread->phase_context_ = phase_context;
-			lobby_thread->phase_.store(LobbyPhase::SESSION_PROCESS);
+			lobby_thread->phase_.store(LobbyPhase::REQUEST_PROCESS);
 		}
 	}
 	lobby_cv_.notify_all();
 }
 
-void LobbyThreadManager::Enqueue(std::unique_ptr<LobbyTask> task)
+void LobbyThreadManager::EnqueueRequest(std::unique_ptr<SessionPacketTask> task)
 {
-	lifecycle_tasks_.Enqueue(std::move(task));
+	request_tasks_.Enqueue(std::move(task));
 }
 
-// 로비 목록에 있어야 하는 세션이다. 로그인했고 방에 있지 않은 활성 세션이면 전환 대기 중이어도 포함한다.
-// 로그인 전 세션은 로그인 목록에 따로 있으므로 로비 방송을 받지 않는다.
+// 로비 소속 세션이다. 로그인했고 방에 있지 않은 활성 세션이면 방 전환 대기 중이어도 포함한다.
+// 로비 목록 판단과 로비 요청을 처리할지의 판단에 같이 쓴다. 로그인 전 세션은 로그인 대기 목록에 따로 있으므로 로비 방송을 받지 않는다.
 bool LobbyThreadManager::ShouldBeListed(const SessionState& state)
 {
-	return state.life == LifeState::ACTIVE && state.mode != ModeState::NONE && state.mode != ModeState::ROOM && !LoginManager::IsLoginMode(state.mode);
+	return state.life == LifeState::ACTIVE && (state.mode == ModeState::LOBBY || state.mode == ModeState::MATCHING || state.mode == ModeState::ROOM_PENDING);
+}
+
+// 요청을 보낸 세션이 지금도 로비 소속일 때만 처리한다. 받은 뒤 방으로 갔거나 연결 종료가 예약됐으면 버린다.
+void LobbyThreadManager::ProcessRequest(std::unique_ptr<SessionPacketTask> task)
+{
+	if (!task) return;
+	auto* session = game_server_.GetSessionManager().FindSession(task->session_key);
+	if (!session || !ShouldBeListed(session->GetState())) return;
+	ProcessPacket(task->packet.data(), *session);
 }
 
 // 세션의 로비 목록 등록 여부를 현재 세션 상태에 맞춘다. 어느 스레드에서 호출해도 된다.
@@ -71,20 +80,6 @@ void LobbyThreadManager::SyncLobbyList(int session_index)
 		auto* session = game_server_.GetSessionManager().FindSessionByIndex(session_index);
 		return session && ShouldBeListed(session->GetState());
 	});
-}
-
-// 로비 목록 인덱스의 세션을 찾는다. 비워졌거나, 다른 인덱스로 옮겨 갔거나, 수정 중인 인덱스는 걸러진다.
-Session* LobbyThreadManager::FindLobbySession(int lobby_index)
-{
-	const std::int32_t session_index = lobby_list_.GetValue(lobby_index);
-	if (session_index < 0) return nullptr;
-	return game_server_.GetSessionManager().FindSessionByIndex(session_index);
-}
-
-// 로비 화면에 있는 세션이다. 빠른 매칭 중인 세션도 로비에 있으므로 포함한다.
-bool LobbyThreadManager::IsInLobby(ModeState mode_state)
-{
-	return mode_state == ModeState::LOBBY || mode_state == ModeState::MATCHING;
 }
 
 // 대기·게임 중인 방의 정보 패킷을 이어 붙인 새 목록을 만들어 교체한다. 이전 목록은 보내던 쪽이 다 쓰면 해제된다.
@@ -127,11 +122,6 @@ void LobbyThreadManager::SendRoomList(Session& session)
 void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 {
 	if (!packet) return;
-	// 로그인 전 세션의 패킷은 로그인 처리로만 보낸다. 아래의 로비 처리는 로그인한 세션만 받는다.
-	if (LoginManager::IsLoginMode(session.GetModeState())) {
-		login_manager_.ProcessPacket(packet, session);
-		return;
-	}
 	switch (reinterpret_cast<PACKET_HEADER*>(packet)->type) {
 	case C2S_ADD_PUBLIC_ROOM:
 	case C2S_ADD_PRIVATE_ROOM: {
@@ -162,6 +152,7 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 		break;
 	case C2S_FAST_MATCHING: {
 		// 매칭 상태로 먼저 바꾼 뒤 매칭 풀에 등록한다. 매칭 중에도 로비가 담당하므로 로비 패킷은 계속 처리된다.
+		// 등록은 요청 단계에서 하고 매칭은 요청 단계가 모두 끝난 뒤 돌므로, 등록 정보를 쓰는 것과 읽는 것이 겹치지 않는다.
 		if (!session.TryChangeMode(ModeState::LOBBY, ModeState::MATCHING)) {
 			game_server_.SendError(session, ErrorCode::INVALID_REQUEST);
 			break;
@@ -171,34 +162,6 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 	}
 	default:
 		break;
-	}
-}
-
-void LobbyThreadManager::ProcessTask(std::unique_ptr<LobbyTask> task)
-{
-	if (!task) return;
-	switch (task->task_type) {
-	case LobbyTaskType::SESSION_ADDED:
-		login_manager_.AddSession(task->session_key);
-		break;
-	case LobbyTaskType::LOGIN_RESULT:
-		login_manager_.ApplyLoginResult(task->session_key, task->login_result);
-		break;
-	case LobbyTaskType::RETURN_TO_LOBBY: {
-		// 로비가 받는 쪽으로서 로비 복귀를 확정한다. 실패 조건 없이 LOBBY로 바꾼다.
-		auto* session = game_server_.GetSessionManager().FindSession(task->session_key);
-		if (!session || !session->TryChangeMode(ModeState::LOBBY_PENDING, ModeState::LOBBY)) return;
-		if (task->result == SUCCESS) {
-			// 방 퇴장·강퇴 완료를 본인에게 알린다.
-			S2C_REMOVE_PLAYER_PACKET remove_p;
-			remove_p.header.size = static_cast<std::uint16_t>(sizeof(remove_p));
-			remove_p.header.type = S2C_REMOVE_PLAYER;
-			remove_p.player_id = task->session_key.player_id;
-			session->SendPacket(reinterpret_cast<char*>(&remove_p), remove_p.header.size);
-		}
-		else game_server_.SendError(*session, task->result);
-		break;
-	}
 	}
 }
 

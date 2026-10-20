@@ -3,8 +3,6 @@
 #include "LobbyPhaseContext.h"
 #include "LobbyThreadManager.h"
 #include "GameServer.h"
-#include "SessionManager.h"
-#include "Session.h"
 
 LobbyThread::LobbyThread(LobbyThreadManager& manager) : manager_(manager)
 {
@@ -16,55 +14,17 @@ void LobbyThread::Run()
 		WaitLobbyPhase();
 		if (!is_running_.load() || !manager_.game_server_.IsRunning()) break;
 
+		// 단계를 시작할 때 잡아 둔 로비 요청 수만큼 번호를 하나씩 받아 가며 나눠 처리한다. 그 뒤에 들어온 요청은 다음 틱에 처리한다.
 		auto current_phase_context = phase_context_;
-		while (current_phase_context->next_lifecycle_task_index.fetch_add(1) < current_phase_context->lifecycle_task_count)
-			manager_.ProcessTask(manager_.lifecycle_tasks_.Dequeue());
-		// 사전 작업을 마지막으로 끝낸 스레드 하나가 매칭 단계를 실행하고, 나머지는 매칭 단계가 끝날 때까지 기다린다.
-		// 매칭 단계는 세션 처리와 겹치지 않으므로 로비의 일부로서 매칭 중인 세션을 방으로 넘길 수 있다.
-		const int completed_lifecycle_thread_count = current_phase_context->completed_lifecycle_thread_count.fetch_add(1) + 1;
-		if (completed_lifecycle_thread_count == current_phase_context->thread_count) {
+		while (current_phase_context->next_request_index.fetch_add(1) < current_phase_context->request_count)
+			manager_.ProcessRequest(manager_.request_tasks_.Dequeue());
+		// 요청 처리를 마지막으로 끝낸 스레드 하나가 매칭을 실행한다. 매칭은 요청 처리가 모두 끝난 뒤에 돌아 요청 처리와 겹치지 않는다.
+		// 매칭을 맡지 않은 스레드는 방 목록을 갱신할 틱이면 갱신한다. 그런 스레드가 여럿이면 먼저 차지한 하나만 갱신한다.
+		const int completed_request_thread_count = current_phase_context->completed_request_thread_count.fetch_add(1) + 1;
+		if (completed_request_thread_count == current_phase_context->thread_count)
 			manager_.matchmaker_.RunCycle(current_phase_context->tick_time_ms);
-			current_phase_context->is_matching_complete.store(true);
-		}
-		// 매칭을 맡지 않은 스레드는 매칭을 기다리는 동안 방 목록을 갱신할 틱이면 갱신한다. 그런 스레드가 여럿이면 먼저 차지한 하나만 갱신한다.
 		else if (current_phase_context->should_refresh_room_list && !current_phase_context->is_room_list_claimed.exchange(true))
 			manager_.RefreshRoomList();
-		while (is_running_.load() && manager_.game_server_.IsRunning() && !current_phase_context->is_matching_complete.load())
-			_mm_pause();
-
-		// 로그인 목록을 경계까지 순회한다. 로그인 전 세션(LOGIN, AUTHENTICATING)만 처리한다.
-		auto& login_manager = manager_.login_manager_;
-		while (is_running_.load() && manager_.game_server_.IsRunning()) {
-			const int login_index = current_phase_context->next_login_index.fetch_add(1);
-			if (login_index >= login_manager.GetLoginListEnd()) break;
-			auto* session = login_manager.FindLoginSession(login_index);
-			if (!session) continue;
-			const SessionState state = session->GetState();
-			if (!LoginManager::IsLoginMode(state.mode)) continue;
-
-			const SessionDrainResult result = state.life == LifeState::ACTIVE ? manager_.game_server_.DrainSessionTasks(*session, nullptr) : SessionDrainResult::CLOSED;
-			if (result != SessionDrainResult::CLOSED) continue;
-			// 연결이 닫힌 세션은 로그인 목록에서 뺀 뒤 세션 정리를 시도한다.
-			login_manager.SyncLoginList(session->GetSessionKey().session_index);
-			manager_.game_server_.GetSessionManager().ReleaseOwnership(*session);
-		}
-
-		// 로비 목록을 경계까지 순회한다. 목록에는 전환 대기 중인 세션도 있으므로, 로비가 담당하는 상태(LOBBY, MATCHING)인 세션만 처리한다.
-		while (is_running_.load() && manager_.game_server_.IsRunning()) {
-			const int lobby_index = current_phase_context->next_lobby_index.fetch_add(1);
-			if (lobby_index >= manager_.lobby_list_.GetEnd()) break;
-			auto* session = manager_.FindLobbySession(lobby_index);
-			if (!session) continue;
-			const SessionState state = session->GetState();
-			if (state.mode != ModeState::LOBBY && state.mode != ModeState::MATCHING) continue;
-
-			const SessionDrainResult result = state.life == LifeState::ACTIVE ? manager_.game_server_.DrainSessionTasks(*session, nullptr) : SessionDrainResult::CLOSED;
-			if (result != SessionDrainResult::CLOSED) continue;
-			// 연결이 닫힌 세션은 로비 목록에서 뺀 뒤 담당을 놓는다. 연결이 닫혀 목록에 있으면 안 되는 상태이므로 맞추기로 빠진다.
-			const int session_index = session->GetSessionKey().session_index;
-			manager_.SyncLobbyList(session_index);
-			manager_.game_server_.GetSessionManager().ReleaseOwnership(*session);
-		}
 
 		phase_context_.reset();
 		phase_.store(LobbyPhase::NONE);

@@ -1,6 +1,5 @@
 // DBThread.h
 #pragma once
-#include <WinSock2.h>
 #include <condition_variable>
 #include <queue>
 #include "db_login_task.h"
@@ -29,12 +28,11 @@ class DBThread : public ServerThread
 	sql::mysql::MySQL_Driver* driver_ = nullptr;
 protected:
 	std::unique_ptr<sql::Connection> connection_;
-	virtual DBLoginResult ProcessTask(const DBLoginTask& task);
-	// 조회 결과를 처리한다. 기본은 IOCP로 입출력 스레드에 보내고, 로그인 스레드는 결과에 따라 직접 처리한다.
-	virtual void HandleResult(SessionKey session_key, DBLoginResult result);
+	virtual DBLoginResult ProcessTask(const DBLoginTask& task) = 0;
+	// 조회 결과를 처리한다. 조회를 맡은 스레드가 결과를 받은 자리에서 바로 처리한다.
+	virtual void HandleResult(SessionKey session_key, DBLoginResult result) = 0;
 
 private:
-	HANDLE iocp_handle_ = nullptr;
 	std::queue<DBLoginTask> task_queue_;
 	DBConnectionInfo connection_info_;
 	std::mutex wait_mutex_;
@@ -52,7 +50,7 @@ public:
 	~DBThread() override;
 	DBThread(const DBThread&) = delete;
 	DBThread& operator=(const DBThread&) = delete;
-	void Init(HANDLE iocp_handle, sql::mysql::MySQL_Driver* driver);
+	void Init(sql::mysql::MySQL_Driver* driver);
 	bool Enqueue(DBLoginTask task);
 	void Run() override;
 	void Close() override;

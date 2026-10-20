@@ -7,9 +7,8 @@
 #include <mutex>
 #include <shared_mutex>
 #include "SendBuffer.h"
-#include "ConcurrentTaskQueue.h"
 #include "enum_class.h"
-#include "session_tasks.h"
+#include "db_login_result.h"
 
 // 비동기 송수신 완료가 세션 슬롯 재사용 이후 도착할 수 있으므로 등록 시 세션 식별자를 오버랩 구조체에 저장하고, 완료 시 현재 식별자와 비교한다.
 // 송수신 등록과 소켓 종료의 경쟁은 소켓 공유 잠금으로 방지한다.
@@ -33,8 +32,9 @@ class Session
 	std::string nickname_;
 	int remaining_data_size_ = 0;
 	std::atomic<int> io_pending_count_ = 0;
-	// 작업 큐는 세션이 소유하고, 현재 담당자(로비 또는 방)만 소비한다. 전환 대기 중에는 아무도 소비하지 않고 작업을 보존한다.
-	ConcurrentTaskQueue<std::unique_ptr<SessionTask>> session_tasks_;
+	// 지금 들어가 있는 방 번호. 방이 입장을 확정하기 전에 적고, 입출력 스레드가 방 패킷을 보낼 방을 찾을 때 읽는다.
+	// 잘못 읽어도 방이 세션 키로 자기 플레이어인지 다시 확인한다.
+	std::atomic<int> room_index_ = -1;
 	// 남은 데이터는 recv_over 버퍼에 들어 있으므로 추가로 만들 필요가 없음.
 
 	// 송수신 등록은 공유 잠금으로 병렬 처리하고 closesocket은 단독 잠금으로 막아, 닫힌 소켓 번호가 새 연결에 재사용되는 경쟁을 방지한다.
@@ -58,15 +58,10 @@ public:
 	bool SendLargePacket(const char* packet, int packet_size);
 	bool RecvPacket();
 	bool BeginDisconnect(SessionKey session_key);
-	bool CompleteIO(SessionKey session_key);
-	void ReleaseMode();
-	bool TryBeginRelease();
-	void CompleteRelease();
-	bool TryEnqueueTask(SessionKey session_key, std::unique_ptr<SessionTask> task);
-	void DiscardTasks();
-	std::size_t ClaimTaskCount();
-	void RestoreClaimedTaskCount(std::size_t task_count);
-	std::unique_ptr<SessionTask> DequeueTask();
+	void CompleteIO(SessionKey session_key);
+	bool ReleaseMode(ModeState expected_mode);
+	void CloseSocket();
+	bool TryRelease();
 
 	// 데이터 레이스를 방지하기 위해 세션은 언제든지 수정될 수 있는 데이터에 대해 참조 반환을 하지 않는다
 	//getters
@@ -76,10 +71,12 @@ public:
 	SessionState GetState() const { return state_.load(); }
 	LifeState GetLifeState() const { return state_.load().life; }
 	ModeState GetModeState() const { return state_.load().mode; }
+	int GetRoomIndex() const { return room_index_.load(); }
 
 	//setters
 	bool MatchesSessionKey(SessionKey session_key) const;
 	void AdjustRemainingDataSize(int data_size_delta);
+	void SetRoomIndex(int room_index) { room_index_.store(room_index); }
 	bool TryChangeMode(ModeState expected_mode, ModeState desired_mode);
 	bool TryChangeMode(SessionKey session_key, ModeState expected_mode, ModeState desired_mode);
 };

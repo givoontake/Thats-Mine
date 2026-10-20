@@ -8,7 +8,6 @@
 #include "ServerThreadManager.h"
 #include "GamePhaseContext.h"
 #include "LobbyThreadManager.h"
-#include "lobby_tasks.h"
 #include "room_packets.h"
 
 GameThreadManager::GameThreadManager(GameServer& game_server, TickWaitPolicy tick_policy)
@@ -88,7 +87,7 @@ void GameThreadManager::Enqueue(std::unique_ptr<RoomLifecycleTask> task)
 }
 
 // 로비가 담당자로서 호출한다. 전환 대기로 먼저 바꾼 뒤 방에 입장 요청을 넣는다.
-// 요청을 넣지 못하면(방이 삭제 중) 로비에 실패 결과를 통지해 다른 입장 실패와 같은 경로로 로비 상태를 확정한다.
+// 요청을 넣지 못하면(방이 삭제 중) 로비 상태로 되돌리고 실패를 반환한다. 로비가 실패를 알린다.
 // room_password는 패킷의 고정 길이 비밀번호 배열이며, 공개방 입장이면 nullptr이다.
 int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password)
 {
@@ -103,10 +102,8 @@ int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, con
 	task.room_key = room_key;
 	CopyCharBuf(task.room_password, sizeof(task.room_password), room_password, MAX_ROOM_PASSWORD_SIZE);
 	if (!room->AddRoomTask(std::move(task))) {
-		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
-		auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, session_key);
-		lobby_task->result = ErrorCode::ROOM_NOT_FOUND;
-		game_server_.EnqueueLobbyTask(std::move(lobby_task));
+		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY);
+		return ErrorCode::ROOM_NOT_FOUND;
 	}
 	return SUCCESS;
 }
@@ -138,10 +135,8 @@ void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 	}
 	if (result == SUCCESS) return;
 
-	session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
-	auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, task->session_key);
-	lobby_task->result = result;
-	game_server_.EnqueueLobbyTask(std::move(lobby_task));
+	// 로비는 거절하지 않으므로 로비 상태로 바로 되돌리고 실패를 알린다. 방 전환 대기 중에도 로비 목록에 있었으므로 목록은 그대로다.
+	if (session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY)) game_server_.SendError(*session, result);
 }
 
 // 가장 앞의 빈 방 자리를 차지해 방을 만들고 방장을 추가한 뒤 입장을 확정한다. 실패하면 자리를 되돌린다.
@@ -165,6 +160,8 @@ int GameThreadManager::PublishRoom(const RoomInitData& data, Session& session, S
 			new_room->Reset();
 			return ErrorCode::SERVER_ERROR;
 		}
+		// 확정된 뒤부터 입출력 스레드가 이 방으로 패킷을 보내므로 방 번호를 먼저 적는다.
+		session.SetRoomIndex(room_index);
 		if (!new_room->AddHostSession(session_key) || !session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) {
 			room_index_registry_.Unregister(data.room_key, room_index);
 			new_room->Reset();

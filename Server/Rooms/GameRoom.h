@@ -10,6 +10,7 @@
 #include <mutex>
 #include "ConcurrentTaskQueue.h"
 #include "Player.h"
+#include "session_tasks.h"
 #include "box_types.h"
 #include "hint_types.h"
 #include "treasure_types.h"
@@ -62,6 +63,8 @@ private:
 	// 방 삭제와 남은 작업 정리를 동기화한다.
 	std::mutex room_mutex_;
 	ConcurrentTaskQueue<RoomTask> room_tasks_;
+	// 입출력 스레드가 넣는 이 방 플레이어의 패킷. 방 전환 작업과 따로 두고 틱마다 받은 순서대로 처리한다.
+	ConcurrentTaskQueue<std::unique_ptr<SessionPacketTask>> packet_tasks_;
 
 	int room_index_ = -1;
 	// 방 키는 방이 만들어질 때마다 새 난수로 바뀌며, 방 자리 재사용을 구분하는 식별자다.
@@ -115,7 +118,7 @@ private:
 	bool IsOwnedPlayer(const Session& session, SessionKey session_key);
 	void BeginRoomDelete();
 	void TryPostRoomDelete();
-	void ProcessSessionTasks();
+	void ProcessPacketTasks();
 	void ProcessRoomTasks();
 	void ProcessJoinTask(const RoomTask& task);
 	void ProcessRoomTask(const RoomTask& task);
@@ -194,6 +197,7 @@ public:
 	void SendCreateRoom(Session& session);
 	bool AddHostSession(SessionKey session_key);
 	bool AddRoomTask(RoomTask task);
+	void AddPacketTask(std::unique_ptr<SessionPacketTask> task);
 	void CompleteRoomInitialization();
 	void StoreRoomState(const RoomState new_state);
 	bool TryChangeRoomState(RoomState expected, RoomState desired);

@@ -23,6 +23,13 @@ void Matchmaker::Register(int session_index, long long tick_time_ms)
 	match_list_.Sync(session_index, []() { return true; });
 }
 
+// 연결 종료 정리 단계가 연결이 끊긴 세션을 매칭 풀에서 뺀다.
+void Matchmaker::Remove(int session_index)
+{
+	if (session_index < 0 || session_index >= MAX_PLAYER_COUNT) return;
+	match_list_.Sync(session_index, []() { return false; });
+}
+
 // 매칭 단계 한 주기. 로비 단계 안에서 한 스레드만 호출한다.
 void Matchmaker::RunCycle(long long tick_time_ms)
 {
@@ -36,6 +43,8 @@ void Matchmaker::RunCycle(long long tick_time_ms)
 		if (session_index < 0) continue;
 		auto* session = game_server_.GetSessionManager().FindSessionByIndex(session_index);
 		const SessionState state = session ? session->GetState() : SessionState{};
+		// 연결 종료가 예약된 세션은 정리 단계가 풀에서 뺀다.
+		if (state.life == LifeState::DISCONNECTING) continue;
 		if (state.life == LifeState::ACTIVE && state.mode == ModeState::ROOM_PENDING) {
 			const int target_room_index = target_room_index_[session_index];
 			if (target_room_index >= 0 && target_room_index < room_index_end) ++joining_counts_[target_room_index];

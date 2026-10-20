@@ -6,11 +6,12 @@
 class GameServer;
 class Session;
 
-// 빠른 매칭 담당. 로비 단계 안의 매칭 단계에서 한 스레드가 RunCycle을 실행한다.
+// 빠른 매칭 처리. 로비 단계에서 요청 처리가 모두 끝난 뒤 한 스레드가 RunCycle을 실행한다.
 // 매칭 중인 세션(MATCHING)은 로비가 담당하므로 매칭하는 동안에도 로비 패킷은 계속 처리된다.
-// 매칭 단계는 로비의 세션 처리와 겹치지 않으므로, 로비의 일부로서 MATCHING → ROOM_PENDING 전환(방에 넘기기)을 할 수 있다.
+// 매칭은 로비의 요청 처리와 겹치지 않으므로, 로비의 일부로서 MATCHING → ROOM_PENDING 전환(방에 넘기기)을 할 수 있다.
 // 입장 결과는 따로 받지 않고 세션 상태로 판단한다: ROOM이면 성공, MATCHING으로 돌아왔으면 실패, ROOM_PENDING이면 처리 중.
-// 매칭 단계를 전용 스레드로 옮기면 이 전제가 깨지므로, 방에 넘기는 동작을 로비를 거치도록 바꿔야 한다.
+// 매칭 풀은 매칭에서 방 입장을 기다리는 세션(ROOM_PENDING)도 담아야 해서 상태만으로 정해지지 않으므로, 매치메이커가 직접 넣고 뺀다.
+// 연결이 끊긴 세션은 연결 종료 정리 단계가 Remove로 뺀다.
 class Matchmaker
 {
 	static constexpr long long MATCH_TIMEOUT_MS = 5000;
@@ -33,5 +34,6 @@ public:
 	explicit Matchmaker(GameServer& game_server);
 
 	void Register(int session_index, long long tick_time_ms);
+	void Remove(int session_index);
 	void RunCycle(long long tick_time_ms);
 };

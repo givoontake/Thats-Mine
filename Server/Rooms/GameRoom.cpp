@@ -21,7 +21,6 @@
 #include "hitbox_raycast.h"
 #include "hint_types.h"
 #include "treasure_placement.h"
-#include "lobby_tasks.h"
 #include "room_lifecycle_tasks.h"
 
 // 종류별 힌트 패킷 중 가장 큰 크기. 힌트를 이어 붙일 버퍼를 잡을 때 쓴다.
@@ -136,16 +135,28 @@ bool GameRoom::IsOwnedPlayer(const Session& session, SessionKey session_key)
 	return session.GetModeState() == ModeState::ROOM && FindPlayer(session_key) != nullptr;
 }
 
-// 방이 담당 중인 세션을 로비로 넘긴다. 전환 대기로 먼저 바꾼 뒤 방에서 제거하고, 로비 통지는 마지막에 넣는다.
+// 방에 소속된 세션을 로비로 넘긴다. 로비는 거절하지 않으므로 방이 로비 상태로 바로 확정하고 결과를 알린다.
+// 연결 종료가 예약된 세션이면 로비로 보내지 않고 자리를 뺀 뒤 소속을 놓는다. 나머지 정리는 연결 종료 정리 단계가 한다.
 void GameRoom::LeaveToLobby(SessionKey session_key, RoomExitType exit_type)
 {
 	if (!FindPlayer(session_key)) return;
 	auto* session = server_->GetSessionManager().FindSession(session_key);
-	if (!session || !session->TryChangeMode(ModeState::ROOM, ModeState::LOBBY_PENDING)) return;
+	if (!session) return;
+	if (!session->TryChangeMode(ModeState::ROOM, ModeState::LOBBY)) {
+		if (session->GetLifeState() != LifeState::DISCONNECTING) return;
+		CompletePlayerRemoval(session_key, exit_type);
+		session->ReleaseMode(ModeState::ROOM);
+		return;
+	}
 	CompletePlayerRemoval(session_key, exit_type);
 	// 방을 떠나 로비 목록에 있어야 하는 상태가 되었으므로 목록을 맞춘다.
 	server_->SyncLobbyList(session_key.session_index);
-	server_->EnqueueLobbyTask(std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, session_key));
+	// 방 퇴장·강퇴 완료를 본인에게 알린다.
+	S2C_REMOVE_PLAYER_PACKET remove_p;
+	remove_p.header.size = static_cast<std::uint16_t>(sizeof(remove_p));
+	remove_p.header.type = S2C_REMOVE_PLAYER;
+	remove_p.player_id = session_key.player_id;
+	session->SendPacket(reinterpret_cast<char*>(&remove_p), remove_p.header.size);
 }
 
 bool GameRoom::AddHostSession(SessionKey session_key)
@@ -175,7 +186,8 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char
 	}
 	if (added_slot < 0) return ErrorCode::ROOM_FULL;
 
-	// 방이 받는 쪽으로서 입장을 확정한다. 확정된 뒤부터 이 방이 세션 작업을 처리한다.
+	// 방이 받는 쪽으로서 입장을 확정한다. 확정된 뒤부터 입출력 스레드가 이 방으로 패킷을 보내므로 방 번호를 먼저 적는다.
+	new_session.SetRoomIndex(room_index_);
 	if (!new_session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) return ErrorCode::INVALID_REQUEST;
 	room_players[added_slot].InitPlayer(session_key);
 	++current_player_count_;
@@ -429,32 +441,35 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 }
 
 // 방 키가 다르면 같은 자리에 새로 만들어진 다른 방이므로 받지 않는다.
+// 생성 중인 방도 작업을 받아 쌓아 두고, 방이 열려 게임 스레드가 처리하기 시작하면 처리한다.
 bool GameRoom::AddRoomTask(RoomTask task)
 {
 	std::lock_guard<std::mutex> lock(room_mutex_);
 	const RoomState state = room_state_.load();
-	if (state != RoomState::WAIT && state != RoomState::PLAY) return false;
+	if (state != RoomState::INITIALIZING && state != RoomState::WAIT && state != RoomState::PLAY) return false;
 	if (task.room_key != GetRoomKey()) return false;
 	room_tasks_.Enqueue(std::move(task));
 	return true;
 }
 
-// 이 방이 담당하는 세션의 작업만 처리한다. 연결이 닫힌 세션은 방에서 제거한 뒤 담당을 놓는다.
-void GameRoom::ProcessSessionTasks()
+// 입출력 스레드가 받은 패킷은 받을 때의 세션 상태로 이 방에 왔으므로, 지금도 이 방의 플레이어인 세션의 패킷만 처리한다.
+// 받은 순서대로 처리하므로 같은 틱 안에서도 플레이어 사이의 처리 순서가 도착 순서가 된다.
+void GameRoom::AddPacketTask(std::unique_ptr<SessionPacketTask> task)
 {
-	auto& room_players = room_players_;
-	for (auto& room_player : room_players) {
-		if (!room_player.HasSession()) continue;
-		const SessionKey session_key = room_player.GetSessionKey();
-		auto* session = server_->GetSessionManager().FindSession(session_key);
-		if (!session) continue;
-		const SessionState state = session->GetState();
-		if (state.mode != ModeState::ROOM) continue;
+	// 방장은 방을 여는 사이에 생성 응답을 받고 패킷을 보낼 수 있으므로 생성 중인 방도 받는다.
+	const RoomState state = room_state_.load();
+	if (state != RoomState::INITIALIZING && state != RoomState::WAIT && state != RoomState::PLAY) return;
+	packet_tasks_.Enqueue(std::move(task));
+}
 
-		const SessionDrainResult result = state.life == LifeState::ACTIVE ? server_->DrainSessionTasks(*session, this) : SessionDrainResult::CLOSED;
-		if (result != SessionDrainResult::CLOSED) continue;
-		CompletePlayerRemoval(session_key, RoomExitType::LEAVE);
-		server_->GetSessionManager().ReleaseOwnership(*session);
+void GameRoom::ProcessPacketTasks()
+{
+	const std::size_t task_count = packet_tasks_.ClaimTaskCount();
+	for (std::size_t i = 0; i < task_count; ++i) {
+		const auto task = packet_tasks_.Dequeue();
+		auto* session = server_->GetSessionManager().FindSession(task->session_key);
+		if (!session || !IsOwnedPlayer(*session, task->session_key)) continue;
+		HandlePacket(task->packet.data(), *session, task->receive_time_ms);
 	}
 }
 
@@ -478,10 +493,8 @@ void GameRoom::ProcessJoinTask(const RoomTask& task)
 		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::MATCHING);
 		return;
 	}
-	session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY_PENDING);
-	auto lobby_task = std::make_unique<LobbyTask>(LobbyTaskType::RETURN_TO_LOBBY, task.session_key);
-	lobby_task->result = result;
-	server_->EnqueueLobbyTask(std::move(lobby_task));
+	// 로비는 거절하지 않으므로 방이 로비 상태로 바로 되돌리고 실패를 알린다. 방 전환 대기 중에도 로비 목록에 있었으므로 목록은 그대로다.
+	if (session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY)) server_->SendError(*session, result);
 }
 
 void GameRoom::ProcessRoomTask(const RoomTask& task)
@@ -492,6 +505,13 @@ void GameRoom::ProcessRoomTask(const RoomTask& task)
 	}
 	auto* session = server_->GetSessionManager().FindSession(task.session_key);
 	if (!session || !IsOwnedPlayer(*session, task.session_key)) return;
+	// 연결 종료 정리 단계가 보낸 요청이다. 자리를 빼고 소속을 놓으면 정리 단계가 다음 주기에 세션을 해제한다.
+	if (task.task_type == RoomTaskType::DISCONNECT) {
+		if (session->GetLifeState() != LifeState::DISCONNECTING) return;
+		CompletePlayerRemoval(task.session_key, RoomExitType::LEAVE);
+		session->ReleaseMode(ModeState::ROOM);
+		return;
+	}
 	ProcessSpecificRoomTask(task);
 }
 
@@ -506,7 +526,7 @@ void GameRoom::ProcessRoomTick(long long tick_time_ms)
 {
 	tick_time_ms_ = tick_time_ms;
 	ProcessRoomTasks();
-	ProcessSessionTasks();
+	ProcessPacketTasks();
 	ProcessRoomTasks();
 	if (room_state_.load() == RoomState::PLAY) ProcessGameTick(tick_time_ms);
 }

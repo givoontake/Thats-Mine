@@ -48,7 +48,6 @@ add_executable(GameServer
     Threads/ServerThread.cpp
     Threads/Database/DBThread.cpp
     Threads/Database/LoginDBThread.cpp
-    Database/DBResultHandler.cpp
     Threads/Game/GameThread.cpp
     Threads/Game/GamePhaseContext.cpp
     Threads/IO/IOThread.cpp
@@ -79,8 +78,6 @@ add_executable(GameServer
     Core/GameServer.h
     Database/db_login_result.h
     Database/db_login_task.h
-    Database/DBOverlapped.h
-    Database/DBResultHandler.h
     Game/Player.h
     Game/weapon_ammo.h
     Game/Boxes/box_types.h
@@ -103,7 +100,6 @@ add_executable(GameServer
     Game/Regions/region_types.h
     Game/Treasure/treasure_placement.h
     Game/Treasure/treasure_types.h
-    Lobby/lobby_tasks.h
     Lobby/LoginManager.h
     Lobby/Matchmaker.h
     Managers/ActivePlayerManager.h

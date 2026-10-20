@@ -12,9 +12,8 @@
 #include "enum_class.h"
 #include "types.h"
 #include "LobbyThread.h"
-#include "LoginManager.h"
 #include "Matchmaker.h"
-#include "lobby_tasks.h"
+#include "session_tasks.h"
 #include "settings.h"
 
 class GameServer;
@@ -30,12 +29,11 @@ private:
 	GameServer& game_server_;
 	std::mutex lobby_mutex_;
 	std::condition_variable lobby_cv_;
-	ConcurrentTaskQueue<std::unique_ptr<LobbyTask>> lifecycle_tasks_;
-	// 로비 목록: 로비가 순회할 세션(방에 있지 않은 활성 세션)의 세션 번호를 담는다. 실제 처리 여부는 세션 담당 상태로 판단한다.
+	// 로비 요청 큐: 입출력 스레드가 로비 소속 세션의 패킷을 넣는다. 요청 단계에서 로비 스레드들이 나눠 처리한다.
+	ConcurrentTaskQueue<std::unique_ptr<SessionPacketTask>> request_tasks_;
+	// 로비 목록: 로그인했고 방에 있지 않은 활성 세션의 세션 번호. 로비 방송 대상이다.
 	ActiveList<MAX_PLAYER_COUNT> lobby_list_;
-	// 로그인 전 세션의 목록과 로그인 처리. 로그인에 성공한 세션만 로비 목록으로 옮겨 온다.
-	LoginManager login_manager_;
-	// 빠른 매칭 담당. 로비 단계 안의 매칭 단계에서 한 스레드가 실행한다.
+	// 빠른 매칭 처리. 요청 단계가 끝난 뒤 한 스레드가 실행한다.
 	Matchmaker matchmaker_;
 	// 현재 로비 단계의 틱 시각. 로비 단계를 시작할 때 기록하고, 매칭 등록 시각 등에 같은 값을 쓴다.
 	std::atomic<long long> tick_time_ms_{ 0 };
@@ -48,10 +46,8 @@ private:
 
 	friend class LobbyThread;
 
-	void ProcessTask(std::unique_ptr<LobbyTask> task);
+	void ProcessRequest(std::unique_ptr<SessionPacketTask> task);
 	static bool ShouldBeListed(const SessionState& state);
-	static bool IsInLobby(ModeState mode_state);
-	Session* FindLobbySession(int lobby_index);
 	void RefreshRoomList();
 	void SendRoomList(Session& session);
 
@@ -60,9 +56,10 @@ public:
 
 	void Start();
 	void StartLobbyPhase(long long tick_time_ms);
-	void Enqueue(std::unique_ptr<LobbyTask> task);
+	void EnqueueRequest(std::unique_ptr<SessionPacketTask> task);
 	void SyncLobbyList(int session_index);
 	void ProcessPacket(char* packet, Session& session);
+	Matchmaker& GetMatchmaker() { return matchmaker_; }
 	void Close();
 	void Join();
 };
