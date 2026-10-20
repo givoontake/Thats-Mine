@@ -26,6 +26,9 @@ void LobbyThread::Run()
 			manager_.matchmaker_.RunCycle(current_phase_context->tick_time_ms);
 			current_phase_context->is_matching_complete.store(true);
 		}
+		// 매칭을 맡지 않은 스레드는 매칭을 기다리는 동안 방 목록을 갱신할 틱이면 갱신한다. 그런 스레드가 여럿이면 먼저 차지한 하나만 갱신한다.
+		else if (current_phase_context->should_refresh_room_list && !current_phase_context->is_room_list_claimed.exchange(true))
+			manager_.RefreshRoomList();
 		while (is_running_.load() && manager_.game_server_.IsRunning() && !current_phase_context->is_matching_complete.load())
 			_mm_pause();
 

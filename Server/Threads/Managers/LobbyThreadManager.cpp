@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <immintrin.h>
 #include "LobbyThreadManager.h"
 #include "ServerThreadManager.h"
@@ -35,7 +36,9 @@ void LobbyThreadManager::StartLobbyPhase(long long tick_time_ms)
 	}
 
 	tick_time_ms_.store(tick_time_ms);
-	const auto phase_context = std::make_shared<LobbyPhaseContext>(lifecycle_tasks_.ClaimTaskCount(), THREAD_COUNT, tick_time_ms);
+	const bool should_refresh_room_list = tick_time_ms - room_list_refresh_time_ms_ >= ROOM_LIST_REFRESH_INTERVAL_MS;
+	if (should_refresh_room_list) room_list_refresh_time_ms_ = tick_time_ms;
+	const auto phase_context = std::make_shared<LobbyPhaseContext>(lifecycle_tasks_.ClaimTaskCount(), THREAD_COUNT, tick_time_ms, should_refresh_room_list);
 	{
 		std::lock_guard<std::mutex> lock(lobby_mutex_);
 		for (const auto& lobby_thread : thread_objects_) {
@@ -84,11 +87,12 @@ bool LobbyThreadManager::IsInLobby(ModeState mode_state)
 	return mode_state == ModeState::LOBBY || mode_state == ModeState::MATCHING;
 }
 
-void LobbyThreadManager::SendRoomList(Session& session)
+// 대기·게임 중인 방의 정보 패킷을 이어 붙인 새 목록을 만들어 교체한다. 이전 목록은 보내던 쪽이 다 쓰면 해제된다.
+void LobbyThreadManager::RefreshRoomList()
 {
-	char packet_buffer[BUF_SIZE];
-	int packet_size = 0;
 	auto& game_thread_manager = game_server_.GetThreadManager().GetGameThreadManager();
+	auto room_list = std::make_shared<std::vector<char>>();
+	room_list->reserve(game_thread_manager.GetRoomIndexEnd() * sizeof(S2C_ROOM_INFO_PACKET));
 	for (int room_index = 0; room_index < game_thread_manager.GetRoomIndexEnd(); ++room_index) {
 		auto* room = game_thread_manager.GetRoomByIndex(room_index);
 		RoomInfoSnapshot room_snapshot;
@@ -103,15 +107,21 @@ void LobbyThreadManager::SendRoomList(Session& session)
 		info_p.is_private = room_snapshot.is_private;
 		info_p.is_play = room_snapshot.room_state == RoomState::PLAY;
 
-		if (packet_size + sizeof(info_p) > BUF_SIZE) {
-			session.SendPacket(reinterpret_cast<char*>(packet_buffer), packet_size);
-			packet_size = 0;
-		}
-
-		memcpy(packet_buffer + packet_size, &info_p, sizeof(info_p));
-		packet_size += sizeof(info_p);
+		const char* info_bytes = reinterpret_cast<const char*>(&info_p);
+		room_list->insert(room_list->end(), info_bytes, info_bytes + sizeof(info_p));
 	}
-	session.SendPacket(reinterpret_cast<char*>(packet_buffer), packet_size);
+	room_list_.store(std::move(room_list));
+}
+
+// 마지막으로 만든 방 목록을 송신 버퍼 크기에 들어가는 패킷 수만큼씩 나눠 보낸다.
+void LobbyThreadManager::SendRoomList(Session& session)
+{
+	const auto room_list = room_list_.load();
+	if (!room_list) return;
+	constexpr int SEND_SIZE = BUF_SIZE / sizeof(S2C_ROOM_INFO_PACKET) * sizeof(S2C_ROOM_INFO_PACKET);
+	const int room_list_size = static_cast<int>(room_list->size());
+	for (int offset = 0; offset < room_list_size; offset += SEND_SIZE)
+		session.SendPacket(room_list->data() + offset, std::min(SEND_SIZE, room_list_size - offset));
 }
 
 void LobbyThreadManager::ProcessPacket(char* packet, Session& session)

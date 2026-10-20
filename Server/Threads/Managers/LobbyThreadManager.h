@@ -39,6 +39,10 @@ private:
 	Matchmaker matchmaker_;
 	// 현재 로비 단계의 틱 시각. 로비 단계를 시작할 때 기록하고, 매칭 등록 시각 등에 같은 값을 쓴다.
 	std::atomic<long long> tick_time_ms_{ 0 };
+	// 방 목록 응답. 갱신할 틱에 로비 스레드 하나가 새 목록을 만들어 통째로 교체하므로, 요청을 처리하는 쪽은 언제나 완성된 목록을 받는다.
+	std::atomic<std::shared_ptr<const std::vector<char>>> room_list_;
+	// 마지막으로 방 목록 갱신을 정한 틱 시각. 로비 단계를 시작하는 타이머 스레드만 쓴다.
+	long long room_list_refresh_time_ms_ = 0;
 	std::vector<std::unique_ptr<LobbyThread>> thread_objects_;
 	std::vector<std::thread> threads_;
 
@@ -48,6 +52,7 @@ private:
 	static bool ShouldBeListed(const SessionState& state);
 	static bool IsInLobby(ModeState mode_state);
 	Session* FindLobbySession(int lobby_index);
+	void RefreshRoomList();
 	void SendRoomList(Session& session);
 
 public:
