@@ -19,6 +19,6 @@ public:
 	explicit LoginDBThread(GameServer& game_server);
 
 	// 입출력 스레드가 로그인 전 세션의 패킷을 넘긴다. 로그인 요청만 조회 작업으로 바꿔 큐에 넣는다.
-	void EnqueueLoginPacket(SessionKey session_key, const char* packet);
+	void EnqueueLoginPacket(SessionKey session_key, const char* packet, long long receive_time_ms);
 	LoginManager& GetLoginManager() { return login_manager_; }
 };

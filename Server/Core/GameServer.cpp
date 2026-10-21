@@ -116,7 +116,7 @@ bool GameServer::RoutePacket(Session& session, std::unique_ptr<SessionPacketTask
 	if (state.life != LifeState::ACTIVE) return false;
 	switch (state.mode) {
 	case ModeState::LOGIN:
-		thread_manager_->GetDBThreadManager().GetLoginThread().EnqueueLoginPacket(task->session_key, task->packet.data());
+		thread_manager_->GetDBThreadManager().GetLoginThread().EnqueueLoginPacket(task->session_key, task->packet.data(), task->receive_time_ms);
 		break;
 	// 방 전환 대기 중인 세션도 아직 로비 목록에 있으므로 로비가 받는다. 상태를 바꾸는 요청은 로비 상태가 아니라 거절된다.
 	case ModeState::LOBBY:

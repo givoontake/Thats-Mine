@@ -13,18 +13,18 @@ LoginDBThread::LoginDBThread(GameServer& game_server)
 {
 }
 
-void LoginDBThread::EnqueueLoginPacket(SessionKey session_key, const char* packet)
+void LoginDBThread::EnqueueLoginPacket(SessionKey session_key, const char* packet, long long receive_time_ms)
 {
 	if (reinterpret_cast<const PACKET_HEADER*>(packet)->type != C2S_LOGIN) return;
 	const auto* request = reinterpret_cast<const C2S_LOGIN_PACKET*>(packet);
-	DBLoginTask task{ session_key, CharBufToString(request->login_id, sizeof(request->login_id)), CharBufToString(request->login_password, sizeof(request->login_password)) };
+	DBLoginTask task{ session_key, CharBufToString(request->login_id, sizeof(request->login_id)), CharBufToString(request->login_password, sizeof(request->login_password)), receive_time_ms };
 	// 큐가 요청을 받지 못하는 것은 DB 스레드가 멈췄을 때뿐이다. 다시 로그인할 수 있게 상태는 그대로 두고 실패를 알린다.
 	if (Enqueue(std::move(task))) return;
 	auto* session = game_server_.GetSessionManager().FindSession(session_key);
-	if (session) game_server_.SendError(*session, ErrorCode::SERVER_ERROR);
+	if (session) game_server_.SendError(*session, ErrorCode::LOGIN_UNAVAILABLE);
 }
 
-// 성공은 로그인 처리가 로비 상태로 확정하고 목록을 옮긴다. 실패는 상태를 그대로 두어 다시 로그인할 수 있게 하고 알린다.
+// 성공은 로그인 처리가 로비 상태로 확정하고 목록을 옮긴다. 실패(계정 불일치, 시간 초과, 조회 실패)는 상태를 그대로 두어 다시 로그인할 수 있게 하고 알린다.
 // 조회하는 사이 끊겼거나 다른 연결로 재사용됐거나 이미 로그인한 세션이면 알리지 않는다.
 void LoginDBThread::HandleResult(SessionKey session_key, DBLoginResult result)
 {

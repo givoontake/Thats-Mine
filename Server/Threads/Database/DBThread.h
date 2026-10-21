@@ -41,6 +41,9 @@ private:
 	bool LoadDBConfigFromFile(const std::string& file_path);
 	bool Connect();
 	void Disconnect();
+	bool IsConnectionAlive();
+	static bool IsExpired(const DBLoginTask& task);
+	void DiscardExpiredTasks();
 	static void PrintErrorLog(const char* func_name, const std::exception& e);
 	static void PrintErrorLog(const char* func_name, const sql::SQLException& e);
 	static void PrintErrorLog(const char* func_name);
