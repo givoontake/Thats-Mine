@@ -29,6 +29,11 @@ void URemoteMovementComponent::BeginPlay()
 	character->EnableHitboxCollision();
 }
 
+uint32 URemoteMovementComponent::GetViewTimeMs() const
+{
+	return state_.client_time_ms + static_cast<uint32>((GetWorld()->GetTimeSeconds() - state_time_) * 1000.0);
+}
+
 void URemoteMovementComponent::ApplyState(const FRemoteMoveState& state)
 {
 	APlayerCharacter* character = CastChecked<APlayerCharacter>(GetOwner());

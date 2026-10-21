@@ -29,8 +29,6 @@ constexpr int MAX_PLAYER_PASSWORD_SIZE = 48;
 // 이동 동기화 간격. 클라이언트도 같은 값을 사용한다.
 constexpr int MOVE_SEND_INTERVAL_MS = 100; // 클라이언트가 이동 상태를 주기적으로 보내는 간격
 constexpr int MOVE_EXTRA_SEND_INTERVAL_MS = 50; // 클라이언트가 이동 방향이 꺾여 주기보다 먼저 보낼 때의 최소 간격. 공중 단계가 바뀌면 제한 없이 즉시 보낸다.
-constexpr int MOVE_RELAY_INTERVAL_MS = 40; // 서버가 한 플레이어의 위치를 중계하는 최소 간격. 공중 단계가 바뀐 위치는 다음 틱에 바로 중계한다.
-constexpr int MAX_ROOM_RELAYS_PER_TICK = 80; // 서버가 한 방에서 한 틱에 중계하는 동작·재장전·입력 변화 수
 constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 완료를 기다리는 최대 시간. 지나면 남은 플레이어를 기다리지 않고 시작 대기에 들어간다.
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr int GAME_TIME_LIMIT_MS = 7200000; // 게임이 시작된 뒤 보물을 찾지 못해도 게임을 끝내는 시간. 끝나면 보물 위치를 알리고 GAME_END_WAIT_MS 뒤 방으로 돌아간다.
@@ -140,8 +138,6 @@ constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여�
 constexpr float SHOT_ORIGIN_FORWARD = 10.0f;
 constexpr float SHOT_ORIGIN_RIGHT = 12.0f;
 constexpr float SHOT_ORIGIN_UP = -20.0f;
-// 탄이 끝난 곳까지 거리와 사거리를 비교할 때 허용하는 반올림 오차(cm)
-constexpr float SHOT_DISTANCE_EPSILON = 1.0f;
 
 // 카메라. 클라이언트 카메라 설정과 서버 명중 검증이 같은 값을 쓴다.
 // 3인칭 카메라 팔은 캡슐 중심에서 시선 반대 방향으로 팔 길이만큼, 시선 기준 오른쪽·위로 어깨 오프셋만큼 간 곳이 끝이고, 벽에 막히면 막힌 곳까지 당겨진다.

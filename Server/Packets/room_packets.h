@@ -52,8 +52,10 @@ struct S2C_REMOVE_PLAYER_PACKET {
 	int player_id;
 };
 
+// 원하는 준비 상태. 서버는 그 상태로 바꾸고 결과를 방 전체에 알린다.
 struct C2S_READY_PACKET {
 	PACKET_HEADER header;
+	bool is_ready;
 };
 
 struct S2C_READY_PACKET {

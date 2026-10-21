@@ -95,6 +95,7 @@ struct C2S_EQUIP_PACKET {
 };
 
 // 다른 플레이어의 이동 상태. 틱마다 중계할 플레이어 수만큼 이어 붙여 보낸다.
+// client_time_ms는 그 플레이어 클라이언트가 이 상태를 만든 시각이고, 받은 쪽은 명중을 보낼 때 그 플레이어를 본 시각을 이 기준으로 담는다.
 struct S2C_MOVE_PACKET {
 	PACKET_HEADER header;
 	int player_id;
@@ -103,6 +104,7 @@ struct S2C_MOVE_PACKET {
 	float yaw;
 	float view_pitch;
 	AirPhase air_phase;
+	std::uint32_t client_time_ms;
 };
 
 // 다른 플레이어의 이동 키 입력. 받은 쪽은 이 입력으로 그 캐릭터의 이동을 계산한다.
@@ -184,6 +186,7 @@ struct S2C_GAME_START_PACKET {
 
 // 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 단위 방향·맞은 곳까지의 거리(cm)이고, 시작점은 서버가 이동 상태로 구한다(SHOT_ORIGIN_*). 부위는 클라이언트가 판정한 값이다.
 // camera는 발사할 때 카메라 위치(cm)다. aim_direction은 퍼지기 전 조준 방향(단위 벡터), spread는 그 발에 쓴 퍼짐 크기(도)다. 서버는 같은 빗나감을 다시 계산해 광선 방향과 맞춰 본다(shot_spread.h).
+// target_time_ms는 쏜 순간 화면의 맞은 사람 시각이다. 마지막으로 받은 그 사람 이동 상태의 client_time_ms에 받은 뒤 지난 시간을 더한다.
 struct C2S_HIT_PACKET {
 	PACKET_HEADER header;
 	int target_player_id;
@@ -194,6 +197,7 @@ struct C2S_HIT_PACKET {
 	float distance;
 	float aim_direction[3];
 	float spread;
+	std::uint32_t target_time_ms;
 };
 
 // 서버가 인정한 명중. 맞은 사람에게만 보내고, 받은 쪽은 쏜 사람 방향을 표시한다.
@@ -254,8 +258,22 @@ struct S2C_BOX_LAYOUT_PACKET {
 };
 
 
-// 서버가 아는 무기 하나의 탄약 상태(탄창의 탄, 소지 탄). 서버가 발사나 재장전을 인정하지 않았을 때와 탄약 상자를 열었을 때 그 사람에게만 보낸다.
-struct S2C_AMMO_PACKET {
+// 서버가 인정한 발사 뒤 그 무기의 남은 탄창 탄. 쏜 사람에게만 보낸다. 클라이언트는 발사할 때 탄을 줄이지 않고 이 값으로만 바꾼다.
+struct S2C_AMMO_USE_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t weapon;
+	std::uint16_t rounds;
+};
+
+// 탄약 상자에서 얻은 소지 탄 수. 연 사람에게만 상자 열림 뒤에 보낸다. 클라이언트는 소지 탄에 더하고 획득 안내를 띄운다.
+struct S2C_AMMO_GAIN_PACKET {
+	PACKET_HEADER header;
+	std::uint8_t weapon;
+	std::uint16_t rounds;
+};
+
+// 서버의 재장전이 끝난 뒤 그 무기의 탄창 탄과 소지 탄. 재장전한 사람에게만 보낸다.
+struct S2C_RELOAD_DONE_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t weapon;
 	std::uint16_t rounds;
@@ -282,11 +300,10 @@ struct C2S_BOX_SHOT_PACKET {
 	std::uint8_t weapon;
 };
 
-// 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보내고, 연 사람만 상자 여는 소리를 재생한다.
+// 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보낸다.
 struct S2C_BOX_OPEN_PACKET {
 	PACKET_HEADER header;
 	std::uint16_t box;
-	bool is_opener;
 };
 
 // 얻은 방향 힌트. 상자를 연 사람에게는 상자 열림 뒤에, 기절시켜 힌트를 받은 사람에게는 기절 적용 뒤에 이어 보낸다.
@@ -338,20 +355,6 @@ struct S2C_FIRE_REJECTED_PACKET {
 	std::uint8_t weapon;
 };
 
-// 인정받은 총 발사의 탄이 끝난 곳(cm). 맞힌 것이 없으면 사거리 끝이다. 쏜 사람이 발사마다 한 번 보낸다.
-struct C2S_SHOT_TRACE_PACKET {
-	PACKET_HEADER header;
-	std::uint8_t weapon;
-	float end[3];
-};
-
-// 다른 플레이어의 발사 궤적. 쏜 사람을 뺀 플레이 중인 전원에게 보내고, 받은 쪽은 쏜 캐릭터의 총구에서 끝난 곳까지 궤적을 그린다.
-struct S2C_SHOT_TRACE_PACKET {
-	PACKET_HEADER header;
-	int player_id;
-	float end[3];
-};
-
 // 시험용 보물 위치 요청. 방장이 요청할 때만 답한다.
 struct C2S_TREASURE_REVEAL_PACKET {
 	PACKET_HEADER header;
@@ -388,14 +391,18 @@ struct S2C_TIME_OVER_PACKET {
 	PACKET_HEADER header;
 };
 
-// 시상식 순위 한 자리. count는 그 부문 기록(연 상자 수·기절시킨 수)이다.
-// 부문마다 1위부터 기록이 1 이상인 사람만 최대 AWARD_RANK_COUNT명이고, 기록이 같으면 그 기록에 먼저 도달한 사람이 위다.
-// 게임이 끝나고 GAME_END_WAIT_MS가 지나면 기록이 있는 부문만 부문 순서대로, 부문 안에서는 순위 순서대로 이어 붙여 플레이 중인 전원에게 보낸다.
-struct S2C_AWARD_PACKET {
-	PACKET_HEADER header;
-	std::uint8_t category;
+// 시상식 순위 한 자리. count는 그 부문 기록(연 상자 수·기절시킨 수)이다. 빈 자리는 player_id가 -1이다.
+struct AWARD_ENTRY {
 	int player_id;
 	std::uint32_t count;
+};
+
+// 시상식 순위 전체. entries는 AwardCategory 순서의 부문마다 1위부터다.
+// 부문마다 기록이 1 이상인 사람만 최대 AWARD_RANK_COUNT명이고, 기록이 같으면 그 기록에 먼저 도달한 사람이 위다.
+// 게임이 끝나고 GAME_END_WAIT_MS가 지나면 기록이 있는 부문이 하나라도 있을 때 플레이 중인 전원에게 보낸다.
+struct S2C_AWARD_PACKET {
+	PACKET_HEADER header;
+	AWARD_ENTRY entries[static_cast<std::size_t>(AwardCategory::COUNT)][AWARD_RANK_COUNT];
 };
 
 // 시상식을 끝까지 봤거나 건너뛰었다. 그 사람만 먼저 방으로 돌려보낸다.

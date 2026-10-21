@@ -65,10 +65,12 @@ public:
 
 	// 서버가 보낸 내 기절 게이지 값을 표시하고, 이후 초당 감소량만큼 줄여 표시한다.
 	void SetStunGauge(float gauge);
-	// 서버가 아는 탄약 상태로 맞춘다. 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면 재장전한다.
-	void SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rounds);
-	// 다른 플레이어 캐릭터의 발사 궤적을 지금 든 총의 총구에서 end까지 그린다.
-	void ShowShotTracer(const FVector& end);
+	// 서버가 인정한 발사 뒤 남은 탄창 탄으로 바꾼다. 탄창이 비면 재장전한다. 권총은 마지막 반동이 끝난 뒤 재장전한다.
+	void UseAmmo(EWeaponType weapon, int32 rounds);
+	// 탄약 상자에서 얻은 소지 탄을 더하고 획득 안내를 띄운다. 들고 있는 총의 탄창이 비었으면 재장전한다.
+	void GainAmmo(EWeaponType weapon, int32 rounds);
+	// 서버의 재장전이 끝난 뒤 탄창 탄과 소지 탄으로 바꾼다.
+	void CompleteReload(EWeaponType weapon, int32 rounds, int32 spare_rounds);
 	// 서버가 인정하지 않은 발사의 발사 번호를 되돌린다.
 	void CancelShot(EWeaponType weapon);
 	// 들고 있는 총으로 지금 쏘면 쓰는 퍼짐 크기(도). 총이 아니면 0이다.

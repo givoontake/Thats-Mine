@@ -84,25 +84,14 @@ void Player::ResetAmmo(std::size_t weapon_count)
 	ammo_.assign(weapon_count, WeaponAmmo{});
 }
 
-void Player::UpdateReload(WeaponAmmo& ammo, const WeaponInfo& info, long long time_ms)
-{
-	if (ammo.reload_end_ms == 0 || time_ms < ammo.reload_end_ms) return;
-	ammo.reload_end_ms = 0;
-	const int loaded = std::min(static_cast<int>(info.magazine_capacity) - ammo.rounds, ammo.spare_rounds);
-	ammo.rounds += loaded;
-	ammo.spare_rounds -= loaded;
-}
-
 bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
 {
 	if (weapon >= ammo_.size()) return false;
 	WeaponAmmo& ammo = ammo_[weapon];
-	UpdateReload(ammo, info, time_ms);
 	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0 || time_ms < ammo.next_fire_ms) return false;
 	--ammo.rounds;
 	ammo.next_fire_ms = time_ms + static_cast<long long>(info.fire_interval * 1000.0f) - AMMO_LATENCY_ALLOWANCE_MS;
 	ammo.has_unclaimed_shot = true;
-	ammo.has_untraced_shot = true;
 	// 서버가 받은 발사 간격과 상태 변화는 지연 때문에 실제와 다를 수 있어, 최소치는 연사 열기를 더 회복하고 막 바뀐 상태는 유리한 쪽으로 본다.
 	// 조준한 채 움직이는 퍼짐은 요구하지 않는다.
 	const ShotSpreadSettings& spread = GetShotSpreadSettings(weapon);
@@ -121,16 +110,26 @@ bool Player::TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long lo
 {
 	if (weapon >= ammo_.size()) return false;
 	WeaponAmmo& ammo = ammo_[weapon];
-	UpdateReload(ammo, info, time_ms);
 	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= static_cast<int>(info.magazine_capacity)) return false;
 	ammo.reload_end_ms = time_ms + static_cast<long long>(info.reload_duration * 1000.0f) - AMMO_LATENCY_ALLOWANCE_MS;
 	return true;
 }
 
-void Player::AddSpareRounds(std::uint8_t weapon, int count, const WeaponInfo& info, long long time_ms)
+bool Player::FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
+{
+	if (weapon >= ammo_.size()) return false;
+	WeaponAmmo& ammo = ammo_[weapon];
+	if (ammo.reload_end_ms == 0 || time_ms < ammo.reload_end_ms) return false;
+	ammo.reload_end_ms = 0;
+	const int loaded = std::min(static_cast<int>(info.magazine_capacity) - ammo.rounds, ammo.spare_rounds);
+	ammo.rounds += loaded;
+	ammo.spare_rounds -= loaded;
+	return true;
+}
+
+void Player::AddSpareRounds(std::uint8_t weapon, int count)
 {
 	if (weapon >= ammo_.size()) return;
-	UpdateReload(ammo_[weapon], info, time_ms);
 	ammo_[weapon].spare_rounds += count;
 }
 
@@ -241,13 +240,6 @@ bool Player::ClaimShot(std::uint8_t weapon)
 	return true;
 }
 
-bool Player::ClaimShotTrace(std::uint8_t weapon)
-{
-	if (weapon >= ammo_.size() || !ammo_[weapon].has_untraced_shot) return false;
-	ammo_[weapon].has_untraced_shot = false;
-	return true;
-}
-
 void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_on_steep_slope, bool is_open_air)
 {
 	if ((move_state.air_phase == AirPhase::GROUND) != (move_state_.air_phase == AirPhase::GROUND)) fall_change_ms_ = time_ms;
@@ -264,7 +256,6 @@ void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool 
 		previous_client_time_ms_ = move_state_.client_time_ms;
 	}
 	open_air_count_ = is_open_air ? open_air_count_ + 1 : 0;
-	has_urgent_move_state_ = has_urgent_move_state_ || move_state.air_phase != move_state_.air_phase;
 	move_state_ = move_state;
 	move_time_ms_ = time_ms;
 	has_new_move_state_ = true;
@@ -406,11 +397,9 @@ AirState Player::GetNextAirState(const MOVE_STATE& move_state, long long time_ms
 	return { AirPhase::FALLING, move_state.location[2] + fall_speed * fall_speed / (2.0f * GRAVITY), time_ms - static_cast<long long>(fall_speed / GRAVITY * 1000.0f) };
 }
 
-void Player::MarkMoveStateRelayed(long long tick_time_ms)
+void Player::MarkMoveStateRelayed()
 {
-	last_move_relay_ms_ = tick_time_ms;
 	has_new_move_state_ = false;
-	has_urgent_move_state_ = false;
 }
 
 void Player::ClearStun()
@@ -454,7 +443,6 @@ void Player::StopMovement()
 	move_state_.velocity[0] = 0.0f;
 	move_state_.velocity[1] = 0.0f;
 	has_new_move_state_ = true;
-	has_urgent_move_state_ = true;
 }
 
 std::uint32_t Player::StartMoveCorrection(const float location[3], float velocity_z, const AirState& air, long long time_ms)
@@ -494,9 +482,7 @@ void Player::ClearMoveState()
 	open_air_count_ = 0;
 	clock_drift_ms_ = 0;
 	has_client_time_ = false;
-	last_move_relay_ms_ = 0;
 	has_new_move_state_ = false;
-	has_urgent_move_state_ = false;
 	input_right_ = 0;
 	input_forward_ = 0;
 	is_aiming_ = false;

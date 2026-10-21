@@ -55,7 +55,7 @@ bool UAwardSubsystem::DoesSupportWorldType(const EWorldType::Type world_type) co
 	return world_type == EWorldType::Game || world_type == EWorldType::PIE;
 }
 
-// 부문 하나의 순위. 같은 틱에 부문 순서대로 모두 오므로, 첫 부문을 받으면 다음 틱에 시상식을 시작한다.
+// 시상식 순위 전체. 기록이 있는 부문마다 장면을 만들고 다음 틱에 시상식을 시작한다.
 void UAwardSubsystem::HandleAwardPacket(const TArray<uint8>& payload)
 {
 	S2C_AWARD_PACKET packet;
@@ -66,29 +66,34 @@ void UAwardSubsystem::HandleAwardPacket(const TArray<uint8>& payload)
 		return;
 	}
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.category >= static_cast<uint8>(AwardCategory::COUNT) || scene_index_ != INDEX_NONE)
+	if (scene_index_ != INDEX_NONE || !scenes_.IsEmpty())
 	{
 		return;
 	}
-	// 순위는 부문마다 1위부터 이어 온다. 부문이 바뀌면 새 장면을 만들고, 같은 부문이면 그 장면에 다음 순위를 더한다.
-	const bool is_new_scene = scenes_.IsEmpty() || scenes_.Last().category != packet.category;
-	if (!is_new_scene && scenes_.Last().nicknames.Num() >= AWARD_RANK_COUNT)
-	{
-		return;
-	}
-	const bool is_box_open = packet.category == static_cast<uint8>(AwardCategory::BOX_OPEN);
-	if (is_new_scene)
-	{
-		FAwardScene& scene = scenes_.AddDefaulted_GetRef();
-		scene.category = packet.category;
-		scene.title = is_box_open ? NSLOCTEXT("Award", "BoxOpen", "탐색왕") : NSLOCTEXT("Award", "Stun", "기절왕");
-	}
-	FAwardScene& scene = scenes_.Last();
 	const TArray<FRoomMemberInfo>& members = GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetMembers();
-	const FRoomMemberInfo* member = members.FindByPredicate([&packet](const FRoomMemberInfo& info) { return info.player_key == packet.player_id; });
-	scene.nicknames.Add(member ? member->nickname : FString());
-	scene.records.Add(FText::Format(is_box_open ? NSLOCTEXT("Award", "BoxOpenRecord", "상자 {0}개") : NSLOCTEXT("Award", "StunRecord", "기절 {0}회"), FText::AsNumber(packet.count)));
-	if (is_new_scene && scenes_.Num() == 1)
+	for (uint8 category = 0; category < static_cast<uint8>(AwardCategory::COUNT); ++category)
+	{
+		const bool is_box_open = category == static_cast<uint8>(AwardCategory::BOX_OPEN);
+		FAwardScene scene;
+		scene.category = category;
+		scene.title = is_box_open ? NSLOCTEXT("Award", "BoxOpen", "탐색왕") : NSLOCTEXT("Award", "Stun", "기절왕");
+		for (const AWARD_ENTRY& entry : packet.entries[category])
+		{
+			const int32 player_id = entry.player_id;
+			if (player_id < 0)
+			{
+				continue;
+			}
+			const FRoomMemberInfo* member = members.FindByPredicate([player_id](const FRoomMemberInfo& info) { return info.player_key == player_id; });
+			scene.nicknames.Add(member ? member->nickname : FString());
+			scene.records.Add(FText::Format(is_box_open ? NSLOCTEXT("Award", "BoxOpenRecord", "상자 {0}개") : NSLOCTEXT("Award", "StunRecord", "기절 {0}회"), FText::AsNumber(entry.count)));
+		}
+		if (!scene.nicknames.IsEmpty())
+		{
+			scenes_.Add(MoveTemp(scene));
+		}
+	}
+	if (!scenes_.IsEmpty())
 	{
 		GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAwardSubsystem::StartCeremony);
 	}

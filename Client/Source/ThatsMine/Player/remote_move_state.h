@@ -12,4 +12,6 @@ struct FRemoteMoveState
 	float yaw = 0.0f;
 	float view_pitch = 0.0f;
 	AirPhase air_phase = AirPhase::GROUND;
+	// 이 상태를 만든 클라이언트 게임 시각(ms)
+	uint32 client_time_ms = 0;
 };

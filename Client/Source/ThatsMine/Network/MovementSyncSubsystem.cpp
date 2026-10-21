@@ -53,6 +53,7 @@ static FRemoteMoveState ToRemoteMoveState(const S2C_MOVE_PACKET& packet)
 	state.yaw = packet.yaw;
 	state.view_pitch = packet.view_pitch;
 	state.air_phase = packet.air_phase;
+	state.client_time_ms = packet.client_time_ms;
 	return state;
 }
 
@@ -100,10 +101,11 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_RELOAD, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadPacket));
 	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
 	network->RegisterPacketHandler(S2C_STUN_GAUGE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunGaugePacket));
-	network->RegisterPacketHandler(S2C_AMMO, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoPacket));
+	network->RegisterPacketHandler(S2C_AMMO_USE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoUsePacket));
+	network->RegisterPacketHandler(S2C_AMMO_GAIN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoGainPacket));
+	network->RegisterPacketHandler(S2C_RELOAD_DONE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadDonePacket));
 	network->RegisterPacketHandler(S2C_SHOT_SEED, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleShotSeedPacket));
 	network->RegisterPacketHandler(S2C_FIRE_REJECTED, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleFireRejectedPacket));
-	network->RegisterPacketHandler(S2C_SHOT_TRACE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleShotTracePacket));
 	network->RegisterPacketHandler(S2C_PICKAXE_CHARGES, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandlePickaxeChargesPacket));
 	network->RegisterPacketHandler(S2C_STUN_APPLY, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunApplyPacket));
 	network->RegisterPacketHandler(S2C_STUN_RELEASE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunReleasePacket));
@@ -127,10 +129,11 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_RELOAD);
 			network->UnregisterPacketHandler(S2C_HIT);
 			network->UnregisterPacketHandler(S2C_STUN_GAUGE);
-			network->UnregisterPacketHandler(S2C_AMMO);
+			network->UnregisterPacketHandler(S2C_AMMO_USE);
+			network->UnregisterPacketHandler(S2C_AMMO_GAIN);
+			network->UnregisterPacketHandler(S2C_RELOAD_DONE);
 			network->UnregisterPacketHandler(S2C_SHOT_SEED);
 			network->UnregisterPacketHandler(S2C_FIRE_REJECTED);
-			network->UnregisterPacketHandler(S2C_SHOT_TRACE);
 			network->UnregisterPacketHandler(S2C_PICKAXE_CHARGES);
 			network->UnregisterPacketHandler(S2C_STUN_APPLY);
 			network->UnregisterPacketHandler(S2C_STUN_RELEASE);
@@ -314,20 +317,9 @@ static HitboxPart GetHitboxPart(const FName& bone)
 	return HitboxPart::TORSO;
 }
 
-// 발사마다 탄이 끝난 곳을 보내 다른 플레이어 화면에 궤적을 그리게 한다.
 // 총알이 다른 플레이어 메시의 히트박스에 맞았을 때만 명중을 보낸다. 판정 광선의 시작점·방향·맞은 곳까지 거리와 맞은 부위를 담는다.
 void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 {
-	C2S_SHOT_TRACE_PACKET trace_packet{};
-	trace_packet.weapon = static_cast<uint8>(shot.weapon);
-	for (int32 axis = 0; axis < 3; ++axis)
-	{
-		trace_packet.end[axis] = static_cast<float>(shot.trace_end[axis]);
-	}
-	TArray<uint8> trace_payload;
-	trace_payload.Append(reinterpret_cast<const uint8*>(&trace_packet) + sizeof(PACKET_HEADER), sizeof(trace_packet) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_SHOT_TRACE, trace_payload);
-
 	const APlayerCharacter* target = Cast<APlayerCharacter>(shot.hit.GetActor());
 	if (!shot.has_hit || !target || shot.hit.GetComponent() != target->GetMesh())
 	{
@@ -354,6 +346,10 @@ void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 		packet.aim_direction[axis] = static_cast<float>(shot.aim_direction[axis]);
 	}
 	packet.spread = shot.spread;
+	if (const URemoteMovementComponent* remote_movement = target->FindComponentByClass<URemoteMovementComponent>())
+	{
+		packet.target_time_ms = remote_movement->GetViewTimeMs();
+	}
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_HIT, payload);
@@ -393,19 +389,51 @@ void UMovementSyncSubsystem::HandleStunGaugePacket(const TArray<uint8>& payload)
 	}
 }
 
-// 서버가 내 발사나 재장전을 인정하지 않았거나 내가 탄약 상자를 열어 보낸 그 무기의 탄약 상태
-void UMovementSyncSubsystem::HandleAmmoPacket(const TArray<uint8>& payload)
+// 서버가 인정한 내 발사 뒤 그 무기의 남은 탄창 탄
+void UMovementSyncSubsystem::HandleAmmoUsePacket(const TArray<uint8>& payload)
 {
-	if (payload.Num() != sizeof(S2C_AMMO_PACKET) - sizeof(PACKET_HEADER))
+	if (payload.Num() != sizeof(S2C_AMMO_USE_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
-	S2C_AMMO_PACKET packet{};
+	S2C_AMMO_USE_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	if (APlayerCharacter* character = local_character_.Get())
 	{
-		character->SetAmmo(static_cast<EWeaponType>(packet.weapon), packet.rounds, packet.spare_rounds);
+		character->UseAmmo(static_cast<EWeaponType>(packet.weapon), packet.rounds);
+	}
+}
+
+// 내가 연 탄약 상자에서 얻은 소지 탄 수
+void UMovementSyncSubsystem::HandleAmmoGainPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_AMMO_GAIN_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_AMMO_GAIN_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* character = local_character_.Get())
+	{
+		character->GainAmmo(static_cast<EWeaponType>(packet.weapon), packet.rounds);
+	}
+}
+
+// 서버의 재장전이 끝난 뒤 그 무기의 탄창 탄과 소지 탄
+void UMovementSyncSubsystem::HandleReloadDonePacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_RELOAD_DONE_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_RELOAD_DONE_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* character = local_character_.Get())
+	{
+		character->CompleteReload(static_cast<EWeaponType>(packet.weapon), packet.rounds, packet.spare_rounds);
 	}
 }
 
@@ -420,22 +448,6 @@ void UMovementSyncSubsystem::HandleShotSeedPacket(const TArray<uint8>& payload)
 	S2C_SHOT_SEED_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	shot_seed_ = packet.seed;
-}
-
-// 다른 플레이어의 발사 궤적. 그 캐릭터의 총구에서 탄이 끝난 곳까지 그린다.
-void UMovementSyncSubsystem::HandleShotTracePacket(const TArray<uint8>& payload)
-{
-	if (payload.Num() != sizeof(S2C_SHOT_TRACE_PACKET) - sizeof(PACKET_HEADER))
-	{
-		HandleInvalidPacket();
-		return;
-	}
-	S2C_SHOT_TRACE_PACKET packet{};
-	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (APlayerCharacter* shooter = FindRemotePlayer(packet.player_id))
-	{
-		shooter->ShowShotTracer(FVector(packet.end[0], packet.end[1], packet.end[2]));
-	}
 }
 
 // 서버가 인정하지 않은 내 총 발사. 그 무기의 발사 번호를 되돌려 서버와 맞춘다.

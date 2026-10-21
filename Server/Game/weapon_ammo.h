@@ -8,7 +8,6 @@ struct WeaponAmmo {
 	long long reload_end_ms = 0; // 재장전이 끝나는 시각. 0이면 재장전 중이 아니다.
 	long long next_fire_ms = 0; // 다음 발사를 받을 수 있는 시각
 	bool has_unclaimed_shot = false; // 인정한 발사 중 명중·선물 열기에 아직 쓰지 않은 것이 있는지
-	bool has_untraced_shot = false; // 인정한 발사 중 궤적을 아직 받지 않은 것이 있는지
 	// 탄 퍼짐(shot_spread.h). 이번 게임에서 인정한 발사 수, 마지막 발사 직후의 연사 열기와 그 시각,
 	// 마지막으로 인정한 발사의 발사 번호와 그 발에 허용하는 퍼짐 크기 최소치(도)
 	std::uint32_t shot_count = 0;

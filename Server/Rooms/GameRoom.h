@@ -29,6 +29,7 @@ struct RoomTask
 	char room_password[MAX_ROOM_PASSWORD_SIZE] = {};
 	int target_player_id = -1;
 	bool is_matching = false; // 빠른 매칭에서 온 입장 요청이면 실패 시 로비가 아니라 매칭 상태로 되돌린다.
+	bool is_ready = false; // 준비 요청이 원하는 준비 상태
 };
 
 // 방 이름과 비밀번호는 패킷과 같은 고정 길이 배열로 두고, 남는 부분은 0으로 채운다. 비밀번호가 모두 0이면 공개방이다.
@@ -82,7 +83,6 @@ private:
 	long long tick_time_ms_ = 0;
 	// 이번 틱에 받은 동작·재장전·입력 변화의 중계 패킷을 받은 순서대로 이어 둔 것. 덮어쓰지 않고 틱 끝에 이동 상태와 함께 보낸다.
 	std::vector<char> pending_relays_;
-	std::size_t pending_relay_count_ = 0;
 	// 시작 단계, 전원 로딩 완료를 기다리는 마감 시각, 실제 게임 시작 시각(시작 대기에 들어갈 때 정한다)
 	MatchPhase match_phase_ = MatchPhase::LOADING;
 	long long loading_deadline_ms_ = 0;
@@ -129,12 +129,11 @@ private:
 	void ProcessGameStart();
 	// 동작이나 재장전을 weapon으로 인정하는지 본다. 동작은 손에 든 장비, 재장전은 재장전 패킷의 무기다.
 	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon);
-	// 중계 패킷을 이번 틱 중계에 넣는다. 이번 틱 중계 수가 다 찼으면 넣지 않고 false를 돌려준다.
-	bool QueueRelay(const void* packet, int packet_size);
+	// 중계 패킷을 이번 틱 중계에 넣는다.
+	void QueueRelay(const void* packet, int packet_size);
 	// 그 플레이어의 이동 키 입력·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
 	int AppendInputState(char* buffer, const Player& player) const;
 	void ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p);
-	void ProcessShotTrace(Player& shooter, const C2S_SHOT_TRACE_PACKET& request_p);
 	void AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p);
 	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
 	bool CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& camera, const DirectX::XMFLOAT3& hit_point) const;
@@ -146,6 +145,7 @@ private:
 	int AppendHintPacket(char* buffer, std::uint32_t hint) const;
 	void ProcessAreaRemoval();
 	void ProcessStunRelease();
+	void ProcessReloadDone();
 	void DigTreasure(const Player& digger);
 	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
 	void ProcessTimeLimit();
@@ -170,7 +170,7 @@ private:
 	std::vector<char> BuildBoxLayoutPacket() const;
 	void FindNewHost(); // 방장이 나갔을 때 새로운 방장 찾기
 	int FindHostIndex(int host_id); // 현재 호스트의 인덱스를 반환
-	void TogglePlayerReady(int player_id);
+	void SetPlayerReady(int player_id, bool is_ready);
 	void KickPlayer(int requester_id, int kick_player_id);
 
 public:

@@ -33,7 +33,6 @@
 #include "Interaction/ItemSubsystem.h"
 #include "Interaction/PingSubsystem.h"
 #include "RemoteMovementComponent.h"
-#include "ShotTracer.h"
 #include "UI/EquipmentWidget.h"
 #include "UI/InteractPromptWidget.h"
 #include "UI/Map/CoordinateWidget.h"
@@ -851,7 +850,6 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
 	next_fire_times_.Add(current_weapon_, now + FMath::Max(0.01f, settings.fire_interval));
-	--ammo->rounds;
 	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
 	PlayFireSound(settings);
@@ -903,10 +901,6 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	CombatDebug::DrawShot(world, shot);
 #endif
 
-	if (ammo->rounds == 0 && shot.weapon != EWeaponType::PISTOL)
-	{
-		BeginReload(shot.weapon);
-	}
 	const FWeaponSettings* weapon_settings = GetCurrentWeaponSettings();
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
 	float fire_duration = 0.0f;
@@ -915,26 +909,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		const FActionSettings& action = weapon_settings->primary_action;
 		fire_duration = anim_instance->Montage_Play(action.montage, action.play_rate, EMontagePlayReturnType::Duration, 0.0f, false);
 	}
-	if (ammo->rounds == 0 && shot.weapon == EWeaponType::PISTOL)
-	{
-		if (fire_duration > 0.0f)
-		{
-			// 마지막 권총 반동이 끝난 뒤 재장전을 시작한다. 대기 중에는 재장전 동작을 재생하지 않는다.
-			ammo->is_waiting_for_shot = true;
-			// 실행 중인 타이머를 지우면 이 람다도 함께 해제되므로, 람다 안에서 대기 타이머를 지우지 않는다.
-			const FTimerDelegate completed = FTimerDelegate::CreateWeakLambda(this, [this, weapon = shot.weapon]()
-			{
-				weapon_ammo_.FindChecked(weapon).is_waiting_for_shot = false;
-				BeginReload(weapon);
-				UpdateEquipmentDisplay();
-			});
-			GetWorldTimerManager().SetTimer(ammo->shot_wait_timer, completed, fire_duration, false);
-		}
-		else
-		{
-			BeginReload(shot.weapon);
-		}
-	}
+	ammo->fire_end_time = now + fire_duration;
 	UpdateEquipmentDisplay();
 	on_shot_fired_.Broadcast(shot);
 	if (shot.has_hit)
@@ -1168,20 +1143,6 @@ void APlayerCharacter::Jump()
 	}
 }
 
-void APlayerCharacter::ShowShotTracer(const FVector& end)
-{
-	const FWeaponSettings* settings = GetCurrentWeaponSettings();
-	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
-	if (!GetWorld() || !settings || !IsValid(weapon_mesh) || !weapon_mesh->DoesSocketExist(settings->hitscan.muzzle_socket))
-	{
-		return;
-	}
-	if (AShotTracer* tracer = GetWorld()->SpawnActor<AShotTracer>(weapon_mesh->GetSocketLocation(settings->hitscan.muzzle_socket), FRotator::ZeroRotator))
-	{
-		tracer->FollowMuzzle(weapon_mesh, settings->hitscan.muzzle_socket, end);
-	}
-}
-
 void APlayerCharacter::CancelShot(EWeaponType weapon)
 {
 	if (FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon); ammo && ammo->shot_count > 0)
@@ -1203,25 +1164,61 @@ float APlayerCharacter::GetCurrentShotSpread() const
 	return GetShotSpread(spread_settings, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
 }
 
-void APlayerCharacter::SetAmmo(EWeaponType weapon, int32 rounds, int32 spare_rounds)
+void APlayerCharacter::UseAmmo(EWeaponType weapon, int32 rounds)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	if (!ammo)
 	{
 		return;
 	}
-	// 소지 탄이 늘었으면 탄약 상자를 연 것이므로 획득 안내를 띄운다. 서버가 발사·재장전을 인정하지 않아 맞출 때는 소지 탄이 늘지 않는다.
-	if (spare_rounds > ammo->spare_rounds)
-	{
-		ShowAcquirePopup(FText::Format(NSLOCTEXT("Item", "AmmoText", "{0} 탄약 {1}발"), weapon_settings_[weapon].display_name, spare_rounds - ammo->spare_rounds), NSLOCTEXT("Item", "NewAmmo", "탄약 획득!"), {});
-	}
 	ammo->rounds = rounds;
-	ammo->spare_rounds = spare_rounds;
-	// 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면, 탄이 떨어졌을 때처럼 바로 재장전한다.
-	if (weapon == current_weapon_ && rounds == 0 && spare_rounds > 0)
+	const double shot_remaining = ammo->fire_end_time - GetWorld()->GetTimeSeconds();
+	if (rounds == 0 && weapon == EWeaponType::PISTOL && shot_remaining > 0.0)
+	{
+		// 마지막 권총 반동이 끝난 뒤 재장전을 시작한다. 대기 중에는 재장전 동작을 재생하지 않는다.
+		ammo->is_waiting_for_shot = true;
+		// 실행 중인 타이머를 지우면 이 람다도 함께 해제되므로, 람다 안에서 대기 타이머를 지우지 않는다.
+		const FTimerDelegate completed = FTimerDelegate::CreateWeakLambda(this, [this, weapon]()
+		{
+			weapon_ammo_.FindChecked(weapon).is_waiting_for_shot = false;
+			BeginReload(weapon);
+			UpdateEquipmentDisplay();
+		});
+		GetWorldTimerManager().SetTimer(ammo->shot_wait_timer, completed, static_cast<float>(shot_remaining), false);
+	}
+	else if (rounds == 0)
 	{
 		BeginReload(weapon);
 	}
+	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::GainAmmo(EWeaponType weapon, int32 rounds)
+{
+	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
+	if (!ammo || rounds <= 0)
+	{
+		return;
+	}
+	ShowAcquirePopup(FText::Format(NSLOCTEXT("Item", "AmmoText", "{0} 탄약 {1}발"), weapon_settings_[weapon].display_name, rounds), NSLOCTEXT("Item", "NewAmmo", "탄약 획득!"), {});
+	ammo->spare_rounds += rounds;
+	// 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면, 탄이 떨어졌을 때처럼 바로 재장전한다.
+	if (weapon == current_weapon_ && ammo->rounds == 0)
+	{
+		BeginReload(weapon);
+	}
+	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::CompleteReload(EWeaponType weapon, int32 rounds, int32 spare_rounds)
+{
+	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
+	if (!ammo)
+	{
+		return;
+	}
+	ammo->rounds = rounds;
+	ammo->spare_rounds = spare_rounds;
 	UpdateEquipmentDisplay();
 }
 
@@ -1302,6 +1299,12 @@ void APlayerCharacter::StartStun()
 		{
 			stun_gauge_widget_->SetStunProgress(1.0f);
 		}
+	}
+	// 다른 플레이어는 서버가 지운 것처럼 이동 키 입력과 조준을 지운다. 이동은 중력과 관성대로 이어진다.
+	else if (URemoteMovementComponent* remote_movement = FindComponentByClass<URemoteMovementComponent>())
+	{
+		remote_movement->SetMoveInput(FVector2D::ZeroVector);
+		remote_movement->SetAiming(false);
 	}
 }
 
@@ -1699,11 +1702,8 @@ void APlayerCharacter::FinishReload(EWeaponType weapon)
 			anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), settings->hitscan.reload_montage);
 		}
 	}
+	// 탄창 탄과 소지 탄은 서버가 재장전을 끝내고 보낸 값으로만 바꾼다.
 	GetWorldTimerManager().ClearTimer(ammo->reload_timer);
-	// 소지 탄에서 탄창이 빈 만큼 채운다.
-	const int32 loaded = FMath::Min(FMath::Max(1, settings->hitscan.magazine_capacity) - ammo->rounds, ammo->spare_rounds);
-	ammo->rounds += loaded;
-	ammo->spare_rounds -= loaded;
 	UpdateEquipmentDisplay();
 }
 

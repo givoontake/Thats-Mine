@@ -42,10 +42,11 @@ private:
 	void HandleShotFired(const FShotResult& shot);
 	void HandleHitPacket(const TArray<uint8>& payload);
 	void HandleStunGaugePacket(const TArray<uint8>& payload);
-	void HandleAmmoPacket(const TArray<uint8>& payload);
+	void HandleAmmoUsePacket(const TArray<uint8>& payload);
+	void HandleAmmoGainPacket(const TArray<uint8>& payload);
+	void HandleReloadDonePacket(const TArray<uint8>& payload);
 	void HandleShotSeedPacket(const TArray<uint8>& payload);
 	void HandleFireRejectedPacket(const TArray<uint8>& payload);
-	void HandleShotTracePacket(const TArray<uint8>& payload);
 	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
 	void HandleStunApplyPacket(const TArray<uint8>& payload);
 	void HandleStunReleasePacket(const TArray<uint8>& payload);

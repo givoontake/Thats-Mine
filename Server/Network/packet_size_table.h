@@ -44,7 +44,6 @@ inline constexpr std::array<PacketSizeRange, 256> CLIENT_PACKET_SIZE_TABLE = [] 
 	table[C2S_BOX_SHOT] = { sizeof(C2S_BOX_SHOT_PACKET), sizeof(C2S_BOX_SHOT_PACKET) };
 	table[C2S_BLOCK_USE] = { sizeof(C2S_BLOCK_USE_PACKET), sizeof(C2S_BLOCK_USE_PACKET) };
 	table[C2S_TREASURE_REVEAL] = { sizeof(C2S_TREASURE_REVEAL_PACKET), sizeof(C2S_TREASURE_REVEAL_PACKET) };
-	table[C2S_SHOT_TRACE] = { sizeof(C2S_SHOT_TRACE_PACKET), sizeof(C2S_SHOT_TRACE_PACKET) };
 	table[C2S_AWARD_DONE] = { sizeof(C2S_AWARD_DONE_PACKET), sizeof(C2S_AWARD_DONE_PACKET) };
 	return table;
 }();

@@ -21,6 +21,8 @@ public:
 	void SetAiming(bool is_aiming);
 	void SetWeapon(EWeaponType weapon);
 	float GetViewPitch() const { return view_pitch_; }
+	// 지금 보이는 이 캐릭터의 시각(ms). 마지막으로 받은 상태의 클라이언트 시각에 받은 뒤 지난 시간을 더한다.
+	uint32 GetViewTimeMs() const;
 
 protected:
 	virtual void BeginPlay() override;

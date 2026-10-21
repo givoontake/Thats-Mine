@@ -222,7 +222,9 @@ void UOnlineSessionSubsystem::SetReady(bool is_ready)
 	if (!CanRequest(EClientState::ROOM) || host_key_ == player_key_) return;
 	const auto* member = members_.FindByPredicate([this](const auto& item) { return item.player_key == player_key_; });
 	if (!member || member->is_ready == is_ready) return;
-	if (SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_READY, C2S_READY_PACKET{})) BeginRequest(OnlineRequest::READY);
+	C2S_READY_PACKET packet{};
+	packet.is_ready = is_ready;
+	if (SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_READY, packet)) BeginRequest(OnlineRequest::READY);
 	else ShowStatus(LOCTEXT("SendFailed", "요청을 전송하지 못했습니다."));
 }
 

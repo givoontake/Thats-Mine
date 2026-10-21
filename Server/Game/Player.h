@@ -36,9 +36,7 @@ class Player
 	// 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
 	long long aim_change_ms_ = 0;
 	long long fall_change_ms_ = 0;
-	long long last_move_relay_ms_ = 0;
 	bool has_new_move_state_ = false;
-	bool has_urgent_move_state_ = false;
 	// 마지막으로 인정한 위치까지 갈 수 있는 거리보다 더 움직인 거리의 누적(cm). 덜 움직이면 0까지만 줄어든다.
 	float move_excess_ = 0.0f;
 	// 마지막으로 인정한 상태에서 나올 수 있는 최대 속도(cm/s). 땅에서는 언리얼 가감속 식으로 따라간 수평 속도이고,
@@ -87,8 +85,6 @@ class Player
 	std::array<long long, static_cast<std::size_t>(AwardCategory::COUNT)> award_reach_ms_{};
 
 	void ClearStun();
-	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채운다.
-	void UpdateReload(WeaponAmmo& ammo, const WeaponInfo& info, long long time_ms);
 	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채운다.
 	void UpdatePickaxeCharges(long long time_ms);
 	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
@@ -144,7 +140,7 @@ public:
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
-	bool CanRelayMoveState(long long tick_time_ms) const { return has_new_move_state_ && (has_urgent_move_state_ || tick_time_ms - last_move_relay_ms_ >= MOVE_RELAY_INTERVAL_MS); }
+	bool CanRelayMoveState() const { return has_new_move_state_; }
 	std::int8_t GetInputRight() const { return input_right_; }
 	std::int8_t GetInputForward() const { return input_forward_; }
 	bool IsAiming() const { return is_aiming_; }
@@ -165,7 +161,7 @@ public:
 	void SetWeapon(std::uint8_t weapon, long long time_ms);
 	// 스폰 자리를 마지막으로 인정한 위치로 둔다. 첫 이동 상태도 이 위치와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
 	void SetSpawnLocation(const float location[3], float yaw, long long time_ms);
-	void MarkMoveStateRelayed(long long tick_time_ms);
+	void MarkMoveStateRelayed();
 	// 기절 게이지를 올린다. 기절 중이거나 보호 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
 	bool AddStunGauge(float amount, long long time_ms);
 	// 이동을 되돌릴 때 수평으로 멈춘 상태로 바꿔 다른 플레이어에게 다음 틱에 바로 중계한다. 떨어지는 속도는 그대로 둔다.
@@ -187,12 +183,12 @@ public:
 	bool TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
 	// 재장전 중이 아니고 탄창이 가득 차 있지 않고 소지 탄이 있으면 재장전을 시작한다.
 	bool TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
+	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채우고 true를 돌려준다.
+	bool FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
 	// 인정한 발사 하나를 명중이나 선물 열기에 쓴다. 쓸 발사가 없으면 false다.
 	bool ClaimShot(std::uint8_t weapon);
-	// 인정한 발사 하나의 궤적을 받는다. 받을 발사가 없으면 false다.
-	bool ClaimShotTrace(std::uint8_t weapon);
 	// 소지 탄을 count발 늘린다.
-	void AddSpareRounds(std::uint8_t weapon, int count, const WeaponInfo& info, long long time_ms);
+	void AddSpareRounds(std::uint8_t weapon, int count);
 	// 곡괭이 사용 가능 횟수를 최대치로 채운다.
 	void ResetPickaxe();
 	// 사용 가능 횟수가 있으면 1번 쓰고 인정한다. 최대치에서 쓰면 충전을 시작한다.
