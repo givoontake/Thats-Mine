@@ -55,10 +55,19 @@ static FText ErrorMessage(int32 code)
 	switch (code) {
 	case LOGIN_FAILED: return LOCTEXT("LoginFailed", "아이디 또는 비밀번호가 일치하지 않습니다.");
 	case DUPLICATE_LOGIN_ID: return LOCTEXT("Duplicate", "이미 로그인된 계정입니다.");
+	case LOGIN_UNAVAILABLE: return LOCTEXT("LoginUnavailable", "지금은 로그인을 처리할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+	case LOGIN_TIMEOUT: return LOCTEXT("LoginTimeout", "로그인 서버 응답이 늦어 요청이 취소됐습니다. 잠시 후 다시 시도해 주세요.");
+	case LOGIN_QUERY_FAILED: return LOCTEXT("LoginQueryFailed", "계정 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.");
 	case ROOM_NOT_FOUND: return LOCTEXT("MissingRoom", "방이 없어졌습니다. 목록을 새로고침해 주세요.");
 	case ROOM_FULL: return LOCTEXT("Full", "방의 인원이 가득 찼습니다.");
 	case ROOM_IN_GAME: return LOCTEXT("Playing", "이미 게임이 시작된 방입니다.");
 	case NOT_FOUND_JOINABLE_ROOM: return LOCTEXT("NoMatch", "참가 가능한 공개 방이 없습니다.");
+	case ROOM_ALREADY_JOINED: return LOCTEXT("AlreadyJoined", "이미 참가한 방입니다.");
+	case ROOM_LIMIT_REACHED: return LOCTEXT("RoomLimit", "만들 수 있는 방이 모두 사용 중입니다. 잠시 후 다시 시도해 주세요.");
+	case ROOM_CREATE_FAILED: return LOCTEXT("RoomCreateFailed", "방을 만들지 못했습니다. 다시 시도해 주세요.");
+	case ROOM_NAME_TOO_SHORT: return LOCTEXT("RoomNameShort", "방 이름이 너무 짧습니다.");
+	case ROOM_PASSWORD_TOO_SHORT: return LOCTEXT("RoomPasswordShort", "방 비밀번호가 너무 짧습니다.");
+	case NOT_IN_LOBBY: return LOCTEXT("NotInLobby", "로비에서만 할 수 있는 요청입니다.");
 	case ROOM_INVALID_PASSWORD: return LOCTEXT("RoomPassword", "방 비밀번호가 일치하지 않습니다.");
 	case ROOM_NOT_ENOUGH_PLAYERS: return FText::Format(LOCTEXT("TooFew", "게임 시작에는 최소 {0}명이 필요합니다."), FText::AsNumber(MIN_START_PLAYER_COUNT));
 	case ROOM_NOT_ALL_READY: return LOCTEXT("NotReady", "모든 참가자가 준비해야 합니다.");

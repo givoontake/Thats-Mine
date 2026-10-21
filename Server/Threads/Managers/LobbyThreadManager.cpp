@@ -127,7 +127,10 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 	case C2S_ADD_PRIVATE_ROOM: {
 		// 전환 대기로 먼저 바꾼 뒤 방 생성 요청을 넣는다.
 		const SessionKey session_key = session.GetSessionKey();
-		if (!session.TryChangeMode(ModeState::LOBBY, ModeState::ROOM_PENDING)) break;
+		if (!session.TryChangeMode(ModeState::LOBBY, ModeState::ROOM_PENDING)) {
+			game_server_.SendError(session, ErrorCode::NOT_IN_LOBBY);
+			break;
+		}
 		const int packet_size = reinterpret_cast<PACKET_HEADER*>(packet)->size;
 		const RoomLifecycleTaskType task_type = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_ADD_PUBLIC_ROOM ? RoomLifecycleTaskType::CREATE_PUBLIC : RoomLifecycleTaskType::CREATE_PRIVATE;
 		auto task = std::make_unique<RoomLifecycleTask>(task_type, session_key);
@@ -154,7 +157,7 @@ void LobbyThreadManager::ProcessPacket(char* packet, Session& session)
 		// 매칭 상태로 먼저 바꾼 뒤 매칭 풀에 등록한다. 매칭 중에도 로비가 담당하므로 로비 패킷은 계속 처리된다.
 		// 등록은 요청 단계에서 하고 매칭은 요청 단계가 모두 끝난 뒤 돌므로, 등록 정보를 쓰는 것과 읽는 것이 겹치지 않는다.
 		if (!session.TryChangeMode(ModeState::LOBBY, ModeState::MATCHING)) {
-			game_server_.SendError(session, ErrorCode::INVALID_REQUEST);
+			game_server_.SendError(session, ErrorCode::NOT_IN_LOBBY);
 			break;
 		}
 		matchmaker_.Register(session.GetSessionKey().session_index, tick_time_ms_.load());

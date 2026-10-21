@@ -32,6 +32,10 @@ void IOThread::Run()
 			game_server_.ProcessDisconnects();
 			break;
 
+		case ACCEPT_RETRY_COMPLETION:
+			game_server_.RetryFailedAccepts();
+			break;
+
 		case SESSION_IO_COMPLETION:
 			ProcessSessionCompletion(result, transferred_bytes, ex_over);
 			break;
@@ -47,13 +51,13 @@ void IOThread::Run()
 void IOThread::ProcessAcceptCompletion(BOOL result, ExOverlapped* ex_over)
 {
 	if (ex_over->op_type != OPType::ACCEPT) return;
+	// 받은 주소는 수락 요청을 걸 때 넘긴 AcceptOverlapped의 주소이므로, 형식을 바꿔 그 요청의 소켓을 찾는다.
+	auto& accept_over = *static_cast<AcceptOverlapped*>(reinterpret_cast<IOOverlapped*>(ex_over));
 	if (!result) {
-		std::cout << "Accept Error" << WSAGetLastError() << "\n";
+		game_server_.FailAccept(accept_over, GetLastError());
 		return;
 	}
-
-	// 받은 주소는 수락 요청을 걸 때 넘긴 AcceptOverlapped의 주소이므로, 형식을 바꿔 그 요청의 소켓을 찾는다.
-	game_server_.CompleteAccept(*static_cast<AcceptOverlapped*>(reinterpret_cast<IOOverlapped*>(ex_over)));
+	game_server_.CompleteAccept(accept_over);
 }
 
 void IOThread::ProcessSessionCompletion(BOOL result, DWORD transferred_bytes, ExOverlapped* ex_over)

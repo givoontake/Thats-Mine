@@ -2,7 +2,7 @@
 #include <cstdint>
 #include "error_code.h"
 
-enum class OPType { SEND, POOLED_SEND, LARGE_SEND, RECV, ACCEPT, DISCONNECT_CLEANUP };
+enum class OPType { SEND, POOLED_SEND, LARGE_SEND, RECV, ACCEPT, DISCONNECT_CLEANUP, ACCEPT_RETRY };
 
 
 // LOADING: 게임 레벨을 불러오는 중, LOADED: 로딩을 마치고 스폰을 기다리는 중

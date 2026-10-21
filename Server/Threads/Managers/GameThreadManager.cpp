@@ -92,10 +92,10 @@ void GameThreadManager::Enqueue(std::unique_ptr<RoomLifecycleTask> task)
 int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password)
 {
 	auto* session = game_server_.GetSessionManager().FindSession(session_key);
-	if (!session || session->GetModeState() != ModeState::LOBBY) return ErrorCode::INVALID_REQUEST;
+	if (!session || session->GetModeState() != ModeState::LOBBY) return ErrorCode::NOT_IN_LOBBY;
 	auto* room = FindRoomByKey(room_key);
 	if (!room) return ErrorCode::ROOM_NOT_FOUND;
-	if (!session->TryChangeMode(ModeState::LOBBY, ModeState::ROOM_PENDING)) return ErrorCode::INVALID_REQUEST;
+	if (!session->TryChangeMode(ModeState::LOBBY, ModeState::ROOM_PENDING)) return ErrorCode::NOT_IN_LOBBY;
 	RoomTask task;
 	task.task_type = RoomTaskType::JOIN;
 	task.session_key = session_key;
@@ -152,13 +152,13 @@ int GameThreadManager::PublishRoom(const RoomInitData& data, Session& session, S
 			new_room = room;
 			break;
 		}
-		if (!new_room) return ErrorCode::SERVER_ERROR;
+		if (!new_room) return ErrorCode::ROOM_LIMIT_REACHED;
 
 		const int room_index = new_room->GetRoomIndex();
 		new_room->Initialize(data);
 		if (!room_index_registry_.Register(data.room_key, room_index)) {
 			new_room->Reset();
-			return ErrorCode::SERVER_ERROR;
+			return ErrorCode::ROOM_CREATE_FAILED;
 		}
 		// 확정된 뒤부터 입출력 스레드가 이 방으로 패킷을 보내므로 방 번호를 먼저 적는다.
 		session.SetRoomIndex(room_index);
@@ -184,9 +184,9 @@ int GameThreadManager::CreatePublicRoom(char* packet, Session& session, SessionK
 	RoomInitData data;
 	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	CopyCharBuf(data.room_name, sizeof(data.room_name), public_p->room_name, sizeof(public_p->room_name));
-	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::INVALID_REQUEST;
+	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::ROOM_NAME_TOO_SHORT;
 	data.room_key = GenerateRoomKey();
-	if (data.room_key == 0) return ErrorCode::SERVER_ERROR;
+	if (data.room_key == 0) return ErrorCode::ROOM_CREATE_FAILED;
 
 	return PublishRoom(data, session, session_key);
 }
@@ -200,9 +200,10 @@ int GameThreadManager::CreatePrivateRoom(char* packet, Session& session, Session
 	constexpr size_t MIN_ROOM_PASSWORD_LENGTH = 4;
 	CopyCharBuf(data.room_name, sizeof(data.room_name), private_p->room_name, sizeof(private_p->room_name));
 	CopyCharBuf(data.room_password, sizeof(data.room_password), private_p->room_password, sizeof(private_p->room_password));
-	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH || strnlen(data.room_password, sizeof(data.room_password)) < MIN_ROOM_PASSWORD_LENGTH) return ErrorCode::INVALID_REQUEST;
+	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::ROOM_NAME_TOO_SHORT;
+	if (strnlen(data.room_password, sizeof(data.room_password)) < MIN_ROOM_PASSWORD_LENGTH) return ErrorCode::ROOM_PASSWORD_TOO_SHORT;
 	data.room_key = GenerateRoomKey();
-	if (data.room_key == 0) return ErrorCode::SERVER_ERROR;
+	if (data.room_key == 0) return ErrorCode::ROOM_CREATE_FAILED;
 
 	return PublishRoom(data, session, session_key);
 }

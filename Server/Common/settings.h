@@ -11,6 +11,7 @@ constexpr int MAX_ROOM_COUNT = 500;
 constexpr int MAX_ROOM_PLAYER_COUNT = 20;
 constexpr int ROOM_LIST_REFRESH_INTERVAL_MS = 1000; // 로비가 방 목록 응답을 새로 만드는 간격. 방 목록 요청에는 마지막으로 만든 목록을 보낸다.
 constexpr int DISCONNECT_CLEANUP_INTERVAL_MS = 1000; // 타이머가 연결 종료 정리를 입출력 스레드에 맡기는 간격
+constexpr int ACCEPT_RETRY_INTERVAL_MS = 1000; // 자원 부족 등으로 다시 걸지 못한 접속 수락 요청을 다시 거는 간격
 constexpr int DB_RECONNECT_INTERVAL_MS = 1000; // DB 연결이 끊겼을 때 다시 연결을 시도하는 간격. 성공할 때까지 계속 시도한다.
 constexpr int DB_REQUEST_TIMEOUT_MS = 10000; // 로그인 요청이 DB 처리를 기다릴 수 있는 최대 시간. 넘으면 시간 초과로 응답하고 버린다.
 constexpr int DB_CONNECT_TIMEOUT_SECONDS = 2; // DB 연결 시도 한 번이 기다리는 최대 시간. DB 서버가 응답 없이 사라졌을 때 연결 시도에 오래 묶이지 않게 한다.

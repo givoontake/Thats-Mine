@@ -32,6 +32,10 @@ class GameServer
 	SOCKADDR_IN server_addr_;
 	// 수락 요청마다 자기 소켓과 OVERLAPPED를 가진다. 완료된 요청은 같은 자리에서 다시 건다.
 	std::array<AcceptOverlapped, ACCEPT_COUNT> accept_overs_;
+	// 자원 부족 등으로 다시 걸지 못한 수락 요청 자리. 타이머가 넣은 완료를 받은 입출력 스레드가 다시 건다.
+	std::array<std::atomic<bool>, ACCEPT_COUNT> is_accept_retry_needed_{};
+	ExOverlapped accept_retry_over_;
+	std::atomic<bool> is_accept_retry_posted_ = false;
 	std::unique_ptr<SessionManager> session_manager_;
 	// 타이머가 연결 종료 정리를 입출력 스레드에 맡길 때 넣는 완료. 정리가 끝나기 전에는 다시 넣지 않아, 정리 단계는 한 번에 하나만 돈다.
 	ExOverlapped disconnect_cleanup_over_;
@@ -47,6 +51,7 @@ class GameServer
 	DirectionHintData direction_hint_data_; // 서버 시작 시 맵 영역으로 만든 뒤 읽기만 하는 방향 힌트 기준
 
 	void PostAccept(AcceptOverlapped& accept_over);
+	void MarkAcceptRetry(AcceptOverlapped& accept_over);
 
 public:
 
@@ -70,6 +75,9 @@ public:
 
 	void StartServer();
 	void CompleteAccept(AcceptOverlapped& accept_over);
+	void FailAccept(AcceptOverlapped& accept_over, DWORD error);
+	void PostAcceptRetry();
+	void RetryFailedAccepts();
 	void StartThreads();
 	void CloseThreads();
 	void JoinThreads();

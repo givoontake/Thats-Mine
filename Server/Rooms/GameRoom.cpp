@@ -177,7 +177,7 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char
 	if (room_state == RoomState::PLAY) return ErrorCode::ROOM_IN_GAME;
 	if (room_state != RoomState::WAIT) return ErrorCode::ROOM_NOT_FOUND;
 	auto& room_players = room_players_;
-	if (FindPlayer(session_key)) return ErrorCode::INVALID_REQUEST;
+	if (FindPlayer(session_key)) return ErrorCode::ROOM_ALREADY_JOINED;
 	int added_slot = -1;
 	for (int i = 0; i < room_players.size(); ++i) {
 		if (room_players[i].HasSession()) continue;

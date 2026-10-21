@@ -13,6 +13,7 @@ GameServer::GameServer()
 	WSAStartup(MAKEWORD(2, 2), &wsa_data_);
 	session_manager_ = std::make_unique<SessionManager>();
 	disconnect_cleanup_over_.op_type = OPType::DISCONNECT_CLEANUP;
+	accept_retry_over_.op_type = OPType::ACCEPT_RETRY;
 
 	listen_socket_ = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	memset(&server_addr_, 0, sizeof(server_addr_));
@@ -76,15 +77,63 @@ void GameServer::CompleteAccept(AcceptOverlapped& accept_over)
 }
 
 // 새 수락용 소켓을 만들어 이 자리의 OVERLAPPED로 수락 요청을 건다.
+// 소켓을 만들지 못했거나 요청이 바로 실패하면 완료가 오지 않으므로, 다시 걸 자리로 표시해 두고 나중에 다시 건다.
 void GameServer::PostAccept(AcceptOverlapped& accept_over)
 {
 	accept_over.accept_socket = WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
-	if (accept_over.accept_socket == INVALID_SOCKET) return;
+	if (accept_over.accept_socket == INVALID_SOCKET) {
+		std::cerr << "Accept socket create fail.. " << WSAGetLastError() << std::endl;
+		MarkAcceptRetry(accept_over);
+		return;
+	}
 
 	ZeroMemory(&accept_over.ex_over.over, sizeof(accept_over.ex_over.over));
 	int addr_size = sizeof(SOCKADDR_IN);
 	BOOL result = AcceptEx(listen_socket_, accept_over.accept_socket, accept_over.packet_buffer, 0, addr_size + 16, addr_size + 16, 0, &accept_over.ex_over.over);
-	if (!result && WSAGetLastError() != ERROR_IO_PENDING) std::cerr << "AcceptEx fail.. " << std::endl;
+	if (result || WSAGetLastError() == ERROR_IO_PENDING) return;
+	std::cerr << "AcceptEx fail.. " << WSAGetLastError() << std::endl;
+	closesocket(accept_over.accept_socket);
+	accept_over.accept_socket = INVALID_SOCKET;
+	MarkAcceptRetry(accept_over);
+}
+
+void GameServer::MarkAcceptRetry(AcceptOverlapped& accept_over)
+{
+	is_accept_retry_needed_[&accept_over - accept_overs_.data()].store(true);
+}
+
+// 수락 요청이 실패로 완료됐다. 받던 소켓은 닫고, 실패 사유에 따라 다시 건다.
+// 서버 종료로 취소된 요청은 다시 걸지 않는다. 클라이언트가 접속 도중 끊은 것은 수락 자리에는 문제가 없으므로 바로 다시 건다.
+// 그 밖의 사유(자원 부족 등)는 바로 다시 걸어도 같은 실패가 반복될 수 있으므로 정해진 간격 뒤에 다시 건다.
+void GameServer::FailAccept(AcceptOverlapped& accept_over, DWORD error)
+{
+	if (accept_over.accept_socket != INVALID_SOCKET) closesocket(accept_over.accept_socket);
+	accept_over.accept_socket = INVALID_SOCKET;
+	if (error == ERROR_OPERATION_ABORTED || !IsRunning()) return;
+	if (error == ERROR_NETNAME_DELETED || error == ERROR_CONNECTION_ABORTED || error == WSAECONNRESET || error == WSAECONNABORTED) {
+		PostAccept(accept_over);
+		return;
+	}
+	std::cerr << "Accept fail.. " << error << std::endl;
+	MarkAcceptRetry(accept_over);
+}
+
+// 타이머가 수락 재시도 주기마다 호출한다. 다시 걸 자리가 있고 앞선 재시도가 끝났을 때만 넣는다.
+void GameServer::PostAcceptRetry()
+{
+	bool has_retry = false;
+	for (const auto& is_needed : is_accept_retry_needed_) has_retry = has_retry || is_needed.load();
+	if (!has_retry || is_accept_retry_posted_.exchange(true)) return;
+	PostQueuedCompletionStatus(iocp_handle_, 0, ACCEPT_RETRY_COMPLETION, &accept_retry_over_.over);
+}
+
+// 타이머가 넣은 완료를 받은 입출력 스레드가 다시 걸 자리마다 수락 요청을 건다. 또 실패하면 다음 주기에 다시 시도한다.
+void GameServer::RetryFailedAccepts()
+{
+	for (int i = 0; i < ACCEPT_COUNT; ++i) {
+		if (is_accept_retry_needed_[i].exchange(false)) PostAccept(accept_overs_[i]);
+	}
+	is_accept_retry_posted_.store(false);
 }
 
 void GameServer::StartThreads()
