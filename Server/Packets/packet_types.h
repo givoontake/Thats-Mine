@@ -75,3 +75,4 @@ constexpr std::uint8_t S2C_RELOAD = 122;
 constexpr std::uint8_t S2C_AMMO_USE = 123;
 constexpr std::uint8_t S2C_AMMO_GAIN = 124;
 constexpr std::uint8_t S2C_RELOAD_DONE = 125;
+constexpr std::uint8_t S2C_TIME_SYNC = 126;

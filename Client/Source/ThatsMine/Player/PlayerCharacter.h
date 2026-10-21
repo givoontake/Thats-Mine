@@ -93,6 +93,8 @@ public:
 
 	// 내 캐릭터가 동작을 시작했을 때 알린다.
 	FOnActionStarted on_action_started_;
+	// 마지막으로 시작한 동작의 실제 시각(FPlatformTime 초). 발사 간격을 이 시각으로 세고, 서버로 보내는 동작 시각도 이 값으로 만든다.
+	double GetActionRealTime() const { return action_real_time_; }
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	FEquipmentDisplay GetEquipmentDisplay() const;
@@ -293,7 +295,9 @@ private:
 	// 곡괭이 사용 가능 횟수(pickaxe_charges_)가 최대치보다 적을 때 지금 1번이 차기 시작한 월드 시각(초)
 	double pickaxe_charge_start_ = 0.0;
 	FTimerHandle pickaxe_charge_timer_;
+	// 무기마다 다음 발사를 할 수 있는 실제 시각(FPlatformTime 초)
 	TMap<EWeaponType, double> next_fire_times_;
+	double action_real_time_ = 0.0;
 
 	UPROPERTY(Transient)
 	TArray<FInventoryHint> acquired_hints_;

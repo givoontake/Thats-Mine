@@ -84,13 +84,34 @@ void Player::ResetAmmo(std::size_t weapon_count)
 	ammo_.assign(weapon_count, WeaponAmmo{});
 }
 
-bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
+void Player::ResetFireBasis(long long time_ms)
+{
+	for (WeaponAmmo& ammo : ammo_) {
+		ammo.last_fire_action_ms = static_cast<std::uint32_t>(time_ms);
+		ammo.last_fire_receive_ms = time_ms;
+		ammo.fire_reward_ms = 0;
+	}
+}
+
+bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms)
 {
 	if (weapon >= ammo_.size()) return false;
 	WeaponAmmo& ammo = ammo_[weapon];
-	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0 || time_ms < ammo.next_fire_ms) return false;
+	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0) return false;
+	// 동작 시각은 받은 서버 시각에 흐른 시간을 더한 값이라 서버가 받은 시각보다 늦을 수 없다. 시각은 32비트로 돌아가므로 차이로 본다.
+	if (static_cast<std::int32_t>(action_time_ms - static_cast<std::uint32_t>(time_ms)) > 0) return false;
+	const long long interval_ms = static_cast<std::int32_t>(action_time_ms - ammo.last_fire_action_ms);
+	const long long fire_interval_ms = static_cast<long long>(info.fire_interval * 1000.0f);
+	const long long usable_reward_ms = ammo.fire_reward_ms >= 0 ? ammo.fire_reward_ms : std::min(0LL, ammo.fire_reward_ms + FIRE_DEBT_FREE_MS);
+	if (interval_ms + usable_reward_ms < fire_interval_ms) return false;
+	// 간격이 모자라면 모자란 만큼 보상을 쓰고, 남으면 남은 만큼 지난 보상이나 빚을 0 쪽으로 줄인다. 그 뒤 서버가 받은 간격과 동작 시각 간격의 차이를 더한다.
+	if (interval_ms < fire_interval_ms) ammo.fire_reward_ms -= fire_interval_ms - interval_ms;
+	else if (ammo.fire_reward_ms > 0) ammo.fire_reward_ms = std::max(0LL, ammo.fire_reward_ms - (interval_ms - fire_interval_ms));
+	else ammo.fire_reward_ms = std::min(0LL, ammo.fire_reward_ms + (interval_ms - fire_interval_ms));
+	ammo.fire_reward_ms = std::min(FIRE_REWARD_MAX_MS, ammo.fire_reward_ms + (time_ms - ammo.last_fire_receive_ms) - interval_ms);
+	ammo.last_fire_action_ms = action_time_ms;
+	ammo.last_fire_receive_ms = time_ms;
 	--ammo.rounds;
-	ammo.next_fire_ms = time_ms + static_cast<long long>(info.fire_interval * 1000.0f) - AMMO_LATENCY_ALLOWANCE_MS;
 	ammo.has_unclaimed_shot = true;
 	// 서버가 받은 발사 간격과 상태 변화는 지연 때문에 실제와 다를 수 있어, 최소치는 연사 열기를 더 회복하고 막 바뀐 상태는 유리한 쪽으로 본다.
 	// 조준한 채 움직이는 퍼짐은 요구하지 않는다.
@@ -111,7 +132,7 @@ bool Player::TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long lo
 	if (weapon >= ammo_.size()) return false;
 	WeaponAmmo& ammo = ammo_[weapon];
 	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= static_cast<int>(info.magazine_capacity)) return false;
-	ammo.reload_end_ms = time_ms + static_cast<long long>(info.reload_duration * 1000.0f) - AMMO_LATENCY_ALLOWANCE_MS;
+	ammo.reload_end_ms = time_ms + static_cast<long long>(info.reload_duration * 1000.0f);
 	return true;
 }
 
@@ -170,8 +191,8 @@ bool Player::TryUsePickaxe(long long time_ms)
 {
 	UpdatePickaxeCharges(time_ms);
 	if (pickaxe_charges_ <= 0) return false;
-	// 클라이언트는 휘두른 순간부터 충전을 세므로, 늦게 받은 만큼 일찍 시작한 것으로 본다.
-	if (pickaxe_charges_ == PICKAXE_MAX_CHARGES) pickaxe_charge_start_ms_ = time_ms - AMMO_LATENCY_ALLOWANCE_MS;
+	// 충전은 서버가 받은 시각부터 센다.
+	if (pickaxe_charges_ == PICKAXE_MAX_CHARGES) pickaxe_charge_start_ms_ = time_ms;
 	--pickaxe_charges_;
 	return true;
 }

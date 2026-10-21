@@ -46,6 +46,7 @@ private:
 	void HandleAmmoGainPacket(const TArray<uint8>& payload);
 	void HandleReloadDonePacket(const TArray<uint8>& payload);
 	void HandleShotSeedPacket(const TArray<uint8>& payload);
+	void HandleTimeSyncPacket(const TArray<uint8>& payload);
 	void HandleFireRejectedPacket(const TArray<uint8>& payload);
 	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
 	void HandleStunApplyPacket(const TArray<uint8>& payload);
@@ -74,4 +75,7 @@ private:
 	bool has_sent_input_ = false;
 	bool is_active_ = false;
 	uint64 shot_seed_ = 0;
+	// 받은 서버 시각과 받은 순간의 실제 시각(FPlatformTime 초). 동작 시각은 이 서버 시각에 그 뒤 흐른 실제 시간을 더한다.
+	uint32 sync_server_time_ms_ = 0;
+	double sync_real_time_ = 0.0;
 };

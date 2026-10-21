@@ -130,9 +130,11 @@ struct S2C_EQUIP_PACKET {
 };
 
 // 발사·휘두르기·줍기. 서버는 손에 든 장비로 판정하고, 총 발사는 서버가 탄약을 확인해 인정한 것만 중계한다.
+// action_time_ms는 동작한 순간의 서버 기준 시각(ms)이다. 받은 S2C_TIME_SYNC의 시각에 받은 뒤 흐른 시간을 더한다.
 struct C2S_ACTION_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t action;
+	std::uint32_t action_time_ms;
 };
 
 struct S2C_ACTION_PACKET {
@@ -347,6 +349,13 @@ struct S2C_AREA_REMOVAL_PACKET {
 struct S2C_SHOT_SEED_PACKET {
 	PACKET_HEADER header;
 	std::uint64_t seed;
+};
+
+// 서버 시각 동기화. 게임 레벨에 들어오는 플레이어에게 한 번 보낸다.
+// 클라이언트는 받자마자 자기 기준 시각을 server_time_ms로 맞추고, 그 뒤 흐른 만큼 더해 동작 시각으로 쓴다.
+struct S2C_TIME_SYNC_PACKET {
+	PACKET_HEADER header;
+	std::uint32_t server_time_ms;
 };
 
 // 서버가 인정하지 않은 총 발사. 쏜 사람에게만 보내고, 클라이언트는 그 무기의 발사 번호를 하나 되돌린다.

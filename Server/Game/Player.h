@@ -179,8 +179,11 @@ public:
 	// 무기 수만큼 탄약 상태를 탄과 탄창 없이 만든다.
 	void ResetAmmo(std::size_t weapon_count);
 	const WeaponAmmo* GetAmmo(std::uint8_t weapon) const { return weapon < ammo_.size() ? &ammo_[weapon] : nullptr; }
-	// 재장전 중이 아니고 탄이 있고 발사 간격이 지났으면 탄 하나를 쓰고 인정한다. 인정하면 발사 번호와 그 발의 퍼짐 크기 최소치를 정하고 연사 누적을 늘린다.
-	bool TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
+	// 모든 무기의 발사 간격 검증 기준을 동기화로 보낸 서버 시각으로 채우고 보상을 비운다.
+	void ResetFireBasis(long long time_ms);
+	// 재장전 중이 아니고 탄이 있고 발사 간격 검증을 통과하면 탄 하나를 쓰고 인정한다. 인정하면 발사 번호와 그 발의 퍼짐 크기 최소치를 정하고 연사 누적을 늘린다.
+	// time_ms는 서버가 받은 시각, action_time_ms는 클라이언트가 보낸 동작 시각이다.
+	bool TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms);
 	// 재장전 중이 아니고 탄창이 가득 차 있지 않고 소지 탄이 있으면 재장전을 시작한다.
 	bool TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채우고 true를 돌려준다.

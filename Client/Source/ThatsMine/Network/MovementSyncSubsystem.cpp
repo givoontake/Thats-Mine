@@ -105,6 +105,7 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_AMMO_GAIN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoGainPacket));
 	network->RegisterPacketHandler(S2C_RELOAD_DONE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadDonePacket));
 	network->RegisterPacketHandler(S2C_SHOT_SEED, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleShotSeedPacket));
+	network->RegisterPacketHandler(S2C_TIME_SYNC, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleTimeSyncPacket));
 	network->RegisterPacketHandler(S2C_FIRE_REJECTED, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleFireRejectedPacket));
 	network->RegisterPacketHandler(S2C_PICKAXE_CHARGES, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandlePickaxeChargesPacket));
 	network->RegisterPacketHandler(S2C_STUN_APPLY, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunApplyPacket));
@@ -133,6 +134,7 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_AMMO_GAIN);
 			network->UnregisterPacketHandler(S2C_RELOAD_DONE);
 			network->UnregisterPacketHandler(S2C_SHOT_SEED);
+			network->UnregisterPacketHandler(S2C_TIME_SYNC);
 			network->UnregisterPacketHandler(S2C_FIRE_REJECTED);
 			network->UnregisterPacketHandler(S2C_PICKAXE_CHARGES);
 			network->UnregisterPacketHandler(S2C_STUN_APPLY);
@@ -287,6 +289,10 @@ void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponTy
 	}
 	C2S_ACTION_PACKET packet{};
 	packet.action = static_cast<uint8>(action);
+	// 캐릭터가 발사 간격을 센 것과 같은 실제 시각으로 동작 시각을 만든다.
+	const APlayerCharacter* character = local_character_.Get();
+	const double action_real_time = character ? character->GetActionRealTime() : FPlatformTime::Seconds();
+	packet.action_time_ms = sync_server_time_ms_ + static_cast<uint32>(static_cast<uint64>((action_real_time - sync_real_time_) * 1000.0));
 	SendPacketBody(network, C2S_ACTION, packet);
 }
 
@@ -448,6 +454,20 @@ void UMovementSyncSubsystem::HandleShotSeedPacket(const TArray<uint8>& payload)
 	S2C_SHOT_SEED_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
 	shot_seed_ = packet.seed;
+}
+
+// 서버 시각. 게임 레벨에 들어올 때 한 번 온다. 받은 순간을 이 서버 시각으로 맞춘다.
+void UMovementSyncSubsystem::HandleTimeSyncPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_TIME_SYNC_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_TIME_SYNC_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	sync_server_time_ms_ = packet.server_time_ms;
+	sync_real_time_ = FPlatformTime::Seconds();
 }
 
 // 서버가 인정하지 않은 내 총 발사. 그 무기의 발사 번호를 되돌려 서버와 맞춘다.

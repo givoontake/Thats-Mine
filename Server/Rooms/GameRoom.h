@@ -128,7 +128,8 @@ private:
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
 	// 동작이나 재장전을 weapon으로 인정하는지 본다. 동작은 손에 든 장비, 재장전은 재장전 패킷의 무기다.
-	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon);
+	// time_ms는 서버가 요청을 받은 시각, action_time_ms는 동작 패킷의 동작 시각이다. 재장전은 동작 시각을 쓰지 않는다.
+	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
 	// 중계 패킷을 이번 틱 중계에 넣는다.
 	void QueueRelay(const void* packet, int packet_size);
 	// 그 플레이어의 이동 키 입력·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.

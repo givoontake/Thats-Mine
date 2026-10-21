@@ -708,6 +708,7 @@ void APlayerCharacter::PrimaryAction()
 				--pickaxe_charges_;
 				UpdateEquipmentDisplay();
 			}
+			action_real_time_ = FPlatformTime::Seconds();
 			on_action_started_.Broadcast(EPlayerAction::MELEE, current_weapon_);
 		}
 	}
@@ -721,6 +722,7 @@ void APlayerCharacter::PickUp()
 	}
 	if (PlayAction(pickup_action_))
 	{
+		action_real_time_ = FPlatformTime::Seconds();
 		on_action_started_.Broadcast(EPlayerAction::PICKUP, current_weapon_);
 	}
 }
@@ -843,13 +845,16 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		return;
 	}
 	const double now = world->GetTimeSeconds();
-	if (const double* next_fire_time = next_fire_times_.Find(current_weapon_); next_fire_time && now < *next_fire_time)
+	// 발사 간격은 서버로 보내는 동작 시각과 같은 실제 시간으로 센다.
+	const double real_now = FPlatformTime::Seconds();
+	if (const double* next_fire_time = next_fire_times_.Find(current_weapon_); next_fire_time && real_now < *next_fire_time)
 	{
 		return;
 	}
 
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
-	next_fire_times_.Add(current_weapon_, now + FMath::Max(0.01f, settings.fire_interval));
+	next_fire_times_.Add(current_weapon_, real_now + FMath::Max(0.01f, settings.fire_interval));
+	action_real_time_ = real_now;
 	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
 	PlayFireSound(settings);

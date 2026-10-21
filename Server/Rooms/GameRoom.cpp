@@ -348,7 +348,8 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		const PlayerAction action = is_reload ? PlayerAction::RELOAD : static_cast<PlayerAction>(reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action);
 		const std::uint8_t weapon = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->weapon : room_player->GetWeapon();
 		const bool can_act = action <= PlayerAction::PICKUP && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_time_ms_);
-		if (!can_act || !AcceptAction(*room_player, request_session, action, weapon)) {
+		const std::uint32_t action_time_ms = is_reload ? 0 : reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action_time_ms;
+		if (!can_act || !AcceptAction(*room_player, request_session, action, weapon, receive_time_ms, action_time_ms)) {
 			if (action == PlayerAction::FIRE) {
 				S2C_FIRE_REJECTED_PACKET rejected_p;
 				rejected_p.header = { static_cast<std::uint16_t>(sizeof(rejected_p)), S2C_FIRE_REJECTED };
@@ -1009,6 +1010,12 @@ void GameRoom::ProcessLoadedPlayers()
 			seed_p.header = { static_cast<std::uint16_t>(sizeof(seed_p)), S2C_SHOT_SEED };
 			seed_p.seed = shot_seed_;
 			session->SendPacket(reinterpret_cast<char*>(&seed_p), seed_p.header.size);
+			// 동작 시각의 기준이 될 서버 시각을 보내고, 발사 간격 검증 기준도 이 시각으로 채운다.
+			S2C_TIME_SYNC_PACKET sync_p;
+			sync_p.header = { static_cast<std::uint16_t>(sizeof(sync_p)), S2C_TIME_SYNC };
+			sync_p.server_time_ms = static_cast<std::uint32_t>(tick_time_ms_);
+			session->SendPacket(reinterpret_cast<char*>(&sync_p), sync_p.header.size);
+			room_player.ResetFireBasis(tick_time_ms_);
 			if (match_phase_ == MatchPhase::STARTED) {
 				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
 				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
@@ -1038,24 +1045,24 @@ void GameRoom::ProcessLoadedPlayers()
 // 클라이언트가 보낸 명중을 검증하고, 인정하면 쏜 사람과 맞은 사람에게만 알린 뒤 맞은 사람의 기절 게이지를 올린다. 거부하면 아무것도 보내지 않는다.
 // 총 발사와 재장전은 서버 탄약 상태로, 곡괭이 휘두르기는 사용 가능 횟수로 확인해 인정한다.
 // 곡괭이를 인정하지 않으면 사용 가능 횟수를 보내 클라이언트를 맞추고, 총 발사를 인정하면 남은 탄창 탄을 쏜 사람에게 보낸다. 그 밖의 동작은 그대로 인정한다.
-bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon_value)
+bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon_value, long long time_ms, std::uint32_t action_time_ms)
 {
 	if (action == PlayerAction::MELEE && weapon_value == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
-		if (player.TryUsePickaxe(tick_time_ms_)) {
+		if (player.TryUsePickaxe(time_ms)) {
 			DigTreasure(player);
 			return true;
 		}
 		S2C_PICKAXE_CHARGES_PACKET charges_p;
 		charges_p.header = { static_cast<std::uint16_t>(sizeof(charges_p)), S2C_PICKAXE_CHARGES };
 		charges_p.charges = static_cast<std::uint8_t>(player.GetPickaxeCharges());
-		charges_p.remaining_ms = static_cast<std::uint32_t>(player.GetPickaxeChargeRemainingMs(tick_time_ms_));
+		charges_p.remaining_ms = static_cast<std::uint32_t>(player.GetPickaxeChargeRemainingMs(time_ms));
 		session.SendPacket(reinterpret_cast<char*>(&charges_p), charges_p.header.size);
 		return false;
 	}
 	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(weapon_value);
 	if (!weapon || !weapon->is_hitscan || (action != PlayerAction::FIRE && action != PlayerAction::RELOAD)) return true;
-	if (action == PlayerAction::RELOAD) return player.TryStartReload(weapon_value, *weapon, tick_time_ms_);
-	if (!player.TryFire(weapon_value, *weapon, tick_time_ms_)) return false;
+	if (action == PlayerAction::RELOAD) return player.TryStartReload(weapon_value, *weapon, time_ms);
+	if (!player.TryFire(weapon_value, *weapon, time_ms, action_time_ms)) return false;
 	S2C_AMMO_USE_PACKET use_p;
 	use_p.header = { static_cast<std::uint16_t>(sizeof(use_p)), S2C_AMMO_USE };
 	use_p.weapon = weapon_value;
