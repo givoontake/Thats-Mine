@@ -8,7 +8,7 @@
 #include "BoxShapeData.h"
 #include "DirectionHintData.h"
 #include "ExOverlapped.h"
-#include "HintObjectTree.h"
+#include "HintObjectGrid.h"
 #include "HitboxData.h"
 #include "MapData.h"
 #include "MapRegionData.h"
@@ -49,7 +49,7 @@ class GameServer
 	BoxCandidateData box_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 배치 후보
 	BoxShapeData box_shape_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 충돌 모양
 	MapRegionData map_region_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 영역
-	HintObjectTree hint_object_tree_; // 서버 시작 시 맵 데이터로 만든 뒤 읽기만 하는 힌트 물체 트리
+	HintObjectGrid hint_object_grid_; // 서버 시작 시 맵 데이터로 만든 뒤 읽기만 하는 힌트 물체 격자
 	DirectionHintData direction_hint_data_; // 서버 시작 시 맵 영역으로 만든 뒤 읽기만 하는 방향 힌트 기준
 
 	void PostAccept(AcceptOverlapped& accept_over);
@@ -70,7 +70,7 @@ public:
 	const BoxCandidateData& GetBoxCandidateData() const { return box_candidate_data_; }
 	const BoxShapeData& GetBoxShapeData() const { return box_shape_data_; }
 	const MapRegionData& GetMapRegionData() const { return map_region_data_; }
-	const HintObjectTree& GetHintObjectTree() const { return hint_object_tree_; }
+	const HintObjectGrid& GetHintObjectGrid() const { return hint_object_grid_; }
 	const DirectionHintData& GetDirectionHintData() const { return direction_hint_data_; }
 
 	void StartServer();

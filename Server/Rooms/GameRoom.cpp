@@ -752,7 +752,7 @@ void GameRoom::GenerateHints()
 	const float z = treasure_placement_.location.z;
 	hints_ = server_->GetDirectionHintData().JudgeDirections(x, y);
 	for (std::uint8_t radius = 0; radius < std::size(HINT_OBJECT_COUNT_RADII); ++radius) {
-		const HintKindCounts object_counts = server_->GetHintObjectTree().CountKinds(x, y, z, HINT_OBJECT_COUNT_RADII[radius]);
+		const HintKindCounts object_counts = server_->GetHintObjectGrid().CountKinds(x, y, z, HINT_OBJECT_COUNT_RADII[radius]);
 		for (std::size_t kind = 0; kind < object_counts.size(); ++kind) {
 			hints_.push_back(CountHint{ static_cast<std::uint8_t>(kind), radius, static_cast<std::uint8_t>(std::min<std::uint32_t>(object_counts[kind], UINT8_MAX)) });
 		}

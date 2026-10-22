@@ -51,6 +51,7 @@ constexpr bool IS_TREASURE_REVEAL_ENABLED = false;
 
 // 개수 힌트. 판마다 물체 종류마다 반경마다 하나씩, 보물 바닥에서 그 반경(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
 constexpr float HINT_OBJECT_COUNT_RADII[] = { 3000.0f, 1000.0f };
+constexpr float HINT_OBJECT_GRID_CELL_SIZE = 4000.0f; // 개수 힌트에 쓰는 힌트 물체 격자 한 칸의 크기(cm)
 // 방향 힌트 기준 사각형을 영역 스플라인 조종점의 최소·최대 좌표에서 넓히는 거리(cm)
 constexpr float HINT_DIRECTION_MARGIN = 1000.0f;
 // 힌트 상자. 힌트마다 HINT_BOX_COPIES × 글로벌 배수만큼 상자를 만들어 한 상자에 힌트 하나를 넣는다. 글로벌 배수는 참가 인원 HINT_BOX_PLAYERS_PER_MULTIPLIER명마다 1씩 오르고 탄약 상자에도 쓴다.

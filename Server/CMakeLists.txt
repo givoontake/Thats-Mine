@@ -28,7 +28,7 @@ add_executable(GameServer
     Game/Boxes/BoxCandidateData.cpp
     Game/Boxes/BoxShapeData.cpp
     Game/Hints/DirectionHintData.cpp
-    Game/Hints/HintObjectTree.cpp
+    Game/Hints/HintObjectGrid.cpp
     Game/Treasure/treasure_placement.cpp
     Game/Hitbox/CharacterPose.cpp
     Game/Hitbox/HitboxData.cpp
@@ -90,7 +90,7 @@ add_executable(GameServer
     Game/Boxes/BoxCandidateData.h
     Game/Boxes/BoxShapeData.h
     Game/Hints/DirectionHintData.h
-    Game/Hints/HintObjectTree.h
+    Game/Hints/HintObjectGrid.h
     Game/Hints/hint_types.h
     Game/Hitbox/CharacterPose.h
     Game/Hitbox/HitboxData.h

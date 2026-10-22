@@ -51,7 +51,7 @@ void GameServer::StartServer()
 	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt", box_shape_data_)) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!map_region_data_.Load("Data/map_regions.txt")) std::cerr << "Map region data load fail.. " << std::endl;
 	if (!map_region_data_.LoadTreasureExclusions("Data/treasure_exclusions.txt")) std::cerr << "Treasure exclusion data load fail.. " << std::endl;
-	if (!hint_object_tree_.Build(map_data_)) std::cerr << "Hint object tree build fail.. " << std::endl;
+	if (!hint_object_grid_.Build(map_data_)) std::cerr << "Hint object grid build fail.. " << std::endl;
 	if (!direction_hint_data_.Build(map_region_data_)) std::cerr << "Direction hint data build fail.. " << std::endl;
 	bind(listen_socket_, reinterpret_cast<sockaddr*>(&server_addr_), sizeof(server_addr_));
 	listen(listen_socket_, SOMAXCONN);
