@@ -62,6 +62,7 @@ bool BoxCandidateData::LoadAnchors(const std::string& file_path)
 		if (!stream || !kind) return false;
 		placement.kind = *kind;
 		placement.center = ComputeBoxCenter(placement);
+		placement.orientation = ConvertUnrealRotation(placement.rotation);
 
 		if (anchor != last_anchor)
 		{
@@ -95,6 +96,7 @@ bool BoxCandidateData::LoadGroups(const std::string& file_path)
 		if (!stream || !kind) return false;
 		placement.kind = *kind;
 		placement.center = ComputeBoxCenter(placement);
+		placement.orientation = ConvertUnrealRotation(placement.rotation);
 
 		if (groups_.empty() || groups_.back().name != group_name) groups_.push_back({ group_name, {} });
 		groups_.back().placement_indices.push_back(static_cast<std::uint32_t>(placements_.size()));

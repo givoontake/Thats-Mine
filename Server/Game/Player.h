@@ -14,6 +14,9 @@
 #include "hitbox_types.h"
 #include "weapon_ammo.h"
 #include "air_state.h"
+#include "player_snapshot.h"
+
+class MapData;
 
 // 방 슬롯 하나를 나타낸다. 방을 처리하는 스레드만 변경하므로 슬롯 사용 여부는 세션 키 유무로 판단한다.
 class Player
@@ -56,6 +59,11 @@ class Player
 	bool has_client_time_ = false;
 	// 명중 검증에 쓰는 서버 판정용 자세. 이동 상태와 동작으로 애니메이션 진행을 따라간다.
 	CharacterPose pose_;
+	// 틱마다 남긴 판정 상태. 사격 시각을 HIT_REWIND_MS까지 되감도록 그만큼의 틱과, 되감은 시각보다 앞선 틱·틱 간격이 흔들리는 몫을 고리 모양으로 둔다.
+	static constexpr int HISTORY_SIZE = HIT_REWIND_MS / TICK_INTERVAL_MS + 2;
+	std::array<PlayerSnapshot, HISTORY_SIZE> history_{};
+	int history_start_ = 0;
+	int history_count_ = 0;
 	// 기절 게이지는 stun_gauge_time_ms_ 시각의 값이고, 그 뒤로는 초당 감소량만큼 줄어든 것으로 계산한다. 기절 중에는 최대치로 본다.
 	float stun_gauge_ = 0.0f;
 	long long stun_gauge_time_ms_ = 0;
@@ -181,15 +189,13 @@ public:
 	const WeaponAmmo* GetAmmo(std::uint8_t weapon) const { return weapon < ammo_.size() ? &ammo_[weapon] : nullptr; }
 	// 모든 무기의 발사 간격 검증 기준을 동기화로 보낸 서버 시각으로 채우고 보상을 비운다.
 	void ResetFireBasis(long long time_ms);
-	// 재장전 중이 아니고 탄이 있고 발사 간격 검증을 통과하면 탄 하나를 쓰고 인정한다. 인정하면 발사 번호와 그 발의 퍼짐 크기 최소치를 정하고 연사 누적을 늘린다.
-	// time_ms는 서버가 받은 시각, action_time_ms는 클라이언트가 보낸 동작 시각이다.
-	bool TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms);
+	// 재장전 중이 아니고 탄이 있고 발사 간격 검증을 통과하면 탄 하나를 쓰고 인정한다. 인정하면 발사 번호와 그 발의 퍼짐 크기를 정하고 연사 누적을 늘린다.
+	// time_ms는 서버가 받은 시각, action_time_ms는 클라이언트가 보낸 동작 시각이다. 인정하지 않으면 값이 없다.
+	std::optional<FiredShot> TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms);
 	// 재장전 중이 아니고 탄창이 가득 차 있지 않고 소지 탄이 있으면 재장전을 시작한다.
 	bool TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채우고 true를 돌려준다.
 	bool FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
-	// 인정한 발사 하나를 명중이나 선물 열기에 쓴다. 쓸 발사가 없으면 false다.
-	bool ClaimShot(std::uint8_t weapon);
 	// 소지 탄을 count발 늘린다.
 	void AddSpareRounds(std::uint8_t weapon, int count);
 	// 곡괭이 사용 가능 횟수를 최대치로 채운다.
@@ -218,4 +224,11 @@ public:
 	void SetSentExclusionBoard(std::uint64_t board) { sent_exclusion_board_ = board; }
 	// 블록과 배제 판을 모두 잃는다.
 	void ResetBlocks();
+	// 이번 틱이 끝난 판정 상태를 남긴다. 남길 자리가 없으면 가장 오래된 틱을 지운다.
+	void RecordHistory(long long tick_time_ms);
+	// time_ms 시각으로 되감은 판정 상태. 위치는 서버가 받은 시각 기준 이동 상태 기록 사이를 잇는다. 남긴 틱이 없으면 값이 없다.
+	// 마지막 기록 뒤면 마지막 기록과 예측할 시간(HIT_PREDICT_MAX_SECONDS까지)을 돌려주고, 예측은 PredictRewoundMove가 한다.
+	std::optional<RewoundState> GetRewoundState(long long time_ms) const;
+	// 되감은 상태의 마지막 기록에서 예측할 시간만큼, 그 사이 틱마다 남긴 이동 키 입력과 조준으로 이동을 이어 계산한다.
+	MOVE_STATE PredictRewoundMove(const RewoundState& rewound, const MapData& map) const;
 };

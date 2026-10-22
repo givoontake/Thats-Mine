@@ -23,7 +23,9 @@ add_executable(GameServer
     Core/main.cpp
     Core/GameServer.cpp
     Game/Player.cpp
+    Game/move_prediction.cpp
     Game/Boxes/BoxCandidateData.cpp
+    Game/Boxes/BoxShapeData.cpp
     Game/Hints/DirectionHintData.cpp
     Game/Hints/HintObjectTree.cpp
     Game/Treasure/treasure_placement.cpp
@@ -80,8 +82,11 @@ add_executable(GameServer
     Database/db_login_task.h
     Game/Player.h
     Game/weapon_ammo.h
+    Game/move_prediction.h
+    Game/player_snapshot.h
     Game/Boxes/box_types.h
     Game/Boxes/BoxCandidateData.h
+    Game/Boxes/BoxShapeData.h
     Game/Hints/DirectionHintData.h
     Game/Hints/HintObjectTree.h
     Game/Hints/hint_types.h

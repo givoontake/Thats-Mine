@@ -62,8 +62,8 @@ constexpr int AMMO_BOX_ROUNDS[] = { 0, 1, 3 }; // 상자 하나로 느는 탄 �
 // 힌트 상자 열기 검증(임시값). 게임이 시작된 뒤에만 열 수 있다.
 constexpr float HINT_BOX_OPEN_DISTANCE = 225.0f; // F키로 열 때 캡슐 중심에서 상자 중심까지 최대 거리(cm)
 constexpr float HINT_BOX_CENTER_HEIGHTS[] = { 45.5f, 53.1f }; // 상자 바닥 가운데에서 상자 중심까지 상자 위쪽 방향 거리(cm). BoxKind 순서(0.7배 나무 상자, 선물)
-constexpr float HINT_BOX_SHOT_TARGET_HEIGHT = 30.0f; // 쏴서 열 때 막힘을 검사할 상자 쪽 끝점을 상자 바닥 가운데에서 올리는 높이(cm)
-constexpr float HINT_BOX_SHOT_END_MARGIN = 50.0f; // 쏴서 열 때 막힘 검사 선분의 상자 쪽 끝에서 빼는 길이(cm). 상자를 받친 가지나 바닥을 막힘으로 보지 않는다.
+// 선물은 탄에 맞으면 열리고, 나무 상자는 탄을 막기만 한다. 모양은 서버 상자 모양 파일의 직육면체다.
+constexpr int CHEST_OPEN_SHAPE_DELAY_MS = 500; // 나무 상자가 열린 뒤 열린 모양으로 바뀔 때까지 시간. 그 전에는 닫힌 모양이다. 클라이언트 여는 동작 시간과 같다.
 // 영역 지우기. 게임 시작부터 AREA_REMOVAL_INTERVAL_MS마다 배제 판 칸 중 보물 칸과 이미 지운 칸을 뺀 칸 하나를 골라 플레이 중인 전원의 배제 판에서 지운다.
 // 지울 칸이 없으면 그 차례는 건너뛴다.
 constexpr int AREA_REMOVAL_INTERVAL_MS = 180000;
@@ -80,6 +80,7 @@ constexpr float MOVE_BRAKING_DECELERATION = 2048.0f;
 constexpr float MOVE_GROUND_FRICTION = 8.0f;
 constexpr float MOVE_BRAKING_FRICTION_FACTOR = 2.0f;
 constexpr float MOVE_BRAKING_STEP_SECONDS = 1.0f / 33.0f;
+constexpr float MOVE_MAX_STEP_HEIGHT = 60.0f; // 땅에서 걸어서 오르내릴 수 있는 높이(cm). 언리얼 캐릭터 이동 설정과 같은 값이다.
 
 // 점프와 낙하. 클라이언트 캐릭터 이동과 서버 높이 검증이 같은 값을 쓴다.
 // 중력은 프로젝트 기본 중력, 낙하 속도 상한은 게임 레벨 기본 물리 볼륨의 값과 같다.
@@ -130,9 +131,13 @@ constexpr float AIR_CONTACT_MARGIN = 10.0f;
 constexpr long long CLOCK_MAX_AHEAD_MS = 250;
 constexpr long long CLOCK_MAX_BEHIND_MS = 2000;
 
-// 명중 검증. 지연 보정이 없어 클라이언트 화면과 서버의 위치 차이를 여유로 허용한다.
-constexpr float HIT_BASE_MARGIN = 20.0f; // 서버 히트박스를 키우는 기본 여유(cm)
-constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 속도에 곱해 여유에 더하는 지연 허용 시간(초)
+// 명중 판정. 서버가 탄 광선을 쏴서 처음 닿는 것을 맞힌다. 다른 플레이어는 사격 시각으로 되감은 위치·자세·기절 상태로 판정한다.
+constexpr float HIT_MARGIN = 0.0f; // 서버 히트박스를 키우는 여유(cm). 시험으로 정한다.
+constexpr int HIT_REWIND_MS = 1000; // 사격 시각을 되감는 최대 시간. 받은 시각보다 이보다 오래된 사격은 이 시간 전으로 맞춰 판정한다.
+// 되감은 시각이 맞은 사람의 마지막 이동 상태보다 뒤면 그 사이를 서버가 이동 키 입력으로 예측한다(move_prediction.h).
+// 이 시간 넘게 이동 상태가 오지 않았으면 그 뒤는 멈춘 것으로 본다. 이동 끊김과 같은 값이다.
+constexpr float HIT_PREDICT_MAX_SECONDS = MOVE_AIR_DELAY_SECONDS;
+constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 카메라 검증에서 다른 플레이어 캡슐을 속도에 비례해 키우는 지연 허용 시간(초)
 // 탄 광선은 캡슐 안 오른쪽 어깨 높이의 고정점에서 시작한다. 캐릭터 위치(캡슐 중심)에서 몸 방향 기준 앞·오른쪽·위로 이만큼(cm) 옮긴 점이다.
 // 캡슐은 벽에 파고들지 못하므로 시작점이 벽 너머에 있을 수 없다. 총구는 화염·궤적 표시에만 쓴다. 클라이언트와 서버가 같은 식으로 구한다.
 constexpr float SHOT_ORIGIN_FORWARD = 10.0f;
@@ -158,11 +163,8 @@ constexpr float CAMERA_POSITION_TOLERANCE = 15.0f;
 constexpr float CAMERA_FRAME_ALLOWANCE_SECONDS = 0.05f;
 constexpr float CAMERA_VIEW_CONE_DEGREES = 45.0f;
 
-// 탄 퍼짐 검증(shot_spread.h). 다시 계산한 탄 방향과 받은 광선 방향 사이 허용 각도(도), 퍼짐 크기 반올림 오차(도).
-// 퍼짐 크기 최소치는 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정하고,
-// 공중이나 조준하지 않은 상태는 이동 상태에서 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 퍼짐을 요구한다. 상태가 막 바뀐 것은 지연으로 보고 봐준다.
-constexpr float SHOT_SPREAD_DIRECTION_TOLERANCE_DEGREES = 0.1f;
-constexpr float SHOT_SPREAD_EPSILON_DEGREES = 0.01f;
+// 탄 퍼짐(shot_spread.h). 서버가 퍼짐 크기를 정한다. 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정하고,
+// 공중이나 조준하지 않은 상태는 이동 상태에서 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 퍼짐을 쓴다. 상태가 막 바뀐 것은 지연으로 보고 봐준다.
 constexpr float SHOT_SPREAD_TIME_ALLOWANCE_SECONDS = 0.2f;
 constexpr long long SHOT_SPREAD_STATE_ALLOWANCE_MS = 300;
 constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.

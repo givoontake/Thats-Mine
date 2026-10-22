@@ -341,23 +341,14 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 	}
 	case C2S_ACTION:
 	case C2S_RELOAD: {
-		// 동작은 손에 든 장비로, 재장전은 재장전 패킷의 무기로 판정한다. 인정하지 않은 총 발사는 쏜 사람에게 알려 클라이언트가 발사 번호를 되돌리게 한다.
+		// 동작은 손에 든 장비로, 재장전은 재장전 패킷의 무기로 판정한다. 총 발사는 발사 패킷으로만 받는다.
 		auto* room_player = room_state_.load() == RoomState::PLAY ? FindPlayer(request_session.GetSessionKey()) : nullptr;
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const bool is_reload = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_RELOAD;
 		const PlayerAction action = is_reload ? PlayerAction::RELOAD : static_cast<PlayerAction>(reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action);
 		const std::uint8_t weapon = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->weapon : room_player->GetWeapon();
-		const bool can_act = action <= PlayerAction::PICKUP && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_time_ms_);
-		const std::uint32_t action_time_ms = is_reload ? 0 : reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action_time_ms;
-		if (!can_act || !AcceptAction(*room_player, request_session, action, weapon, receive_time_ms, action_time_ms)) {
-			if (action == PlayerAction::FIRE) {
-				S2C_FIRE_REJECTED_PACKET rejected_p;
-				rejected_p.header = { static_cast<std::uint16_t>(sizeof(rejected_p)), S2C_FIRE_REJECTED };
-				rejected_p.weapon = weapon;
-				request_session.SendPacket(reinterpret_cast<char*>(&rejected_p), rejected_p.header.size);
-			}
-			break;
-		}
+		const bool can_act = action <= PlayerAction::PICKUP && action != PlayerAction::FIRE && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_time_ms_);
+		if (!can_act || !AcceptAction(*room_player, request_session, action, weapon, receive_time_ms)) break;
 		const int player_id = request_session.GetSessionKey().player_id;
 		if (is_reload) {
 			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, player_id, weapon };
@@ -370,23 +361,18 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		room_player->GetPose().StartAction(static_cast<std::uint8_t>(action), weapon, tick_time_ms_);
 		break;
 	}
-	case C2S_HIT: {
+	case C2S_FIRE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
-		ProcessHit(*room_player, *reinterpret_cast<C2S_HIT_PACKET*>(packet));
+		ProcessFire(*room_player, request_session, *reinterpret_cast<C2S_FIRE_PACKET*>(packet), receive_time_ms);
 		break;
 	}
-	case C2S_BOX_OPEN:
-	case C2S_BOX_SHOT: {
+	case C2S_BOX_OPEN: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
-		if (reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_BOX_SHOT) {
-			const auto* shot_p = reinterpret_cast<C2S_BOX_SHOT_PACKET*>(packet);
-			ProcessBoxOpen(*room_player, shot_p->box, shot_p->weapon);
-		}
-		else ProcessBoxOpen(*room_player, reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet)->box, std::nullopt);
+		ProcessBoxOpen(*room_player, reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet)->box, false);
 		break;
 	}
 	case C2S_BLOCK_USE: {
@@ -806,7 +792,7 @@ void GameRoom::PlaceBoxes(int player_count)
 	box_placement_indices_ = box_candidates.SelectPlacements(box_contents_.size());
 	// 상자 자리 후보가 모자라 덜 골랐으면 남는 내용물은 넣지 않는다.
 	box_contents_.resize(box_placement_indices_.size());
-	is_box_opened_.assign(box_placement_indices_.size(), false);
+	box_open_ms_.assign(box_placement_indices_.size(), 0);
 	box_layout_packet_ = BuildBoxLayoutPacket();
 }
 
@@ -828,7 +814,7 @@ std::vector<char> GameRoom::BuildBoxLayoutPacket() const
 		write += sizeof(box_layout_p);
 		for (std::size_t index = first; index < first + count; ++index) {
 			const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
-			const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, is_box_opened_[index] };
+			const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, box_open_ms_[index] != 0 };
 			std::memcpy(write, &entry, sizeof(entry));
 			write += sizeof(entry);
 		}
@@ -885,6 +871,11 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		if (room_player.GetAirState(tick_time_ms).phase == AirPhase::GROUND || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
 		if (auto session = FindSession(room_player)) CorrectMove(room_player, *session, true);
 	}
+	// 이번 틱이 끝난 판정 상태를 남긴다. 명중 판정이 사격 시각으로 되감을 때 쓴다.
+	for (auto& room_player : room_players_) {
+		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
+		room_player.RecordHistory(tick_time_ms);
+	}
 	char send_buffer[BUF_SIZE];
 	int send_data_size = 0;
 	const auto flush = [&]() {
@@ -913,7 +904,6 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		move_p.yaw = state.yaw;
 		move_p.view_pitch = state.view_pitch;
 		move_p.air_phase = state.air_phase;
-		move_p.client_time_ms = state.client_time_ms;
 		append(&move_p, sizeof(move_p));
 		room_player.MarkMoveStateRelayed();
 	}
@@ -1006,10 +996,6 @@ void GameRoom::ProcessLoadedPlayers()
 		if (!session) continue;
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			room_player.GetPose().Reset(server_->GetHitboxData());
-			S2C_SHOT_SEED_PACKET seed_p;
-			seed_p.header = { static_cast<std::uint16_t>(sizeof(seed_p)), S2C_SHOT_SEED };
-			seed_p.seed = shot_seed_;
-			session->SendPacket(reinterpret_cast<char*>(&seed_p), seed_p.header.size);
 			// 동작 시각의 기준이 될 서버 시각을 보내고, 발사 간격 검증 기준도 이 시각으로 채운다.
 			S2C_TIME_SYNC_PACKET sync_p;
 			sync_p.header = { static_cast<std::uint16_t>(sizeof(sync_p)), S2C_TIME_SYNC };
@@ -1042,10 +1028,9 @@ void GameRoom::ProcessLoadedPlayers()
 	}
 }
 
-// 클라이언트가 보낸 명중을 검증하고, 인정하면 쏜 사람과 맞은 사람에게만 알린 뒤 맞은 사람의 기절 게이지를 올린다. 거부하면 아무것도 보내지 않는다.
-// 총 발사와 재장전은 서버 탄약 상태로, 곡괭이 휘두르기는 사용 가능 횟수로 확인해 인정한다.
-// 곡괭이를 인정하지 않으면 사용 가능 횟수를 보내 클라이언트를 맞추고, 총 발사를 인정하면 남은 탄창 탄을 쏜 사람에게 보낸다. 그 밖의 동작은 그대로 인정한다.
-bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon_value, long long time_ms, std::uint32_t action_time_ms)
+// 재장전은 서버 탄약 상태로, 곡괭이 휘두르기는 사용 가능 횟수로 확인해 인정한다.
+// 곡괭이를 인정하지 않으면 사용 가능 횟수를 보내 클라이언트를 맞춘다. 그 밖의 동작은 그대로 인정한다.
+bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon_value, long long time_ms)
 {
 	if (action == PlayerAction::MELEE && weapon_value == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
 		if (player.TryUsePickaxe(time_ms)) {
@@ -1060,32 +1045,8 @@ bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction actio
 		return false;
 	}
 	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(weapon_value);
-	if (!weapon || !weapon->is_hitscan || (action != PlayerAction::FIRE && action != PlayerAction::RELOAD)) return true;
-	if (action == PlayerAction::RELOAD) return player.TryStartReload(weapon_value, *weapon, time_ms);
-	if (!player.TryFire(weapon_value, *weapon, time_ms, action_time_ms)) return false;
-	S2C_AMMO_USE_PACKET use_p;
-	use_p.header = { static_cast<std::uint16_t>(sizeof(use_p)), S2C_AMMO_USE };
-	use_p.weapon = weapon_value;
-	use_p.rounds = static_cast<std::uint16_t>(player.GetAmmo(weapon_value)->rounds);
-	session.SendPacket(reinterpret_cast<char*>(&use_p), use_p.header.size);
-	return true;
-}
-
-// 명중은 서버가 인정한 발사 하나를 써서 판정한다.
-void GameRoom::ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p)
-{
-	if (!shooter.ClaimShot(request_p.weapon)) return;
-	Player* target = nullptr;
-	for (auto& room_player : room_players_) {
-		if (room_player.HasSession() && room_player.GetSessionKey().player_id == request_p.target_player_id) target = &room_player;
-	}
-	if (!target || target == &shooter || target->GetRoomPlayerState() != RoomPlayerState::PLAY || !CheckHit(shooter, *target, request_p)) return;
-
-	S2C_HIT_PACKET hit_p;
-	hit_p.header = { static_cast<std::uint16_t>(sizeof(hit_p)), S2C_HIT };
-	hit_p.shooter_player_id = shooter.GetSessionKey().player_id;
-	if (auto session = FindSession(*target)) session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
-	AddStunGauge(shooter, *target, request_p);
+	if (!weapon || !weapon->is_hitscan || action != PlayerAction::RELOAD) return true;
+	return player.TryStartReload(weapon_value, *weapon, time_ms);
 }
 
 // 쏜 사람 이동 상태의 위치와 몸 방향으로 탄 광선 시작점(캡슐 안 어깨 고정점)을 구한다. 클라이언트도 같은 식으로 구한다.
@@ -1097,18 +1058,122 @@ static DirectX::XMFLOAT3 GetShotOrigin(const MOVE_STATE& move_state)
 	return { move_state.location[0] + SHOT_ORIGIN_FORWARD * cos_yaw - SHOT_ORIGIN_RIGHT * sin_yaw, move_state.location[1] + SHOT_ORIGIN_FORWARD * sin_yaw + SHOT_ORIGIN_RIGHT * cos_yaw, move_state.location[2] + SHOT_ORIGIN_UP };
 }
 
+// 발사는 손에 든 총으로 판정하고, 쏜 사람이 되돌리기 확인을 기다리는 중이면(발사 직전 이동 상태를 인정하지 않았으면) 버린다.
+// 인정하면 남은 탄창 탄을 쏜 사람에게 보내고 발사 동작을 중계한 뒤, 조준 방향에 서버가 (시드, 아이디, 무기, 발사 번호)로 정한 빗나감을 적용한 탄 광선을 쏜다.
+// 광선이 처음 닿는 것은 사격 시각으로 되감은(마지막 기록 뒤면 예측한) 다른 플레이어의 히트박스와 지금 상자 모양 중 가장 가까운 것이고, 그곳까지 지형이 막지 않고 쏜 사람 카메라에서 보였어야 한다.
+// 선물이면 열고, 나무 상자면 탄만 막는다. 플레이어면 맞은 사람에게 명중을 알리고 기절 게이지를 올리되, 되감은 시각에 기절·보호 중이었으면 탄만 막는다.
+void GameRoom::ProcessFire(Player& shooter, Session& session, const C2S_FIRE_PACKET& request_p, long long time_ms)
+{
+	const HitboxData& data = server_->GetHitboxData();
+	const std::uint8_t weapon = shooter.GetWeapon();
+	const WeaponInfo* info = data.GetWeaponInfo(weapon);
+	if (!data.IsLoaded() || !info || !info->is_hitscan || !shooter.HasMoveState() || shooter.IsAwaitingMoveCorrection()) return;
+	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
+	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
+	if (!std::isfinite(aim_length) || aim_length < 0.5f) return;
+	const std::optional<FiredShot> shot = shooter.TryFire(weapon, *info, time_ms, request_p.action_time_ms);
+	if (!shot) return;
+
+	S2C_AMMO_USE_PACKET use_p;
+	use_p.header = { static_cast<std::uint16_t>(sizeof(use_p)), S2C_AMMO_USE };
+	use_p.weapon = weapon;
+	use_p.rounds = static_cast<std::uint16_t>(shooter.GetAmmo(weapon)->rounds);
+	session.SendPacket(reinterpret_cast<char*>(&use_p), use_p.header.size);
+	const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, shooter.GetSessionKey().player_id, static_cast<std::uint8_t>(PlayerAction::FIRE) };
+	QueueRelay(&action_p, sizeof(action_p));
+	shooter.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon, tick_time_ms_);
+
+	DirectX::XMFLOAT3 unit_aim;
+	DirectX::XMStoreFloat3(&unit_aim, DirectX::XMVectorScale(aim, 1.0f / aim_length));
+	const ShotSpreadDirection spread_direction = ApplyShotSpread(unit_aim.x, unit_aim.y, unit_aim.z, shot->spread, GetShotSpreadHash(shot_seed_, shooter.GetSessionKey().player_id, weapon, shot->shot_index));
+	const DirectX::XMFLOAT3 direction(spread_direction.x, spread_direction.y, spread_direction.z);
+	const DirectX::XMFLOAT3 origin = GetShotOrigin(shooter.GetMoveState());
+	const DirectX::XMVECTOR origin_v = DirectX::XMLoadFloat3(&origin);
+	const DirectX::XMVECTOR direction_v = DirectX::XMLoadFloat3(&direction);
+	// 사격 시각은 동작 시각이다. 서버가 받은 시각보다 늦지 않고, HIT_REWIND_MS보다 오래됐으면 그만큼 전으로 맞춘다. 시각은 32비트로 돌아가므로 차이로 본다.
+	const long long shot_time_ms = std::max<long long>(time_ms - HIT_REWIND_MS, time_ms + static_cast<std::int32_t>(request_p.action_time_ms - static_cast<std::uint32_t>(time_ms)));
+
+	// 광선을 따라 가장 가까운 플레이어 히트박스와 상자 모양을 찾는다. 더 가까운 것을 찾을 때마다 검사 거리를 줄인다.
+	float distance = info->hitscan_distance;
+	Player* hit_player = nullptr;
+	HitboxPart hit_part = HitboxPart::TORSO;
+	bool is_hit_protected = false;
+	std::optional<std::uint16_t> hit_box;
+	for (auto& target : room_players_) {
+		if (&target == &shooter || !target.HasSession() || target.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
+		std::optional<RewoundState> rewound = target.GetRewoundState(shot_time_ms);
+		if (!rewound) continue;
+		// 사격 시각이 마지막 기록보다 뒤면 그 사이를 예측한다. 예측 시간 동안 갈 수 있는 거리만큼 넓혀 1차 판정을 통과한 플레이어만 예측한다.
+		if (rewound->predict_seconds > 0.0f) {
+			const MOVE_STATE& last = rewound->move_state;
+			const float reach = (std::max(std::hypot(last.velocity[0], last.velocity[1], last.velocity[2]), MOVE_SPEED_FORWARD) + GRAVITY * rewound->predict_seconds) * rewound->predict_seconds;
+			if (!IsRayNearCharacter(origin, direction, distance, DirectX::XMFLOAT3(last.location[0], last.location[1], last.location[2]), last.yaw, data.GetBroadphaseCapsule(), HIT_MARGIN + reach)) continue;
+			rewound->move_state = target.PredictRewoundMove(*rewound, server_->GetMapData());
+		}
+		const MOVE_STATE& state = rewound->move_state;
+		if (!IsRayNearCharacter(origin, direction, distance, DirectX::XMFLOAT3(state.location[0], state.location[1], state.location[2]), state.yaw, data.GetBroadphaseCapsule(), HIT_MARGIN)) continue;
+		const HitboxRayHit hit = RaycastHitboxes(origin, direction, distance, rewound->pose->BuildWorldHitboxes(state, shot_time_ms), HIT_MARGIN);
+		if (!hit.has_hit) continue;
+		distance = hit.distance;
+		hit_player = &target;
+		hit_part = hit.part;
+		is_hit_protected = rewound->is_stun_protected;
+	}
+	const BoxShapeData& box_shapes = server_->GetBoxShapeData();
+	const std::vector<BoxPlacement>& placements = server_->GetBoxCandidateData().GetPlacements();
+	for (std::size_t box = 0; box < box_placement_indices_.size(); ++box) {
+		const BoxPlacement& placement = placements[box_placement_indices_[box]];
+		// 선물은 열리면 사라진다. 나무 상자는 열리고 CHEST_OPEN_SHAPE_DELAY_MS가 지나면 열린 모양이다.
+		const bool is_opened = box_open_ms_[box] != 0;
+		if (placement.kind == BoxKind::GIFT && is_opened) continue;
+		// 상자 바닥 가운데를 중심으로 모든 모양을 감싸는 구에 광선이 닿을 때만 모양을 검사한다.
+		const DirectX::XMVECTOR location = DirectX::XMLoadFloat3(&placement.location);
+		const float along = std::clamp(DirectX::XMVectorGetX(DirectX::XMVector3Dot(DirectX::XMVectorSubtract(location, origin_v), direction_v)), 0.0f, distance);
+		const float gap = DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVectorSubtract(location, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, along)))));
+		if (gap > box_shapes.GetBoundingRadius(placement.kind)) continue;
+		// 상자 좌표의 모양을 상자 회전과 위치로 월드에 놓는다.
+		std::vector<HitboxShape> shapes = box_shapes.GetShapes(placement.kind, is_opened && tick_time_ms_ - box_open_ms_[box] >= CHEST_OPEN_SHAPE_DELAY_MS);
+		const DirectX::XMVECTOR orientation = DirectX::XMLoadFloat4(&placement.orientation);
+		for (HitboxShape& shape : shapes) {
+			DirectX::XMStoreFloat3(&shape.transform.position, DirectX::XMVectorAdd(location, DirectX::XMVector3Rotate(DirectX::XMLoadFloat3(&shape.transform.position), orientation)));
+			DirectX::XMStoreFloat4(&shape.transform.rotation, DirectX::XMQuaternionMultiply(DirectX::XMLoadFloat4(&shape.transform.rotation), orientation));
+		}
+		const HitboxRayHit hit = RaycastHitboxes(origin, direction, distance, shapes, 0.0f);
+		if (!hit.has_hit) continue;
+		distance = hit.distance;
+		hit_player = nullptr;
+		hit_box = static_cast<std::uint16_t>(box);
+	}
+	if (!hit_player && !hit_box) return;
+	DirectX::XMFLOAT3 hit_point;
+	DirectX::XMStoreFloat3(&hit_point, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, distance)));
+	if (IsShotPathBlocked(origin, hit_point) || !CheckShotCamera(shooter, DirectX::XMFLOAT3(request_p.camera[0], request_p.camera[1], request_p.camera[2]), hit_point)) return;
+	if (hit_box) {
+		if (placements[box_placement_indices_[*hit_box]].kind == BoxKind::GIFT) ProcessBoxOpen(shooter, *hit_box, true);
+		return;
+	}
+	if (is_hit_protected) return;
+
+	S2C_HIT_PACKET hit_p;
+	hit_p.header = { static_cast<std::uint16_t>(sizeof(hit_p)), S2C_HIT };
+	hit_p.shooter_player_id = shooter.GetSessionKey().player_id;
+	if (auto target_session = FindSession(*hit_player)) target_session->SendPacket(reinterpret_cast<char*>(&hit_p), hit_p.header.size);
+	AddStunGauge(shooter, *hit_player, weapon, hit_part);
+}
+
 // 무기별 증가량에 맞은 부위 배율을 곱해 게이지를 올린다. 기절 중이거나 기절이 끝난 뒤 보호 중이면 게이지는 그대로다.
 // 최대치에 닿으면 기절을 방 전체에 알린 뒤, 기절한 사람의 힌트 하나를 쏜 사람에게 넘기고 쏜 사람의 기절왕 기록을 늘린다. 아니면 바뀐 값을 맞은 사람에게만 보낸다.
-void GameRoom::AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p)
+void GameRoom::AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part)
 {
-	if (request_p.weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || request_p.part >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
-	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[request_p.weapon] * STUN_GAUGE_PART_MULTIPLIERS[request_p.part], tick_time_ms_)) {
+	const std::size_t part_index = static_cast<std::size_t>(part);
+	if (weapon >= std::size(STUN_GAUGE_WEAPON_GAINS) || part_index >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
+	if (target.AddStunGauge(STUN_GAUGE_WEAPON_GAINS[weapon] * STUN_GAUGE_PART_MULTIPLIERS[part_index], tick_time_ms_)) {
 		// 기절하면 조작을 받지 않으므로 이동 키 입력과 조준을 지운다. 클라이언트도 기절 적용을 받으면 스스로 지운다. 이동은 중력과 관성대로 이어진다.
 		target.SetMoveInput(0, 0);
 		target.SetAiming(false, tick_time_ms_);
 		S2C_STUN_APPLY_PACKET stun_p;
 		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN_APPLY };
-		stun_p.player_id = request_p.target_player_id;
+		stun_p.player_id = target.GetSessionKey().player_id;
 		// 기절한 사람의 힌트 하나를 무작위로 골라 쏜 사람에게 넘긴다. 쏜 사람에게는 새로 얻은 힌트를, 기절한 사람에게는 잃은 힌트 번호를 기절 적용 뒤에 붙인다.
 		char shooter_buffer[sizeof(stun_p) + MAX_HINT_PACKET_SIZE];
 		char target_buffer[sizeof(stun_p) + sizeof(S2C_HINT_LOST_PACKET)];
@@ -1147,41 +1212,6 @@ static bool IsInsideCharacterCapsule(const DirectX::XMFLOAT3& point, const float
 	const float height = point.z - location[2];
 	const float axis_height = std::clamp(height, -half_segment, half_segment);
 	return std::hypot(point.x - location[0], point.y - location[1], height - axis_height) <= CHARACTER_CAPSULE_RADIUS + margin;
-}
-
-// 지연 보정이 없으므로 클라이언트 화면과 서버 위치 차이를 여유로 허용한다.
-// 총인지, 사거리 안인지, 탄 퍼짐이 맞는지 본 뒤, 서버가 구한 시작점에서 맞은 사람의 서버 히트박스를 속도에 비례한 여유만큼 키워 광선이 보낸 부위를 지나가는지 검사한다.
-// 마지막으로 시작점부터 히트박스에 닿은 곳까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않는지, 맞은 곳이 쏜 사람 카메라에서 보였는지 본다.
-bool GameRoom::CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const
-{
-	const HitboxData& data = server_->GetHitboxData();
-	const WeaponInfo* weapon = data.GetWeaponInfo(request_p.weapon);
-	if (!data.IsLoaded() || !weapon || !weapon->is_hitscan || request_p.part >= static_cast<std::uint8_t>(HitboxPart::COUNT)) return false;
-	if (!shooter.HasMoveState() || !target.HasMoveState()) return false;
-	if (!std::isfinite(request_p.distance) || request_p.distance < 0.0f || request_p.distance > weapon->hitscan_distance) return false;
-
-	const DirectX::XMVECTOR direction = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.direction));
-	const float direction_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(direction));
-	if (!std::isfinite(direction_length) || direction_length < 0.5f) return false;
-	DirectX::XMFLOAT3 unit_direction;
-	DirectX::XMStoreFloat3(&unit_direction, DirectX::XMVectorScale(direction, 1.0f / direction_length));
-	if (!CheckShotSpread(shooter, request_p, unit_direction)) return false;
-	const DirectX::XMFLOAT3 origin = GetShotOrigin(shooter.GetMoveState());
-
-	const MOVE_STATE& target_state = target.GetMoveState();
-	const float target_speed = std::hypot(target_state.velocity[0], target_state.velocity[1], target_state.velocity[2]);
-	const float margin = HIT_BASE_MARGIN + target_speed * HIT_LATENCY_ALLOWANCE_SECONDS;
-	const float max_distance = request_p.distance + margin;
-	const DirectX::XMFLOAT3 location(target_state.location[0], target_state.location[1], target_state.location[2]);
-	if (!IsRayNearCharacter(origin, unit_direction, max_distance, location, target_state.yaw, data.GetBroadphaseCapsule(), margin)) return false;
-	// 클라이언트가 보낸 부위의 도형만 검사해, 광선이 그 부위를 지나지 않으면 인정하지 않는다.
-	std::vector<HitboxShape> shapes = target.GetPose().BuildWorldHitboxes(target_state, tick_time_ms_);
-	std::erase_if(shapes, [&](const HitboxShape& shape) { return shape.part != static_cast<HitboxPart>(request_p.part); });
-	const HitboxRayHit hit = RaycastHitboxes(origin, unit_direction, max_distance, shapes, margin);
-	if (!hit.has_hit) return false;
-	DirectX::XMFLOAT3 hit_point;
-	DirectX::XMStoreFloat3(&hit_point, DirectX::XMVectorAdd(DirectX::XMLoadFloat3(&origin), DirectX::XMVectorScale(DirectX::XMLoadFloat3(&unit_direction), hit.distance)));
-	return !IsShotPathBlocked(origin, hit_point) && CheckShotCamera(shooter, DirectX::XMFLOAT3(request_p.camera[0], request_p.camera[1], request_p.camera[2]), hit_point);
 }
 
 // 받은 카메라 위치가 쏜 사람 카메라가 있을 수 있는 자리인지, 그 카메라에서 맞은 곳이 보였는지 본다.
@@ -1263,33 +1293,14 @@ bool GameRoom::IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::
 		|| server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY);
 }
 
-// 명중에 쓴 발사의 탄 퍼짐을 확인한다. 쓴 퍼짐 크기는 그 발의 최소치와 무기 최대 사이여야 한다.
-// 조준 방향에 서버가 (시드, 아이디, 무기, 발사 번호)로 다시 계산한 빗나감을 적용한 방향이 받은 광선 방향과 같아야 한다.
-bool GameRoom::CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& request_p, const DirectX::XMFLOAT3& direction) const
-{
-	const WeaponAmmo* ammo = shooter.GetAmmo(request_p.weapon);
-	const ShotSpreadSettings& spread = GetShotSpreadSettings(request_p.weapon);
-	if (!ammo || !std::isfinite(request_p.spread) || request_p.spread < ammo->last_shot_min_spread - SHOT_SPREAD_EPSILON_DEGREES || request_p.spread > spread.max + SHOT_SPREAD_EPSILON_DEGREES) return false;
-	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
-	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
-	if (!std::isfinite(aim_length) || aim_length < 0.5f) return false;
-	DirectX::XMFLOAT3 unit_aim;
-	DirectX::XMStoreFloat3(&unit_aim, DirectX::XMVectorScale(aim, 1.0f / aim_length));
-	const std::uint64_t hash = GetShotSpreadHash(shot_seed_, shooter.GetSessionKey().player_id, request_p.weapon, ammo->last_shot_index);
-	const ShotSpreadDirection expected = ApplyShotSpread(unit_aim.x, unit_aim.y, unit_aim.z, request_p.spread, hash);
-	const float shot_dot = expected.x * direction.x + expected.y * direction.y + expected.z * direction.z;
-	return shot_dot >= std::cos(DirectX::XMConvertToRadians(SHOT_SPREAD_DIRECTION_TOLERANCE_DEGREES));
-}
-
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
 // 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
 // 아이템 상자는 그 아이템을, 블록 상자는 그 블록을 가진 것으로 기록하고 보낸다.
-void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box, std::optional<std::uint8_t> shot_weapon)
+void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box, bool is_shot)
 {
-	// 쏴서 열면 서버가 인정한 발사 하나를 쓴다.
-	if (shot_weapon && !opener.ClaimShot(*shot_weapon)) return;
-	if (match_phase_ != MatchPhase::STARTED || box >= is_box_opened_.size() || is_box_opened_[box] || !CheckBoxOpen(opener, box, shot_weapon)) return;
-	is_box_opened_[box] = true;
+	// 탄에 맞아 열리는 것은 발사 판정에서 이미 확인했다.
+	if (match_phase_ != MatchPhase::STARTED || box >= box_open_ms_.size() || box_open_ms_[box] != 0 || (!is_shot && !CheckBoxOpen(opener, box))) return;
+	box_open_ms_[box] = tick_time_ms_;
 	opener.AddAwardCount(AwardCategory::BOX_OPEN, tick_time_ms_);
 
 	S2C_BOX_OPEN_PACKET open_p;
@@ -1341,29 +1352,12 @@ void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box, std::optional<s
 }
 
 // F키로 열면 캡슐 중심에서 상자 중심까지 HINT_BOX_OPEN_DISTANCE 안이어야 한다.
-// 쏴서 열면 선물이어야 하고, 총의 사거리 안이며, 캡슐 중심에서 상자까지 랜드스케이프나 총알을 막는 배치물(건물·나무·바위)이 가로막지 않아야 한다.
-bool GameRoom::CheckBoxOpen(const Player& opener, std::uint16_t box, std::optional<std::uint8_t> shot_weapon) const
+bool GameRoom::CheckBoxOpen(const Player& opener, std::uint16_t box) const
 {
 	if (!opener.HasMoveState()) return false;
 	const BoxPlacement& placement = server_->GetBoxCandidateData().GetPlacements()[box_placement_indices_[box]];
 	const float* location = opener.GetMoveState().location;
-	const DirectX::XMFLOAT3 start(location[0], location[1], location[2]);
-	if (!shot_weapon) return std::hypot(placement.center.x - start.x, placement.center.y - start.y, placement.center.z - start.z) <= HINT_BOX_OPEN_DISTANCE;
-
-	const DirectX::XMFLOAT3 target(placement.location.x, placement.location.y, placement.location.z + HINT_BOX_SHOT_TARGET_HEIGHT);
-	const float distance = std::hypot(target.x - start.x, target.y - start.y, target.z - start.z);
-	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(*shot_weapon);
-	if (placement.kind != BoxKind::GIFT || !weapon || !weapon->is_hitscan || distance > weapon->hitscan_distance) return false;
-	if (distance <= HIT_OCCLUSION_MARGIN + HINT_BOX_SHOT_END_MARGIN) return true;
-	const DirectX::XMVECTOR start_v = DirectX::XMLoadFloat3(&start);
-	const DirectX::XMVECTOR direction_v = DirectX::XMVectorScale(DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&target), start_v), 1.0f / distance);
-	DirectX::XMFLOAT3 segment_start;
-	DirectX::XMFLOAT3 segment_end;
-	DirectX::XMStoreFloat3(&segment_start, DirectX::XMVectorAdd(start_v, DirectX::XMVectorScale(direction_v, HIT_OCCLUSION_MARGIN)));
-	DirectX::XMStoreFloat3(&segment_end, DirectX::XMVectorAdd(start_v, DirectX::XMVectorScale(direction_v, distance - HINT_BOX_SHOT_END_MARGIN)));
-	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
-	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
-	return !landscape.IsSegmentBlockedByLandscape(segment_start, segment_end) && !collision_objects.IsSegmentBlockedByObjects(segment_start, segment_end, TERRAIN_BLOCKS_VISIBILITY);
+	return std::hypot(placement.center.x - location[0], placement.center.y - location[1], placement.center.z - location[2]) <= HINT_BOX_OPEN_DISTANCE;
 }
 
 // 힌트 목록 번호의 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다.

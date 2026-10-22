@@ -71,8 +71,6 @@ public:
 	void GainAmmo(EWeaponType weapon, int32 rounds);
 	// 서버의 재장전이 끝난 뒤 탄창 탄과 소지 탄으로 바꾼다.
 	void CompleteReload(EWeaponType weapon, int32 rounds, int32 spare_rounds);
-	// 서버가 인정하지 않은 발사의 발사 번호를 되돌린다.
-	void CancelShot(EWeaponType weapon);
 	// 들고 있는 총으로 지금 쏘면 쓰는 퍼짐 크기(도). 총이 아니면 0이다.
 	float GetCurrentShotSpread() const;
 	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다.

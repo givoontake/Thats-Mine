@@ -3,13 +3,13 @@
 #include "common_packets.h"
 #include "settings.h"
 
-// 히트박스 부위. 서버 판정 데이터와 클라이언트 명중 보고가 같은 값을 쓴다.
+// 히트박스 부위. 서버 판정 데이터의 부위 값이다.
 enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT };
 
 // 상자 종류. 서버 후보 데이터와 상자 배치 패킷이 같은 값을 쓴다.
 enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 
-// 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다. RELOAD는 동작 패킷이 아니라 재장전 패킷으로만 오간다.
+// 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다. RELOAD는 동작 패킷이 아니라 재장전 패킷으로만 오가고, FIRE는 발사 패킷으로 받아 동작 패킷으로 중계한다.
 enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
 
 // 이동 상태의 공중 단계. 땅 위, 점프로 올라가는 중, 떨어지는 중(점프 정점 이후·천장에 부딪힌 뒤·걸어서 떨어질 때)이다.
@@ -95,7 +95,6 @@ struct C2S_EQUIP_PACKET {
 };
 
 // 다른 플레이어의 이동 상태. 틱마다 중계할 플레이어 수만큼 이어 붙여 보낸다.
-// client_time_ms는 그 플레이어 클라이언트가 이 상태를 만든 시각이고, 받은 쪽은 명중을 보낼 때 그 플레이어를 본 시각을 이 기준으로 담는다.
 struct S2C_MOVE_PACKET {
 	PACKET_HEADER header;
 	int player_id;
@@ -104,7 +103,6 @@ struct S2C_MOVE_PACKET {
 	float yaw;
 	float view_pitch;
 	AirPhase air_phase;
-	std::uint32_t client_time_ms;
 };
 
 // 다른 플레이어의 이동 키 입력. 받은 쪽은 이 입력으로 그 캐릭터의 이동을 계산한다.
@@ -129,11 +127,19 @@ struct S2C_EQUIP_PACKET {
 	std::uint8_t weapon;
 };
 
-// 발사·휘두르기·줍기. 서버는 손에 든 장비로 판정하고, 총 발사는 서버가 탄약을 확인해 인정한 것만 중계한다.
-// action_time_ms는 동작한 순간의 서버 기준 시각(ms)이다. 받은 S2C_TIME_SYNC의 시각에 받은 뒤 흐른 시간을 더한다.
+// 휘두르기·줍기. 서버는 손에 든 장비로 판정한다. 총 발사는 C2S_FIRE_PACKET으로 보낸다.
 struct C2S_ACTION_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t action;
+};
+
+// 손에 든 총을 쐈다. 서버가 탄약과 발사 간격을 확인해 인정하면 다른 플레이어에게 발사 동작을 중계하고, 탄 광선을 직접 판정한다.
+// aim_direction은 퍼지기 전 조준 방향(단위 벡터)이고, 서버가 이번 게임 시드로 정한 빗나감을 적용한다. camera는 발사할 때 카메라 위치(cm)다.
+// action_time_ms는 쏜 순간의 서버 기준 시각(ms)이다. 받은 S2C_TIME_SYNC의 시각에 받은 뒤 흐른 시간을 더한다. 서버는 이 시각으로 다른 플레이어를 되감아 판정한다.
+struct C2S_FIRE_PACKET {
+	PACKET_HEADER header;
+	float aim_direction[3];
+	float camera[3];
 	std::uint32_t action_time_ms;
 };
 
@@ -184,22 +190,6 @@ struct S2C_GAME_READY_PACKET {
 struct S2C_GAME_START_PACKET {
 	PACKET_HEADER header;
 	std::uint32_t remaining_ms;
-};
-
-// 클라이언트가 총으로 다른 플레이어를 맞혔을 때 보낸다. 광선은 단위 방향·맞은 곳까지의 거리(cm)이고, 시작점은 서버가 이동 상태로 구한다(SHOT_ORIGIN_*). 부위는 클라이언트가 판정한 값이다.
-// camera는 발사할 때 카메라 위치(cm)다. aim_direction은 퍼지기 전 조준 방향(단위 벡터), spread는 그 발에 쓴 퍼짐 크기(도)다. 서버는 같은 빗나감을 다시 계산해 광선 방향과 맞춰 본다(shot_spread.h).
-// target_time_ms는 쏜 순간 화면의 맞은 사람 시각이다. 마지막으로 받은 그 사람 이동 상태의 client_time_ms에 받은 뒤 지난 시간을 더한다.
-struct C2S_HIT_PACKET {
-	PACKET_HEADER header;
-	int target_player_id;
-	std::uint8_t weapon;
-	std::uint8_t part;
-	float camera[3];
-	float direction[3];
-	float distance;
-	float aim_direction[3];
-	float spread;
-	std::uint32_t target_time_ms;
 };
 
 // 서버가 인정한 명중. 맞은 사람에게만 보내고, 받은 쪽은 쏜 사람 방향을 표시한다.
@@ -295,13 +285,6 @@ struct C2S_BOX_OPEN_PACKET {
 	std::uint16_t box;
 };
 
-// 쏴서 상자를 열려고 한다. weapon은 쏜 무기이고, 그 무기의 인정된 발사 하나를 쓴다. 선물만 쏴서 열 수 있다.
-struct C2S_BOX_SHOT_PACKET {
-	PACKET_HEADER header;
-	std::uint16_t box;
-	std::uint8_t weapon;
-};
-
 // 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보낸다.
 struct S2C_BOX_OPEN_PACKET {
 	PACKET_HEADER header;
@@ -345,23 +328,11 @@ struct S2C_AREA_REMOVAL_PACKET {
 	PACKET_HEADER header;
 };
 
-// 이번 게임의 탄 퍼짐 시드. 게임 레벨에 들어오는 플레이어에게 스폰 전에 보낸다. 발사 번호는 게임마다 무기별로 0부터 센다.
-struct S2C_SHOT_SEED_PACKET {
-	PACKET_HEADER header;
-	std::uint64_t seed;
-};
-
 // 서버 시각 동기화. 게임 레벨에 들어오는 플레이어에게 한 번 보낸다.
 // 클라이언트는 받자마자 자기 기준 시각을 server_time_ms로 맞추고, 그 뒤 흐른 만큼 더해 동작 시각으로 쓴다.
 struct S2C_TIME_SYNC_PACKET {
 	PACKET_HEADER header;
 	std::uint32_t server_time_ms;
-};
-
-// 서버가 인정하지 않은 총 발사. 쏜 사람에게만 보내고, 클라이언트는 그 무기의 발사 번호를 하나 되돌린다.
-struct S2C_FIRE_REJECTED_PACKET {
-	PACKET_HEADER header;
-	std::uint8_t weapon;
 };
 
 // 시험용 보물 위치 요청. 방장이 요청할 때만 답한다.

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <memory>
 #include "BoxCandidateData.h"
+#include "BoxShapeData.h"
 #include "DirectionHintData.h"
 #include "ExOverlapped.h"
 #include "HintObjectTree.h"
@@ -46,6 +47,7 @@ class GameServer
 	HitboxData hitbox_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 히트박스 판정 데이터
 	MapData map_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 데이터(랜드스케이프, 충돌 배치물)
 	BoxCandidateData box_candidate_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 배치 후보
+	BoxShapeData box_shape_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 상자 충돌 모양
 	MapRegionData map_region_data_; // 서버 시작 시 읽은 뒤 읽기만 하는 맵 영역
 	HintObjectTree hint_object_tree_; // 서버 시작 시 맵 데이터로 만든 뒤 읽기만 하는 힌트 물체 트리
 	DirectionHintData direction_hint_data_; // 서버 시작 시 맵 영역으로 만든 뒤 읽기만 하는 방향 힌트 기준
@@ -66,6 +68,7 @@ public:
 	const HitboxData& GetHitboxData() const { return hitbox_data_; }
 	const MapData& GetMapData() const { return map_data_; }
 	const BoxCandidateData& GetBoxCandidateData() const { return box_candidate_data_; }
+	const BoxShapeData& GetBoxShapeData() const { return box_shape_data_; }
 	const MapRegionData& GetMapRegionData() const { return map_region_data_; }
 	const HintObjectTree& GetHintObjectTree() const { return hint_object_tree_; }
 	const DirectionHintData& GetDirectionHintData() const { return direction_hint_data_; }

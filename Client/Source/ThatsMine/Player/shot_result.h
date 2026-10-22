@@ -20,12 +20,9 @@ struct FShotResult
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector trace_start = FVector::ZeroVector;
 
+	// 조준점. 카메라 시선이 처음 닿은 곳이고, 닿지 않았으면 사거리 끝이다. has_hit과 hit은 그 시선 검사 결과다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector trace_end = FVector::ZeroVector;
-
-	// 퍼짐을 적용한 발사 방향(단위 벡터). 시작점이 맞은 몸 안이면 맞은 곳이 시작점과 같아지므로 방향은 따로 둔다.
-	UPROPERTY(BlueprintReadOnly, Category = "Shot")
-	FVector shot_direction = FVector::ZeroVector;
 
 	// 발사할 때 카메라 위치. 서버가 카메라가 있을 수 있는 자리인지, 맞은 곳이 보였는지 확인한다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
@@ -34,12 +31,9 @@ struct FShotResult
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	bool has_hit = false;
 
-	// 퍼지기 전 조준 방향과 이 발에 쓴 퍼짐 크기(도). 서버가 같은 빗나감을 다시 계산해 확인한다.
+	// 퍼지기 전 조준 방향(시작점에서 조준점 쪽). 서버가 이 방향에 빗나감을 적용해 판정한다.
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FVector aim_direction = FVector::ZeroVector;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Shot")
-	float spread = 0.0f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FHitResult hit;

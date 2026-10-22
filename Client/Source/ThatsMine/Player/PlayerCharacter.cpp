@@ -349,7 +349,7 @@ void APlayerCharacter::Interact()
 	}
 	if (const AHintBox* box = FindInteractBox())
 	{
-		GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, false, 0);
+		GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box);
 	}
 }
 
@@ -860,13 +860,9 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	PlayFireSound(settings);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
-	// 지금 퍼짐 크기로 이번 발을 쏘고 연사 열기를 올린다. 빗나가는 방향은 판 시드·내 아이디·무기·발사 번호로 정한다.
+	// 연사 열기를 올린다. 화면의 퍼짐 표시에만 쓰고, 빗나감은 서버가 정한다.
 	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
-	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), settings.fire_interval);
-	shot.spread = GetShotSpread(spread_settings, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
-	const UMovementSyncSubsystem* movement_sync = world->GetSubsystem<UMovementSyncSubsystem>();
-	const uint64 spread_hash = GetShotSpreadHash(movement_sync ? movement_sync->GetShotSeed() : 0, static_cast<int32>(GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey()), static_cast<uint8>(current_weapon_), ammo->shot_count++);
-	ammo->spread_heat = AddShotHeat(spread_settings, heat);
+	ammo->spread_heat = AddShotHeat(spread_settings, RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), settings.fire_interval));
 	ammo->spread_time = now;
 	// 총구는 화염·궤적 표시에만 쓴다.
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
@@ -889,18 +885,9 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	// 3인칭 카메라와 캐릭터 사이의 물체 때문에 뒤로 발사하지 않게 한다.
 	const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(shot.trace_start - view_location, view_direction));
 	const FVector aim_end = aim_start + view_direction * distance;
-	FHitResult aim_hit;
-	const bool has_aim_hit = world->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, settings.trace_channel, query);
-	const FVector aim_point = has_aim_hit ? aim_hit.ImpactPoint : aim_end;
-	shot.aim_direction = FVector::Distance(aim_point, shot.trace_start) < SHOT_NEAR_AIM_DISTANCE ? view_direction : (aim_point - shot.trace_start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
-	const ShotSpreadDirection spread_direction = ApplyShotSpread(static_cast<float>(shot.aim_direction.X), static_cast<float>(shot.aim_direction.Y), static_cast<float>(shot.aim_direction.Z), shot.spread, spread_hash);
-	shot.shot_direction = FVector(spread_direction.x, spread_direction.y, spread_direction.z);
-	shot.trace_end = shot.trace_start + shot.shot_direction * distance;
-	shot.has_hit = world->LineTraceSingleByChannel(shot.hit, shot.trace_start, shot.trace_end, settings.trace_channel, query);
-	if (shot.has_hit)
-	{
-		shot.trace_end = shot.hit.ImpactPoint;
-	}
+	shot.has_hit = world->LineTraceSingleByChannel(shot.hit, aim_start, aim_end, settings.trace_channel, query);
+	shot.trace_end = shot.has_hit ? shot.hit.ImpactPoint : aim_end;
+	shot.aim_direction = FVector::Distance(shot.trace_end, shot.trace_start) < SHOT_NEAR_AIM_DISTANCE ? view_direction : (shot.trace_end - shot.trace_start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
 
 #if WITH_LOCAL_COMBAT_DEBUG
 	CombatDebug::DrawShot(world, shot);
@@ -917,13 +904,6 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	ammo->fire_end_time = now + fire_duration;
 	UpdateEquipmentDisplay();
 	on_shot_fired_.Broadcast(shot);
-	if (shot.has_hit)
-	{
-		if (const AHintBox* box = Cast<AHintBox>(shot.hit.GetActor()))
-		{
-			GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, true, static_cast<uint8>(shot.weapon));
-		}
-	}
 }
 
 void APlayerCharacter::PawnClientRestart()
@@ -1145,14 +1125,6 @@ void APlayerCharacter::Jump()
 	if (!is_stunned_)
 	{
 		Super::Jump();
-	}
-}
-
-void APlayerCharacter::CancelShot(EWeaponType weapon)
-{
-	if (FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon); ammo && ammo->shot_count > 0)
-	{
-		--ammo->shot_count;
 	}
 }
 

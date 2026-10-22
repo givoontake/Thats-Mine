@@ -16,8 +16,8 @@ class THATSMINE_API UBoxLayoutSubsystem : public UWorldSubsystem
 public:
 	virtual void OnWorldBeginPlay(UWorld& world) override;
 	virtual void Deinitialize() override;
-	// 상자 열기를 서버에 요청한다. 이미 열린 상자이거나, 쏴서 열려는데 선물이 아니면 보내지 않는다.
-	void RequestOpen(const AHintBox* box, bool is_shot, uint8 weapon) const;
+	// F키 상자 열기를 서버에 요청한다. 이미 열린 상자면 보내지 않는다. 쏴서 여는 선물은 서버가 발사 판정으로 연다.
+	void RequestOpen(const AHintBox* box) const;
 
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;

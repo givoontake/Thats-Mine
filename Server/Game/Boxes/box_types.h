@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -6,13 +7,23 @@
 #include "game_packets.h"
 
 // 상자 하나를 놓을 자리. 좌표는 언리얼 월드 좌표(cm), 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.
-// location은 상자 바닥 가운데이고, center는 읽을 때 계산해 둔 상자 중심이다.
+// location은 상자 바닥 가운데이고, center와 orientation은 읽을 때 계산해 둔 상자 중심과 회전 사원수다.
 struct BoxPlacement {
 	BoxKind kind;
 	DirectX::XMFLOAT3 location;
 	DirectX::XMFLOAT3 rotation;
 	DirectX::XMFLOAT3 center;
+	DirectX::XMFLOAT4 orientation;
 };
+
+// 언리얼 회전(pitch, yaw, roll, 도)을 같은 회전의 사원수로 바꾼다. 언리얼 FRotator::Quaternion과 같은 식이다.
+inline DirectX::XMFLOAT4 ConvertUnrealRotation(const DirectX::XMFLOAT3& rotation)
+{
+	const float sp = std::sin(DirectX::XMConvertToRadians(rotation.x) * 0.5f), cp = std::cos(DirectX::XMConvertToRadians(rotation.x) * 0.5f);
+	const float sy = std::sin(DirectX::XMConvertToRadians(rotation.y) * 0.5f), cy = std::cos(DirectX::XMConvertToRadians(rotation.y) * 0.5f);
+	const float sr = std::sin(DirectX::XMConvertToRadians(rotation.z) * 0.5f), cr = std::cos(DirectX::XMConvertToRadians(rotation.z) * 0.5f);
+	return { cr * sp * sy - sr * cp * cy, -cr * sp * cy - sr * cp * sy, cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy };
+}
 
 // 상자 내용물 종류
 enum class BoxContentKind : std::uint8_t { HINT, AMMO, ITEM, BLOCK };

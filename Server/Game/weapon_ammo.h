@@ -10,12 +10,14 @@ struct WeaponAmmo {
 	std::uint32_t last_fire_action_ms = 0;
 	long long last_fire_receive_ms = 0;
 	long long fire_reward_ms = 0;
-	bool has_unclaimed_shot = false; // 인정한 발사 중 명중·선물 열기에 아직 쓰지 않은 것이 있는지
-	// 탄 퍼짐(shot_spread.h). 이번 게임에서 인정한 발사 수, 마지막 발사 직후의 연사 열기와 그 시각,
-	// 마지막으로 인정한 발사의 발사 번호와 그 발에 허용하는 퍼짐 크기 최소치(도)
+	// 탄 퍼짐(shot_spread.h). 이번 게임에서 인정한 발사 수, 마지막 발사 직후의 연사 열기와 그 시각
 	std::uint32_t shot_count = 0;
 	int spread_heat = 0;
 	long long spread_time_ms = 0;
-	std::uint32_t last_shot_index = 0;
-	float last_shot_min_spread = 0.0f;
+};
+
+// 인정한 발사 하나. 이번 게임에서 그 무기의 발사 번호와 서버가 정한 퍼짐 크기(도)다.
+struct FiredShot {
+	std::uint32_t shot_index;
+	float spread;
 };

@@ -12,7 +12,7 @@ class APlayerCharacter;
 
 // 온라인 게임 중 내 캐릭터의 이동 상태와 동작을 서버에 보내고, 받은 다른 플레이어의 상태와 동작을 해당 캐릭터에 반영한다.
 // 이동 상태는 주기마다 보내고, 받는 쪽 추측이 크게 어긋나는 변화가 생기면 주기보다 먼저 보낸다. 동작은 시작할 때 바로 보낸다.
-// 총알이 다른 플레이어의 히트박스를 맞히면 명중을 서버에 보내고, 서버가 인정한 명중과 기절 게이지·기절을 받는다.
+// 총을 쏘면 조준 방향과 카메라 위치를 서버에 보내고, 서버가 판정한 명중과 기절 게이지·기절을 받는다.
 // 서버가 이동을 인정하지 않으면 받은 위치로 내 캐릭터를 바로 옮기고 확인을 보낸다.
 UCLASS()
 class THATSMINE_API UMovementSyncSubsystem : public UTickableWorldSubsystem
@@ -27,8 +27,6 @@ public:
 	virtual TStatId GetStatId() const override;
 	// 다른 플레이어 캐릭터를 조종자 없이 만든다. 이미 있으면 그 캐릭터를 돌려준다.
 	APlayerCharacter* SpawnRemotePlayer(int32 player_id, const FTransform& transform);
-	// 이번 게임의 탄 퍼짐 시드. 받기 전이나 로컬 게임에서는 0이다.
-	uint64 GetShotSeed() const { return shot_seed_; }
 
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type world_type) const override;
@@ -45,9 +43,7 @@ private:
 	void HandleAmmoUsePacket(const TArray<uint8>& payload);
 	void HandleAmmoGainPacket(const TArray<uint8>& payload);
 	void HandleReloadDonePacket(const TArray<uint8>& payload);
-	void HandleShotSeedPacket(const TArray<uint8>& payload);
 	void HandleTimeSyncPacket(const TArray<uint8>& payload);
-	void HandleFireRejectedPacket(const TArray<uint8>& payload);
 	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
 	void HandleStunApplyPacket(const TArray<uint8>& payload);
 	void HandleStunReleasePacket(const TArray<uint8>& payload);
@@ -74,8 +70,7 @@ private:
 	EWeaponType sent_weapon_ = EWeaponType::PICKAXE;
 	bool has_sent_input_ = false;
 	bool is_active_ = false;
-	uint64 shot_seed_ = 0;
-	// 받은 서버 시각과 받은 순간의 실제 시각(FPlatformTime 초). 동작 시각은 이 서버 시각에 그 뒤 흐른 실제 시간을 더한다.
+	// 받은 서버 시각과 받은 순간의 실제 시각(FPlatformTime 초). 발사의 동작 시각은 이 서버 시각에 그 뒤 흐른 실제 시간을 더한다.
 	uint32 sync_server_time_ms_ = 0;
 	double sync_real_time_ = 0.0;
 };

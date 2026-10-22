@@ -5,13 +5,7 @@
 #include "Player.h"
 #include "random_seed.h"
 #include "shot_spread.h"
-
-// 땅에서 이동 키 입력과 조준 여부로 낼 수 있는 최대 수평 속도(cm/s)
-static float GetMaxMoveSpeed(std::int8_t input_forward, bool is_aiming)
-{
-	if (is_aiming) return MOVE_SPEED_AIMING;
-	return input_forward < 0 ? MOVE_SPEED_BACKWARD : MOVE_SPEED_FORWARD;
-}
+#include "move_prediction.h"
 
 Player::Player()
 {
@@ -93,17 +87,17 @@ void Player::ResetFireBasis(long long time_ms)
 	}
 }
 
-bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms)
+std::optional<FiredShot> Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms)
 {
-	if (weapon >= ammo_.size()) return false;
+	if (weapon >= ammo_.size()) return std::nullopt;
 	WeaponAmmo& ammo = ammo_[weapon];
-	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0) return false;
+	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0) return std::nullopt;
 	// 동작 시각은 받은 서버 시각에 흐른 시간을 더한 값이라 서버가 받은 시각보다 늦을 수 없다. 시각은 32비트로 돌아가므로 차이로 본다.
-	if (static_cast<std::int32_t>(action_time_ms - static_cast<std::uint32_t>(time_ms)) > 0) return false;
+	if (static_cast<std::int32_t>(action_time_ms - static_cast<std::uint32_t>(time_ms)) > 0) return std::nullopt;
 	const long long interval_ms = static_cast<std::int32_t>(action_time_ms - ammo.last_fire_action_ms);
 	const long long fire_interval_ms = static_cast<long long>(info.fire_interval * 1000.0f);
 	const long long usable_reward_ms = ammo.fire_reward_ms >= 0 ? ammo.fire_reward_ms : std::min(0LL, ammo.fire_reward_ms + FIRE_DEBT_FREE_MS);
-	if (interval_ms + usable_reward_ms < fire_interval_ms) return false;
+	if (interval_ms + usable_reward_ms < fire_interval_ms) return std::nullopt;
 	// 간격이 모자라면 모자란 만큼 보상을 쓰고, 남으면 남은 만큼 지난 보상이나 빚을 0 쪽으로 줄인다. 그 뒤 서버가 받은 간격과 동작 시각 간격의 차이를 더한다.
 	if (interval_ms < fire_interval_ms) ammo.fire_reward_ms -= fire_interval_ms - interval_ms;
 	else if (ammo.fire_reward_ms > 0) ammo.fire_reward_ms = std::max(0LL, ammo.fire_reward_ms - (interval_ms - fire_interval_ms));
@@ -112,19 +106,18 @@ bool Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time
 	ammo.last_fire_action_ms = action_time_ms;
 	ammo.last_fire_receive_ms = time_ms;
 	--ammo.rounds;
-	ammo.has_unclaimed_shot = true;
-	// 서버가 받은 발사 간격과 상태 변화는 지연 때문에 실제와 다를 수 있어, 최소치는 연사 열기를 더 회복하고 막 바뀐 상태는 유리한 쪽으로 본다.
-	// 조준한 채 움직이는 퍼짐은 요구하지 않는다.
+	// 서버가 받은 발사 간격과 상태 변화는 지연 때문에 실제와 다를 수 있어, 퍼짐 크기는 연사 열기를 더 회복하고 막 바뀐 상태는 유리한 쪽으로 본다.
+	// 조준한 채 움직이는지는 마지막으로 인정한 이동 상태의 수평 속도로 본다.
 	const ShotSpreadSettings& spread = GetShotSpreadSettings(weapon);
 	const float elapsed_seconds = (time_ms - ammo.spread_time_ms) / 1000.0f;
 	const bool has_state = HasMoveState();
 	const bool is_falling = has_state && move_state_.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
 	const bool is_unaimed = !has_state || (!is_aiming_ && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
-	ammo.last_shot_min_spread = GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), !is_unaimed, 0.0f, is_falling);
-	ammo.last_shot_index = ammo.shot_count++;
+	const float horizontal_speed = std::hypot(move_state_.velocity[0], move_state_.velocity[1]);
+	const FiredShot shot{ ammo.shot_count++, GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), !is_unaimed, horizontal_speed, is_falling) };
 	ammo.spread_heat = AddShotHeat(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds, info.fire_interval));
 	ammo.spread_time_ms = time_ms;
-	return true;
+	return shot;
 }
 
 bool Player::TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
@@ -252,13 +245,6 @@ void Player::ResetBlocks()
 	block_counts_.fill(0);
 	kept_excluded_cells_ = 0;
 	sent_exclusion_board_ = 0;
-}
-
-bool Player::ClaimShot(std::uint8_t weapon)
-{
-	if (weapon >= ammo_.size() || !ammo_[weapon].has_unclaimed_shot) return false;
-	ammo_[weapon].has_unclaimed_shot = false;
-	return true;
 }
 
 void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_on_steep_slope, bool is_open_air)
@@ -510,6 +496,79 @@ void Player::ClearMoveState()
 	weapon_ = 0;
 	move_speed_cap_ = MOVE_SPEED_FORWARD;
 	is_awaiting_move_correction_ = false;
+	history_start_ = 0;
+	history_count_ = 0;
+}
+
+void Player::RecordHistory(long long tick_time_ms)
+{
+	const int index = (history_start_ + history_count_) % HISTORY_SIZE;
+	if (history_count_ == HISTORY_SIZE) history_start_ = (history_start_ + 1) % HISTORY_SIZE;
+	else ++history_count_;
+	history_[index] = { tick_time_ms, move_state_, move_time_ms_, input_right_, input_forward_, is_aiming_, pose_, stun_end_ms_, GetStunProtectionMs() };
+}
+
+// 두 각도(도) 사이를 가까운 쪽으로 돌아 alpha만큼 간 각도
+static float LerpAngle(float from, float to, float alpha)
+{
+	float delta = std::fmod(to - from, 360.0f);
+	if (delta > 180.0f) delta -= 360.0f;
+	if (delta < -180.0f) delta += 360.0f;
+	return from + delta * alpha;
+}
+
+std::optional<RewoundState> Player::GetRewoundState(long long time_ms) const
+{
+	if (history_count_ == 0) return std::nullopt;
+	// 최신 틱부터 거슬러 가며 time_ms 이전 마지막 틱과, 서로 다른 이동 기록 중 time_ms 이전 마지막 기록(before)과 그 다음 기록(after)을 찾는다.
+	// 이전 틱이 없으면 가장 오래된 틱을, 이전 기록이 없으면 가장 오래된 기록을 쓴다.
+	const PlayerSnapshot* tick = nullptr;
+	const PlayerSnapshot* before = nullptr;
+	const PlayerSnapshot* after = nullptr;
+	for (int offset = history_count_ - 1; offset >= 0; --offset) {
+		const PlayerSnapshot& snapshot = history_[(history_start_ + offset) % HISTORY_SIZE];
+		if (!tick && snapshot.tick_time_ms <= time_ms) tick = &snapshot;
+		if (snapshot.move_time_ms > time_ms) after = &snapshot;
+		else if (!before) before = &snapshot;
+		if (tick && before) break;
+	}
+	if (!tick) tick = &history_[history_start_];
+	const PlayerSnapshot* record = before ? before : after;
+	RewoundState rewound{ record->move_state, record->move_time_ms, 0.0f, &tick->pose, tick->stun_end_ms != 0 && time_ms < tick->stun_end_ms + tick->stun_protection_ms };
+	if (before && !after) rewound.predict_seconds = std::min(static_cast<float>(time_ms - before->move_time_ms) / 1000.0f, HIT_PREDICT_MAX_SECONDS);
+	if (!before || !after || after->move_time_ms == before->move_time_ms) return rewound;
+
+	// 두 기록 사이를 받은 시각 비율로 잇는다. 공중 단계는 앞 기록 것이다.
+	const float alpha = static_cast<float>(time_ms - before->move_time_ms) / static_cast<float>(after->move_time_ms - before->move_time_ms);
+	MOVE_STATE& state = rewound.move_state;
+	for (int axis = 0; axis < 3; ++axis) {
+		state.location[axis] = std::lerp(before->move_state.location[axis], after->move_state.location[axis], alpha);
+		state.velocity[axis] = std::lerp(before->move_state.velocity[axis], after->move_state.velocity[axis], alpha);
+	}
+	state.yaw = LerpAngle(before->move_state.yaw, after->move_state.yaw, alpha);
+	state.view_pitch = std::lerp(before->move_state.view_pitch, after->move_state.view_pitch, alpha);
+	return rewound;
+}
+
+MOVE_STATE Player::PredictRewoundMove(const RewoundState& rewound, const MapData& map) const
+{
+	// 입력은 틱이 끝날 때 남긴 값이 다음 틱까지 이어진다. 기록 시각 이전 마지막 틱의 입력에서 시작해 틱마다 그 틱의 입력으로 바꿔 가며 계산한다.
+	MOVE_STATE state = rewound.move_state;
+	const long long end_ms = rewound.move_time_ms + static_cast<long long>(rewound.predict_seconds * 1000.0f);
+	long long time_ms = rewound.move_time_ms;
+	const PlayerSnapshot* input = &history_[history_start_];
+	for (int offset = 0; offset < history_count_; ++offset) {
+		const PlayerSnapshot& snapshot = history_[(history_start_ + offset) % HISTORY_SIZE];
+		if (snapshot.tick_time_ms <= time_ms) {
+			input = &snapshot;
+			continue;
+		}
+		if (snapshot.tick_time_ms >= end_ms) break;
+		state = PredictMove(map, state, input->input_right, input->input_forward, input->is_aiming, static_cast<float>(snapshot.tick_time_ms - time_ms) / 1000.0f);
+		time_ms = snapshot.tick_time_ms;
+		input = &snapshot;
+	}
+	return PredictMove(map, state, input->input_right, input->input_forward, input->is_aiming, static_cast<float>(end_ms - time_ms) / 1000.0f);
 }
 
 bool Player::AddToSendBuffer(const char* data, int data_size)

@@ -108,28 +108,18 @@ void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 	}
 }
 
-void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box, bool is_shot, uint8 weapon) const
+void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box) const
 {
 	const int32 box_index = boxes_.IndexOfByKey(box);
-	if (!is_active_ || box_index == INDEX_NONE || box->IsActivated() || (is_shot && !box->ActorHasTag(TEXT("HintGift"))))
+	if (!is_active_ || box_index == INDEX_NONE || box->IsActivated())
 	{
 		return;
 	}
+	C2S_BOX_OPEN_PACKET packet{};
+	packet.box = static_cast<uint16>(box_index);
 	TArray<uint8> payload;
-	if (is_shot)
-	{
-		C2S_BOX_SHOT_PACKET packet{};
-		packet.box = static_cast<uint16>(box_index);
-		packet.weapon = weapon;
-		payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	}
-	else
-	{
-		C2S_BOX_OPEN_PACKET packet{};
-		packet.box = static_cast<uint16>(box_index);
-		payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	}
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(is_shot ? C2S_BOX_SHOT : C2S_BOX_OPEN, payload);
+	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BOX_OPEN, payload);
 }
 
 // 서버가 인정한 상자 열림. 플레이 중인 방 전체가 받는다.

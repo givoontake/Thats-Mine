@@ -93,15 +93,15 @@ private:
 	// 패킷은 모두 닫힌 상태로 만들어 두고, 게임 시작 전에 로딩을 마친 플레이어에게 보낸다. 시작 뒤에 들어온 플레이어에게는 그때 열림 상태로 새로 만들어 보낸다.
 	std::vector<std::uint32_t> box_placement_indices_;
 	std::vector<char> box_layout_packet_;
-	// 상자마다 열렸는지. 상자 번호 순서다.
-	std::vector<bool> is_box_opened_;
+	// 상자마다 열린 틱 시각. 0이면 아직 닫혀 있다. 상자 번호 순서다.
+	std::vector<long long> box_open_ms_;
 	// 게임 시작 때 정한 최종 보물 배치
 	TreasurePlacement treasure_placement_{};
 	// 게임 시작 때 최종 보물 위치로 만든 이번 게임의 힌트 목록
 	std::vector<Hint> hints_;
 	// 상자마다 넣은 내용물(힌트 또는 탄약). 상자 번호 순서다.
 	std::vector<BoxContent> box_contents_;
-	// 이번 게임의 탄 퍼짐 시드(shot_spread.h). 게임마다 새로 정한다.
+	// 이번 게임의 탄 퍼짐 시드(shot_spread.h). 게임마다 새로 정하고 서버만 안다.
 	std::uint64_t shot_seed_ = 0;
 	// 이번 게임에서 영역 지우기로 지운 배제 판 칸 모음과 다음 지우기 시각. 지운 칸은 플레이 중인 전원의 배제 판에 들어간다.
 	std::uint64_t removed_cells_ = 0;
@@ -127,21 +127,20 @@ private:
 	void ProcessGameTick(long long tick_time_ms);
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
-	// 동작이나 재장전을 weapon으로 인정하는지 본다. 동작은 손에 든 장비, 재장전은 재장전 패킷의 무기다.
-	// time_ms는 서버가 요청을 받은 시각, action_time_ms는 동작 패킷의 동작 시각이다. 재장전은 동작 시각을 쓰지 않는다.
-	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
+	// 동작이나 재장전을 weapon으로 인정하는지 본다. 동작은 손에 든 장비, 재장전은 재장전 패킷의 무기다. time_ms는 서버가 요청을 받은 시각이다.
+	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon, long long time_ms);
+	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
+	void ProcessFire(Player& shooter, Session& session, const C2S_FIRE_PACKET& request_p, long long time_ms);
 	// 중계 패킷을 이번 틱 중계에 넣는다.
 	void QueueRelay(const void* packet, int packet_size);
 	// 그 플레이어의 이동 키 입력·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
 	int AppendInputState(char* buffer, const Player& player) const;
-	void ProcessHit(Player& shooter, const C2S_HIT_PACKET& request_p);
-	void AddStunGauge(Player& shooter, Player& target, const C2S_HIT_PACKET& request_p);
-	bool CheckHit(const Player& shooter, const Player& target, const C2S_HIT_PACKET& request_p) const;
+	void AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part);
 	bool CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& camera, const DirectX::XMFLOAT3& hit_point) const;
 	bool IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const;
-	bool CheckShotSpread(const Player& shooter, const C2S_HIT_PACKET& request_p, const DirectX::XMFLOAT3& direction) const;
-	void ProcessBoxOpen(Player& opener, std::uint16_t box, std::optional<std::uint8_t> shot_weapon);
-	bool CheckBoxOpen(const Player& opener, std::uint16_t box, std::optional<std::uint8_t> shot_weapon) const;
+	// is_shot이면 탄에 맞아 여는 것이고, 아니면 F키로 여는 것이다.
+	void ProcessBoxOpen(Player& opener, std::uint16_t box, bool is_shot);
+	bool CheckBoxOpen(const Player& opener, std::uint16_t box) const;
 	// 힌트 번호 hint의 종류별 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다.
 	int AppendHintPacket(char* buffer, std::uint32_t hint) const;
 	void ProcessAreaRemoval();
