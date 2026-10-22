@@ -33,6 +33,8 @@ protected:
 
 private:
 	static constexpr float OPEN_DURATION = 0.5f;
+	// 나무 상자가 열릴 때 나오는 효과의 크기 배율. 선물은 1배로 재생한다.
+	static constexpr float CHEST_OPEN_EFFECT_SCALE = 0.7f;
 	// 상호작용 박스를 메시 경계 상자보다 키우는 배율
 
 	// 상호작용 조준에만 걸리는 상자. 메시보다 커서 조준이 조금 빗나가도 잡힌다. 열리면 끈다.

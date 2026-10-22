@@ -15,7 +15,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogBoxLayout, Log, All);
 // 상자 후보를 만들 때 쓴 모델과 크기. 보물 상자는 0.7배, 선물 상자는 원래 크기다.
 static constexpr TCHAR CHEST_MESH_PATH[] = TEXT("/Game/Thats_Mine/Meshes/Props/Chests/SM_Chest_Closed.SM_Chest_Closed");
 static constexpr TCHAR GIFT_MESH_PATH[] = TEXT("/Game/Thats_Mine/Meshes/Props/Gifts/SM_Gift_D_Red.SM_Gift_D_Red");
-static constexpr float CHEST_SCALE = 0.7f;
 
 // 움직일 수 있는 정적 메시 액터를 만든다. 실행 중에 메시를 바꾸려면 등록 전에 이동 가능으로 바꿔 둬야 한다.
 template <typename T>
@@ -97,7 +96,7 @@ void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 			boxes_.Add(nullptr);
 			continue;
 		}
-		const FTransform transform(FRotator(entry.rotation[0], entry.rotation[1], entry.rotation[2]), FVector(entry.location[0], entry.location[1], entry.location[2]), FVector(is_gift ? 1.0f : CHEST_SCALE));
+		const FTransform transform(FRotator(entry.rotation[0], entry.rotation[1], entry.rotation[2]), FVector(entry.location[0], entry.location[1], entry.location[2]));
 		AHintBox* box = SpawnMeshActor<AHintBox>(GetWorld(), is_gift ? gift_mesh : chest_mesh, transform);
 		box->Tags = { TEXT("HintBox"), is_gift ? TEXT("HintGift") : TEXT("HintTreasure") };
 		if (entry.is_opened)
