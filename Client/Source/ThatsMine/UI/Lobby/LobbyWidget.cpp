@@ -9,7 +9,6 @@
 #include "UI/Settings/SettingsWidget.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Engine/GameInstance.h"
-#include "Flow/ClientStateSubsystem.h"
 #include "LobbyRoomItem.h"
 #include "Network/GameNetworkSubsystem.h"
 
@@ -53,12 +52,6 @@ void ULobbyWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	room_list_->SetScrollbarVisibility(ESlateVisibility::Visible);
-	if (GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode())
-	{
-		connection_text_->SetText(LOCTEXT("LocalMode", "로컬 테스트 모드"));
-		connection_text_->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.7f, 0.25f)));
-		return;
-	}
 	UGameNetworkSubsystem* network = GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
 	network->on_connection_state_changed_.AddUniqueDynamic(this, &ULobbyWidget::HandleConnectionChanged);
 	HandleConnectionChanged(network->GetConnectionState(), network->GetConnectionMessage());

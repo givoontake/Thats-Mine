@@ -21,6 +21,6 @@ void ALoginGameMode::InitGame(const FString& map_name, const FString& options, F
 	{
 		return;
 	}
-	const bool can_enter_lobby = state->IsLocalMode() || GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->IsLoggedIn();
+	const bool can_enter_lobby = GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->IsLoggedIn();
 	state->ChangeState(initial_state_ == EClientState::LOBBY && !can_enter_lobby ? EClientState::LOGIN : initial_state_);
 }

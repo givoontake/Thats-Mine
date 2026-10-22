@@ -39,31 +39,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
 	TArray<UInputMappingContext*> DefaultMappingContexts;
 
-	/** Input Mapping Contexts */
+	/** Input Mapping Contexts. 블루프린트에 값이 들어 있어 이름을 그대로 두고, 기본 목록과 함께 항상 적용한다. */
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
 	TArray<UInputMappingContext*> MobileExcludedMappingContexts;
 
-	/** Mobile controls widget to spawn */
-	UPROPERTY(EditAnywhere, Category="Input|Touch Controls")
-	TSubclassOf<UUserWidget> MobileControlsWidgetClass;
-
-	/** Pointer to the mobile controls widget */
-	UPROPERTY()
-	TObjectPtr<UUserWidget> MobileControlsWidget;
-
-	/** If true, the player will use UMG touch controls even if not playing on mobile platforms */
-	UPROPERTY(EditAnywhere, Config, Category = "Input|Touch Controls")
-	bool bForceTouchControls = false;
-
-	/** Gameplay initialization */
-	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type end_play_reason) override;
 
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
-
-	/** Returns true if the player should use UMG touch controls */
-	bool ShouldUseTouchControls() const;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Map")
 	TSubclassOf<UWorldMapWidget> map_widget_class_;
@@ -118,6 +101,4 @@ private:
 	// 게임에서 나가 로비로 돌아간다.
 	void LeaveToLobby();
 	void QuitGame();
-	// 시험용. F9를 누르면 서버에 보물 위치를 요청한다. 서버는 방장의 요청에만 답해 플레이 중인 전원에게 알린다.
-	void RequestTreasureReveal();
 };

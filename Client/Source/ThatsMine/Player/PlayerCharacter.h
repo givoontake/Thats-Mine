@@ -78,7 +78,6 @@ public:
 	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다. 횟수는 서버가 보낸 값으로만 바뀌고 남은 시간은 표시만 센다.
 	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
-	// 기절이 끝나면 보호 시간 동안 머리 위에 방패 이펙트를 켜고, 내 캐릭터면 게이지 아이콘을 방패로 바꿔 남은 초를 표시한다. 진행 중인 탐색은 취소한다.
 	// 서버가 알린 기절을 시작한다. 기절은 서버가 기절 해제를 알릴 때 끝난다.
 	void StartStun();
 	// 기절을 끝내고 protection_seconds초 동안 보호 표시를 띄운다.
@@ -190,7 +189,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Status")
 	TSoftObjectPtr<UNiagaraSystem> protection_effect_;
 
-	// 로컬 플레이에서 내 캐릭터에 테두리로 그려 확인할 히트박스
+	// 다른 플레이어 캐릭터가 총알을 받는 히트박스 물리 에셋. 로컬 디버그 표시에도 쓴다.
 	UPROPERTY(EditDefaultsOnly, Category = "Player|Debug")
 	TSoftObjectPtr<UPhysicsAsset> hitbox_asset_;
 

@@ -221,7 +221,6 @@ void UGameStartSubsystem::HandleGameReadyPacket(const TArray<uint8>& payload)
 	}
 	std::uint32_t remaining_ms = 0;
 	FMemory::Memcpy(&remaining_ms, payload.GetData(), sizeof(remaining_ms));
-	has_received_game_ready_ = true;
 	if (UMatchTimerWidget* timer = ShowTimerWidget())
 	{
 		timer->SetMessage(LOCTEXT("GameStartingSoon", "곧 게임을 시작합니다!"));
@@ -312,14 +311,6 @@ void UGameStartSubsystem::HandleTreasureLocationPacket(const TArray<uint8>& payl
 	RevealTreasure(packet.location, packet.yaw);
 }
 
-void UGameStartSubsystem::RequestTreasureReveal() const
-{
-	if (is_active_)
-	{
-		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_TREASURE_REVEAL, TArray<uint8>());
-	}
-}
-
 // 시험용 보물 위치 요청의 답. 미니맵이 그 자리를 표시한다.
 void UGameStartSubsystem::HandleTreasureRevealPacket(const TArray<uint8>& payload)
 {
@@ -341,7 +332,6 @@ void UGameStartSubsystem::RevealTreasure(const float location[3], float yaw)
 	}
 	treasure_location_ = FVector(location[0], location[1], location[2]);
 	GetWorld()->SpawnActor<ATreasureChest>(*treasure_location_, FRotator(0.0, yaw, 0.0));
-	on_treasure_found_.Broadcast();
 }
 
 UMatchTimerWidget* UGameStartSubsystem::ShowTimerWidget()

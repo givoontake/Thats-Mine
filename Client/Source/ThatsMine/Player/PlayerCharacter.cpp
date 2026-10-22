@@ -82,7 +82,6 @@ static constexpr float PROTECTION_DISPLAY_INTERVAL = 0.1f;
 static constexpr float PICKAXE_CHARGE_DISPLAY_INTERVAL = 0.25f;
 // 조준점이 탄 시작점에서 이 거리(cm)보다 가까우면 시작점에서 조준점 방향이 시선과 크게 틀어지므로 시선 방향으로 쏜다.
 static constexpr double SHOT_NEAR_AIM_DISTANCE = 100.0;
-// 탐색 게이지를 화면 가운데에서 아래로 띄우는 거리
 // 상호작용 안내를 보일지 다시 확인하는 간격(초)
 static constexpr float INTERACT_PROMPT_INTERVAL = 0.1f;
 // 들리는 거리 끝에서 듣는 총소리·재장전·발소리 크기 비율

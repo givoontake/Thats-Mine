@@ -11,7 +11,6 @@
 #include "ThatsMineCameraManager.h"
 #include "Blueprint/UserWidget.h"
 #include "ThatsMine.h"
-#include "Widgets/Input/SVirtualJoystick.h"
 #include "Components/InputComponent.h"
 #include "UI/Map/WorldMapWidget.h"
 #include "UI/Inventory/InventoryWidget.h"
@@ -23,7 +22,6 @@
 #include "Flow/ClientStateSubsystem.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Network/OnlineSessionSubsystem.h"
-#include "Network/GameStartSubsystem.h"
 #include "Blueprint/GameViewportSubsystem.h"
 #include "Components/ScaleBox.h"
 #include "Components/SizeBox.h"
@@ -57,31 +55,6 @@ void AThatsMinePlayerController::FlushPressedKeys()
 	Super::FlushPressedKeys();
 }
 
-void AThatsMinePlayerController::BeginPlay()
-{
-	Super::BeginPlay();
-
-	
-	// only spawn touch controls on local player controllers
-	if (IsLocalPlayerController() && ShouldUseTouchControls())
-	{
-		// spawn the mobile controls widget
-		MobileControlsWidget = CreateWidget<UUserWidget>(this, MobileControlsWidgetClass);
-
-		if (MobileControlsWidget)
-		{
-			// add the controls to the player screen
-			MobileControlsWidget->AddToPlayerScreen(0);
-
-		} else {
-
-			UE_LOG(LogThatsMine, Error, TEXT("Could not spawn mobile controls widget."));
-
-		}
-
-	}
-}
-
 void AThatsMinePlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
@@ -106,7 +79,6 @@ void AThatsMinePlayerController::ApplyKeyBindings()
 	InputComponent->BindKey(bindings->GetKey(EKeyAction::INVENTORY), IE_Pressed, this, &AThatsMinePlayerController::ToggleInventory);
 	InputComponent->BindKey(bindings->GetKey(EKeyAction::HELP), IE_Pressed, this, &AThatsMinePlayerController::ToggleHelp);
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AThatsMinePlayerController::TogglePauseMenu);
-	InputComponent->BindKey(EKeys::F9, IE_Pressed, this, &AThatsMinePlayerController::RequestTreasureReveal);
 	ApplyMappingContexts();
 	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
 	{
@@ -130,11 +102,7 @@ void AThatsMinePlayerController::ApplyMappingContexts()
 	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
 	const EKeyAction move_actions[] = { EKeyAction::MOVE_FORWARD, EKeyAction::MOVE_BACKWARD, EKeyAction::MOVE_LEFT, EKeyAction::MOVE_RIGHT };
 	TArray<UInputMappingContext*> sources(DefaultMappingContexts);
-	// only add these IMCs if we're not using mobile touch input
-	if (!ShouldUseTouchControls())
-	{
-		sources.Append(MobileExcludedMappingContexts);
-	}
+	sources.Append(MobileExcludedMappingContexts);
 	for (UInputMappingContext* source : sources)
 	{
 		if (!source)
@@ -156,14 +124,6 @@ void AThatsMinePlayerController::ApplyMappingContexts()
 		}
 		input->AddMappingContext(context, 0);
 		applied_mapping_contexts_.Add(context);
-	}
-}
-
-void AThatsMinePlayerController::RequestTreasureReveal()
-{
-	if (const UGameStartSubsystem* game_start = GetWorld()->GetSubsystem<UGameStartSubsystem>())
-	{
-		game_start->RequestTreasureReveal();
 	}
 }
 
@@ -216,12 +176,6 @@ void AThatsMinePlayerController::CloseHelp()
 	{
 		character->UpdateEquipmentDisplay();
 	}
-}
-
-bool AThatsMinePlayerController::ShouldUseTouchControls() const
-{
-	// are we on a mobile platform? Should we force touch?
-	return SVirtualJoystick::ShouldDisplayTouchInterface() || bForceTouchControls;
 }
 
 void AThatsMinePlayerController::EndPlay(const EEndPlayReason::Type end_play_reason)

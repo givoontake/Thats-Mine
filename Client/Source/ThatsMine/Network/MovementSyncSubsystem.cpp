@@ -266,7 +266,7 @@ void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
 
 // 동작보다 먼저 바뀐 입력과 장비를 보내, 서버가 동작을 지금 손에 든 장비로 판정하게 한다.
 // 총을 쏘면 서버가 발사 순간의 위치·방향으로 탄 광선을 판정하도록 지금 위치를 바로 보내고, 발사 패킷은 조준 방향이 정해진 뒤 HandleShotFired가 보낸다.
-// 재장전은 장비를 바꿔도 이어져 손에 든 장비가 아닌 무기일 수 있으므로 재장전 패킷으로 그 무기를 보낸다.
+// 재장전은 손에 든 무기를 서버가 알고 있으므로 동작 시각만 보낸다.
 void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponType weapon)
 {
 	if (const APlayerCharacter* character = local_character_.Get())
@@ -411,7 +411,7 @@ void UMovementSyncSubsystem::HandleTimeSyncPacket(const TArray<uint8>& payload)
 	sync_real_time_ = FPlatformTime::Seconds();
 }
 
-// 서버가 내 곡괭이 휘두르기를 인정하지 않아 보낸 사용 가능 횟수와 남은 충전 시간
+// 서버가 곡괭이 휘두르기를 인정하거나 거부할 때, 1번이 다시 찰 때 보낸 사용 가능 횟수와 남은 충전 시간
 void UMovementSyncSubsystem::HandlePickaxeChargesPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_PICKAXE_CHARGES_PACKET) - sizeof(PACKET_HEADER))

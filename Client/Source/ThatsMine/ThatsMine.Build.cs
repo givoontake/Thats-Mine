@@ -14,9 +14,6 @@ public class ThatsMine : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
-			"AIModule",
-			"StateTreeModule",
-			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
 			"SlateCore"
@@ -29,13 +26,7 @@ public class ThatsMine : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Niagara", "MoviePlayer", "RenderCore", "RHI", "Landscape", "PhysicsCore", "Foliage" });
 
 		PublicIncludePaths.AddRange(new string[] {
-			"ThatsMine",
-			"ThatsMine/Variant_Horror",
-			"ThatsMine/Variant_Horror/UI",
-			"ThatsMine/Variant_Shooter",
-			"ThatsMine/Variant_Shooter/AI",
-			"ThatsMine/Variant_Shooter/UI",
-			"ThatsMine/Variant_Shooter/Weapons"
+			"ThatsMine"
 		});
 
 		// Uncomment if you are using Slate UI

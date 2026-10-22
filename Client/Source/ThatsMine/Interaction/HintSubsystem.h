@@ -27,8 +27,6 @@ public:
 	// 배제 칸 수. 지도 범위를 가로·세로로 이만큼 나눈다.
 	static constexpr int32 EXCLUSION_MASK_SIZE = 512;
 
-	// 칸마다 배제됐으면 1이다. 지도 이미지와 같은 방향으로 행은 위(x가 작은 쪽)부터, 열은 왼쪽(y가 큰 쪽)부터다. 배제를 받은 적 없으면 비어 있다.
-	const TArray<uint8>& GetExclusionMask() const { return exclusion_mask_; }
 	// 배제 칸을 그린 텍스처. 배제 칸은 알파 255, 나머지는 0이라 이미지 색의 불투명도와 곱해져 배제된 곳이 한 번만 어두워진다.
 	// 배제 칸이 바뀔 때마다 새로 만들므로 on_exclusion_mask_changed_를 받으면 다시 가져간다. 배제를 받은 적 없으면 비어 있다.
 	UTexture2D* GetExclusionTexture() const { return exclusion_texture_; }
@@ -64,6 +62,7 @@ private:
 
 	// 문장 파일의 키와 문장
 	TMap<FString, FString> texts_;
+	// 칸마다 배제됐으면 1이다. 지도 이미지와 같은 방향으로 행은 위(x가 작은 쪽)부터, 열은 왼쪽(y가 큰 쪽)부터다. 배제를 받은 적 없으면 비어 있다.
 	TArray<uint8> exclusion_mask_;
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> exclusion_texture_;
