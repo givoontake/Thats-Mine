@@ -71,15 +71,6 @@ void Player::AddAwardCount(AwardCategory category, long long time_ms)
 	award_reach_ms_[static_cast<std::size_t>(category)] = time_ms;
 }
 
-ShotSpreadInput Player::GetShotSpreadInput(long long time_ms) const
-{
-	// 서버가 받은 상태 변화는 지연 때문에 실제와 다를 수 있어, 막 바뀐 상태는 유리한 쪽으로 본다. 조준한 채 움직이는지는 마지막으로 인정한 이동 상태의 수평 속도로 본다.
-	const bool has_state = HasMoveState();
-	const bool is_falling = has_state && move_state_.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
-	const bool is_unaimed = !has_state || (!is_aiming_ && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
-	return { !is_unaimed, is_falling, std::hypot(move_state_.velocity[0], move_state_.velocity[1]) };
-}
-
 bool Player::AddHint(std::uint32_t hint)
 {
 	if (std::find(hint_indices_.begin(), hint_indices_.end(), hint) != hint_indices_.end()) return false;
@@ -95,6 +86,15 @@ std::optional<std::uint32_t> Player::TakeRandomHint()
 	const std::uint32_t hint = hint_indices_[index];
 	hint_indices_.erase(hint_indices_.begin() + index);
 	return hint;
+}
+
+ShotSpreadInput Player::GetShotSpreadInput(long long time_ms) const
+{
+	// 서버가 받은 상태 변화는 지연 때문에 실제와 다를 수 있어, 막 바뀐 상태는 유리한 쪽으로 본다. 조준한 채 움직이는지는 마지막으로 인정한 이동 상태의 수평 속도로 본다.
+	const bool has_state = HasMoveState();
+	const bool is_falling = has_state && move_state_.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
+	const bool is_unaimed = !has_state || (!is_aiming_ && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
+	return { !is_unaimed, is_falling, std::hypot(move_state_.velocity[0], move_state_.velocity[1]) };
 }
 
 int Player::GetPickaxeChargeMs() const
@@ -166,6 +166,7 @@ void Player::SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool 
 	move_state_ = move_state;
 	move_time_ms_ = time_ms;
 	has_new_move_state_ = true;
+	is_move_stopped_ = false;
 	// 지금 입력은 다음 위치까지 이어지므로 상한을 지금 입력으로 다시 시작한다.
 	move_speed_cap_ = GetMaxMoveSpeed(input_forward_, is_aiming_);
 }
@@ -387,6 +388,7 @@ void Player::ClearMoveState()
 	input_right_ = 0;
 	input_forward_ = 0;
 	is_aiming_ = false;
+	is_move_stopped_ = false;
 	action_state_.ResetWeapon();
 	move_speed_cap_ = MOVE_SPEED_FORWARD;
 	is_awaiting_move_correction_ = false;

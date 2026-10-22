@@ -127,8 +127,14 @@ private:
 	void ProcessGameTick(long long tick_time_ms);
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
-	// 동작이나 재장전을 weapon으로 인정하는지 본다. 동작은 손에 든 장비, 재장전은 재장전 패킷의 무기다. time_ms는 서버가 요청을 받은 시각이다.
-	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon, long long time_ms);
+	// 손에 든 weapon으로 한 동작이나 재장전을 인정하는지 본다. time_ms는 서버가 요청을 받은 시각, action_time_ms는 요청의 동작 시각이다.
+	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
+	// 서버가 아는 곡괭이 사용 가능 횟수와 남은 충전 시간을 그 사람에게 보낸다.
+	void SendPickaxeCharges(const Player& player, Session& session, long long time_ms) const;
+	// 그 무기의 지금 탄창 탄과 소지 탄을 재장전 끝으로 그 사람에게 보낸다.
+	void SendReloadDone(const Player& player, Session& session, std::uint8_t weapon) const;
+	// 그 플레이어를 멈춘 것으로 표시하고 방 전체에 멈춤을 알린다.
+	void RelayMoveStop(Player& player);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
 	void ProcessFire(Player& shooter, Session& session, const C2S_FIRE_PACKET& request_p, long long time_ms);
 	// 중계 패킷을 이번 틱 중계에 넣는다.
@@ -138,14 +144,14 @@ private:
 	void AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part);
 	bool CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& camera, const DirectX::XMFLOAT3& hit_point) const;
 	bool IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const;
-	// is_shot이면 탄에 맞아 여는 것이고, 아니면 F키로 여는 것이다.
-	void ProcessBoxOpen(Player& opener, std::uint16_t box, bool is_shot);
-	bool CheckBoxOpen(const Player& opener, std::uint16_t box) const;
+	void ProcessBoxOpen(Player& opener, std::uint16_t box);
+	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
 	// 힌트 번호 hint의 종류별 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다.
 	int AppendHintPacket(char* buffer, std::uint32_t hint) const;
 	void ProcessAreaRemoval();
 	void ProcessStunRelease();
-	void ProcessReloadDone();
+	// 자동 재장전 시작, 재장전 끝, 곡괭이 충전처럼 서버가 시각을 정하는 동작 상태를 진행하고 알린다.
+	void ProcessActionStates();
 	void DigTreasure(const Player& digger);
 	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
 	void ProcessTimeLimit();

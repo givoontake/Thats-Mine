@@ -25,7 +25,7 @@ bool BoxShapeData::Load(const std::string& file_path)
 		DirectX::XMFLOAT3 half_size{};
 		DirectX::XMFLOAT3 rotation{};
 		stream >> kind_text >> state_text >> center.x >> center.y >> center.z >> half_size.x >> half_size.y >> half_size.z >> rotation.x >> rotation.y >> rotation.z;
-		if (!stream || (kind_text != "Treasure" && kind_text != "Gift") || (state_text != "Closed" && state_text != "Open")) return false;
+		if (!stream || (kind_text != "Treasure" && kind_text != "Gift") || (state_text != "Closed" && state_text != "Open" && state_text != "Bounds")) return false;
 
 		const BoxKind kind = kind_text == "Treasure" ? BoxKind::TREASURE : BoxKind::GIFT;
 		HitboxShape shape{};
@@ -33,6 +33,10 @@ bool BoxShapeData::Load(const std::string& file_path)
 		shape.transform.position = center;
 		shape.transform.rotation = ConvertUnrealRotation(rotation);
 		shape.half_size = half_size;
+		if (state_text == "Bounds") {
+			bounds_[static_cast<std::size_t>(kind)] = shape;
+			continue;
+		}
 		(state_text == "Closed" ? closed_shapes_ : open_shapes_)[static_cast<std::size_t>(kind)].push_back(shape);
 		// 회전과 상관없이 중심에서 꼭짓점까지 거리가 절반 대각선이다.
 		const float reach = std::hypot(center.x, center.y, center.z) + std::hypot(half_size.x, half_size.y, half_size.z);

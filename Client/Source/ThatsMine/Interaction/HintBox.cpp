@@ -9,6 +9,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "TimerManager.h"
+#include "settings.h"
 #include "UObject/ConstructorHelpers.h"
 
 AHintBox::AHintBox()
@@ -30,7 +31,7 @@ AHintBox::AHintBox()
 	interact_box_->SetCanEverAffectNavigation(false);
 }
 
-// 상호작용 박스를 메시 경계 상자와 같은 가운데에 INTERACT_BOX_SCALE배 크기로 맞춘다. 메시는 생성이 끝나기 전에 정해진다.
+// 상호작용 박스를 메시 경계 상자와 같은 가운데에 HINT_BOX_INTERACT_SCALE배 크기로 맞춘다. 서버도 같은 범위로 시선을 확인한다. 메시는 생성이 끝나기 전에 정해진다.
 void AHintBox::BeginPlay()
 {
 	Super::BeginPlay();
@@ -38,7 +39,7 @@ void AHintBox::BeginPlay()
 	{
 		const FBoxSphereBounds bounds = mesh->GetBounds();
 		interact_box_->SetRelativeLocation(bounds.Origin);
-		interact_box_->SetBoxExtent(bounds.BoxExtent * INTERACT_BOX_SCALE);
+		interact_box_->SetBoxExtent(bounds.BoxExtent * HINT_BOX_INTERACT_SCALE);
 	}
 }
 

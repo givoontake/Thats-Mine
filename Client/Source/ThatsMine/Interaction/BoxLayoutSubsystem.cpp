@@ -108,7 +108,7 @@ void UBoxLayoutSubsystem::HandleBoxLayoutPacket(const TArray<uint8>& payload)
 	}
 }
 
-void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box) const
+void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box, const FVector& camera_location, const FVector& view_direction) const
 {
 	const int32 box_index = boxes_.IndexOfByKey(box);
 	if (!is_active_ || box_index == INDEX_NONE || box->IsActivated())
@@ -117,6 +117,11 @@ void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box) const
 	}
 	C2S_BOX_OPEN_PACKET packet{};
 	packet.box = static_cast<uint16>(box_index);
+	for (int32 axis = 0; axis < 3; ++axis)
+	{
+		packet.camera[axis] = static_cast<float>(camera_location[axis]);
+		packet.view_direction[axis] = static_cast<float>(view_direction[axis]);
+	}
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
 	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BOX_OPEN, payload);

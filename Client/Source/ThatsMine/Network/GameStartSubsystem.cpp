@@ -42,8 +42,6 @@ static void EnableLocalMovement(UWorld* world)
 
 // 맵이 열린 시점의 게이지 값. 나머지는 준비 항목이 끝날 때마다 채운다.
 static constexpr float MAP_LOADED_PROGRESS = 0.8f;
-// 준비가 끝나지 않아도 이 시간이 지나면 로딩 완료를 보낸다. 텍스처는 스트리밍 풀 상황에 따라 끝나지 않을 수 있다.
-static constexpr double PREPARE_TIMEOUT_SECONDS = 20.0;
 
 void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 {
@@ -68,7 +66,6 @@ void UGameStartSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_TIME_OVER, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTimeOverPacket));
 	network->RegisterPacketHandler(S2C_TREASURE_LOCATION, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureLocationPacket));
 	network->RegisterPacketHandler(S2C_TREASURE_REVEAL, FNetworkPacketHandler::CreateUObject(this, &UGameStartSubsystem::HandleTreasureRevealPacket));
-	prepare_start_time_ = world.GetRealTimeSeconds();
 	const AGameModeBase* game_mode = world.GetAuthGameMode();
 	const APlayerCharacter* character = game_mode && game_mode->DefaultPawnClass ? Cast<APlayerCharacter>(game_mode->DefaultPawnClass->GetDefaultObject()) : nullptr;
 	const TArray<FSoftObjectPath> assets = character ? character->GetPreloadAssets() : TArray<FSoftObjectPath>();
@@ -147,11 +144,6 @@ void UGameStartSubsystem::Tick(float delta_seconds)
 	loading->SetProgress(MAP_LOADED_PROGRESS + (1.0f - MAP_LOADED_PROGRESS) * ready_count / UE_ARRAY_COUNT(is_ready));
 	if (ready_count == UE_ARRAY_COUNT(is_ready))
 	{
-		SendLoadComplete();
-	}
-	else if (GetWorld()->GetRealTimeSeconds() - prepare_start_time_ >= PREPARE_TIMEOUT_SECONDS)
-	{
-		UE_LOG(LogGameStart, Warning, TEXT("Preparation timed out. async=%d assets=%d textures=%d shaders=%d psos=%d"), is_ready[0], is_ready[1], is_ready[2], is_ready[3], is_ready[4]);
 		SendLoadComplete();
 	}
 }

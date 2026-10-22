@@ -50,6 +50,7 @@ private:
 	void HandleMoveCorrectionPacket(const TArray<uint8>& payload);
 	void HandleMovePacket(const TArray<uint8>& payload);
 	void HandleMoveInputPacket(const TArray<uint8>& payload);
+	void HandleMoveStopPacket(const TArray<uint8>& payload);
 	void HandleAimPacket(const TArray<uint8>& payload);
 	void HandleEquipPacket(const TArray<uint8>& payload);
 	void HandleActionPacket(const TArray<uint8>& payload);
@@ -57,6 +58,8 @@ private:
 	void RemoveLeftPlayers();
 	void HandleInvalidPacket();
 	APlayerCharacter* FindRemotePlayer(int32 player_id) const;
+	// 실제 시각(FPlatformTime 초)을 서버 기준 동작 시각(ms)으로 바꾼다. 받은 서버 시각 이전은 받은 순간으로 본다.
+	uint32 GetActionTimeMs(double real_time) const;
 
 	TMap<int32, TWeakObjectPtr<APlayerCharacter>> remote_players_;
 	TWeakObjectPtr<APlayerCharacter> local_character_;

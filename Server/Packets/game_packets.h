@@ -88,10 +88,12 @@ struct C2S_AIM_PACKET {
 	bool is_aiming;
 };
 
-// 손에 든 장비를 바꿨다. weapon은 바꾼 뒤 손에 든 WeaponType이다.
+// 손에 든 장비를 바꿨다. weapon은 바꾼 뒤 손에 든 WeaponType이다. action_time_ms는 바꾼 순간의 서버 기준 시각(ms)이다.
+// 서버는 조준 중이면 받지 않고, 다른 무기로 바뀌면 그 시각부터 EQUIP_DURATIONS_MS 동안 발사·휘두르기·재장전을 받지 않는다.
 struct C2S_EQUIP_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t weapon;
+	std::uint32_t action_time_ms;
 };
 
 // 다른 플레이어의 이동 상태. 틱마다 중계할 플레이어 수만큼 이어 붙여 보낸다.
@@ -127,10 +129,11 @@ struct S2C_EQUIP_PACKET {
 	std::uint8_t weapon;
 };
 
-// 휘두르기·줍기. 서버는 손에 든 장비로 판정한다. 총 발사는 C2S_FIRE_PACKET으로 보낸다.
+// 휘두르기·줍기. 서버는 손에 든 장비로 판정한다. 총 발사는 C2S_FIRE_PACKET으로 보낸다. action_time_ms는 동작한 순간의 서버 기준 시각(ms)이다.
 struct C2S_ACTION_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t action;
+	std::uint32_t action_time_ms;
 };
 
 // 손에 든 총을 쐈다. 서버가 탄약과 발사 간격을 확인해 인정하면 다른 플레이어에게 발사 동작을 중계하고, 탄 광선을 직접 판정한다.
@@ -149,12 +152,14 @@ struct S2C_ACTION_PACKET {
 	std::uint8_t action;
 };
 
-// 재장전을 시작했다. 장비를 바꿔도 이어지므로 손에 든 장비가 아닌 무기일 수 있다. 서버가 탄약을 확인해 인정한 것만 중계한다.
+// 손에 든 무기의 재장전을 시작했다. action_time_ms는 시작한 순간의 서버 기준 시각(ms)이다. 장비를 바꾸면 재장전은 취소된다.
+// 서버가 인정하면 재장전 중계를 보내고, 인정하지 않으면 재장전한 사람에게 지금 탄약으로 재장전 끝을 바로 보낸다.
 struct C2S_RELOAD_PACKET {
 	PACKET_HEADER header;
-	std::uint8_t weapon;
+	std::uint32_t action_time_ms;
 };
 
+// 재장전이 시작됐다. 방 전체에 보내고 재장전한 사람도 받는다. 서버가 자동 재장전을 시작했을 때도 보낸다.
 struct S2C_RELOAD_PACKET {
 	PACKET_HEADER header;
 	int player_id;
@@ -272,17 +277,21 @@ struct S2C_RELOAD_DONE_PACKET {
 	std::uint16_t spare_rounds;
 };
 
-// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간(ms, 다 차 있으면 0). 서버가 곡괭이 휘두르기를 인정하지 않았을 때 그 사람에게만 보낸다.
+// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간(ms, 다 차 있으면 0). 그 사람에게만 보낸다.
+// 곡괭이 휘두르기를 인정했을 때, 인정하지 않았을 때, 1번이 찼을 때 보낸다. 클라이언트는 이 값으로만 횟수를 바꾸고 남은 시간은 표시만 센다.
 struct S2C_PICKAXE_CHARGES_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t charges;
 	std::uint32_t remaining_ms;
 };
 
-// 상호작용으로 상자를 열려고 한다. 상자 번호는 상자 배치의 항목 순서다.
+// 상호작용으로 상자를 열려고 한다. 상자 번호는 상자 배치의 항목 순서다. camera는 카메라 위치(cm), view_direction은 카메라가 보는 방향(단위 벡터)이다.
+// 서버는 카메라 위치를 사격 카메라와 같이 검증하고, 시선이 그 상자의 상호작용 범위에 닿으며 카메라에서 그곳까지 지형에 가리지 않아야 연다.
 struct C2S_BOX_OPEN_PACKET {
 	PACKET_HEADER header;
 	std::uint16_t box;
+	float camera[3];
+	float view_direction[3];
 };
 
 // 서버가 인정한 상자 열림. 플레이 중인 방 전체에 보낸다.
@@ -326,6 +335,13 @@ struct S2C_AREA_REMOVAL_TIME_PACKET {
 // 영역 지우기 차례에 칸 하나를 지웠다. 플레이 중인 방 전체에 보내고, 판이 바뀐 사람에게는 바뀐 배제 판을 이어 보낸다.
 struct S2C_AREA_REMOVAL_PACKET {
 	PACKET_HEADER header;
+};
+
+// 서버가 그 플레이어를 멈춘 것으로 판단했다. 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않았거나 서버가 이동을 되돌렸을 때 방 전체에 보낸다.
+// 받은 쪽은 그 캐릭터의 이동 키 입력을 없는 것으로 두어 멈춘다. 이동 상태가 다시 오면 서버가 그 사람의 이동 키 입력을 다시 중계한다.
+struct S2C_MOVE_STOP_PACKET {
+	PACKET_HEADER header;
+	int player_id;
 };
 
 // 서버 시각 동기화. 게임 레벨에 들어오는 플레이어에게 한 번 보낸다.

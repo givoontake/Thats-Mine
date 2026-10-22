@@ -59,7 +59,6 @@ private:
 	TObjectPtr<UMatchTimerWidget> timer_widget_;
 	UPROPERTY(Transient)
 	TObjectPtr<UGameTimeWidget> game_time_widget_;
-	double prepare_start_time_ = 0.0;
 	bool is_active_ = false;
 	bool has_sent_load_complete_ = false;
 	// 시작 대기를 거쳤는지. 게임이 시작된 뒤 합류하면 대기 없이 바로 게임 시작을 받는다.

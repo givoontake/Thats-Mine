@@ -94,6 +94,7 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 		return;
 	}
 	network->RegisterPacketHandler(S2C_MOVE_INPUT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveInputPacket));
+	network->RegisterPacketHandler(S2C_MOVE_STOP, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveStopPacket));
 	network->RegisterPacketHandler(S2C_AIM, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAimPacket));
 	network->RegisterPacketHandler(S2C_EQUIP, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleEquipPacket));
 	network->RegisterPacketHandler(S2C_ACTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleActionPacket));
@@ -121,6 +122,7 @@ void UMovementSyncSubsystem::Deinitialize()
 		{
 			network->UnregisterPacketHandler(S2C_MOVE);
 			network->UnregisterPacketHandler(S2C_MOVE_INPUT);
+			network->UnregisterPacketHandler(S2C_MOVE_STOP);
 			network->UnregisterPacketHandler(S2C_AIM);
 			network->UnregisterPacketHandler(S2C_EQUIP);
 			network->UnregisterPacketHandler(S2C_ACTION);
@@ -254,6 +256,7 @@ void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
 	const EWeaponType weapon = character.GetCurrentWeapon();
 	C2S_EQUIP_PACKET equip_packet{};
 	equip_packet.weapon = static_cast<uint8>(weapon);
+	equip_packet.action_time_ms = GetActionTimeMs(character.GetEquipRealTime());
 	if ((!has_sent_input_ || weapon != sent_weapon_) && SendPacketBody(network, C2S_EQUIP, equip_packet))
 	{
 		sent_weapon_ = weapon;
@@ -276,16 +279,25 @@ void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponTy
 		return;
 	}
 	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
+	// 캐릭터가 동작을 시작한 실제 시각으로 동작 시각을 만든다.
+	const APlayerCharacter* character = local_character_.Get();
+	const uint32 action_time_ms = GetActionTimeMs(character ? character->GetActionRealTime() : FPlatformTime::Seconds());
 	if (action == EPlayerAction::RELOAD)
 	{
 		C2S_RELOAD_PACKET packet{};
-		packet.weapon = static_cast<uint8>(weapon);
+		packet.action_time_ms = action_time_ms;
 		SendPacketBody(network, C2S_RELOAD, packet);
 		return;
 	}
 	C2S_ACTION_PACKET packet{};
 	packet.action = static_cast<uint8>(action);
+	packet.action_time_ms = action_time_ms;
 	SendPacketBody(network, C2S_ACTION, packet);
+}
+
+uint32 UMovementSyncSubsystem::GetActionTimeMs(double real_time) const
+{
+	return sync_server_time_ms_ + static_cast<uint32>(static_cast<uint64>(FMath::Max(0.0, real_time - sync_real_time_) * 1000.0));
 }
 
 // 쏜 총의 퍼지기 전 조준 방향과 카메라 위치를 보낸다. 빗나감과 명중은 서버가 판정한다.
@@ -299,8 +311,7 @@ void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 	}
 	// 캐릭터가 발사 간격을 센 것과 같은 실제 시각으로 동작 시각을 만든다.
 	const APlayerCharacter* character = local_character_.Get();
-	const double action_real_time = character ? character->GetActionRealTime() : FPlatformTime::Seconds();
-	packet.action_time_ms = sync_server_time_ms_ + static_cast<uint32>(static_cast<uint64>((action_real_time - sync_real_time_) * 1000.0));
+	packet.action_time_ms = GetActionTimeMs(character ? character->GetActionRealTime() : FPlatformTime::Seconds());
 	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_FIRE, packet);
 }
 
@@ -522,6 +533,23 @@ void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
 	}
 }
 
+// 서버가 그 플레이어를 멈춘 것으로 판단했다. 이동 키 입력을 없는 것으로 두어 제동으로 멈춘다.
+void UMovementSyncSubsystem::HandleMoveStopPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_MOVE_STOP_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_MOVE_STOP_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
+	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
+	{
+		remote_movement->SetMoveInput(FVector2D::ZeroVector);
+	}
+}
+
 void UMovementSyncSubsystem::HandleAimPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_AIM_PACKET) - sizeof(PACKET_HEADER))
@@ -583,7 +611,15 @@ void UMovementSyncSubsystem::HandleReloadPacket(const TArray<uint8>& payload)
 	}
 	S2C_RELOAD_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
+	// 내 재장전은 서버가 자동으로 시작했거나 내가 시작한 것을 인정한 것이다.
+	if (packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
+	{
+		if (APlayerCharacter* character = local_character_.Get())
+		{
+			character->StartServerReload(ToWeaponType(packet.weapon));
+		}
+	}
+	else if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
 	{
 		remote->PlayRemoteAction(EPlayerAction::RELOAD, ToWeaponType(packet.weapon));
 	}

@@ -438,3 +438,10 @@ const MontageInfo* HitboxData::FindMontage(std::uint8_t action, std::uint8_t wea
 	}
 	return nullptr;
 }
+
+long long HitboxData::GetMontageMs(std::uint8_t action, std::uint8_t weapon) const
+{
+	const MontageInfo* montage = FindMontage(action, weapon);
+	if (!montage) return 0;
+	return static_cast<long long>(tracks_[montage->track].length / std::max(montage->play_rate, 0.01f) * 1000.0f);
+}

@@ -34,6 +34,8 @@ class Player
 	std::int8_t input_right_ = 0;
 	std::int8_t input_forward_ = 0;
 	bool is_aiming_ = false;
+	// 서버가 멈춘 것으로 판단해 다른 플레이어에게 멈춤을 알렸는지. 이동 상태를 다시 인정하면 거짓이 된다.
+	bool is_move_stopped_ = false;
 	// 마지막으로 인정한 위치 뒤로 받은 입력과 조준 중 가장 빠른 땅 이동 속도 상한(cm/s). 다음 위치를 검사할 때 쓴다.
 	float move_speed_cap_ = MOVE_SPEED_FORWARD;
 	// 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
@@ -73,7 +75,7 @@ class Player
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
 	std::uint32_t move_correction_id_ = 0;
 	bool is_awaiting_move_correction_ = false;
-	// 손에 든 장비, 탄약, 곡괭이 사용 횟수
+	// 손에 든 장비, 동작을 받을지 판단하는 상태, 탄약, 곡괭이 사용 횟수
 	PlayerActionState action_state_;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
 	std::vector<std::uint32_t> hint_indices_;
@@ -146,6 +148,8 @@ public:
 	std::int8_t GetInputRight() const { return input_right_; }
 	std::int8_t GetInputForward() const { return input_forward_; }
 	bool IsAiming() const { return is_aiming_; }
+	bool IsMoveStopped() const { return is_move_stopped_; }
+	void SetMoveStopped() { is_move_stopped_ = true; }
 	PlayerActionState& GetActionState() { return action_state_; }
 	const PlayerActionState& GetActionState() const { return action_state_; }
 	// 가진 아이템을 적용한 곡괭이 1번 충전 시간(ms)

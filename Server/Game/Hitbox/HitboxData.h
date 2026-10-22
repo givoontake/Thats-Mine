@@ -51,6 +51,8 @@ public:
 	int GetJumpTrack() const { return jump_track_; }
 	// 동작과 무기에 맞는 몽타주를 찾는다. 무기와 상관없는 동작도 찾는다. 없으면 nullptr다.
 	const MontageInfo* FindMontage(std::uint8_t action, std::uint8_t weapon) const;
+	// 동작과 무기에 맞는 몽타주가 재생 속도로 재생되는 시간(ms). 몽타주가 없으면 0이다.
+	long long GetMontageMs(std::uint8_t action, std::uint8_t weapon) const;
 	const std::vector<MontageInfo>& GetMontages() const { return montages_; }
 
 	int GetHipsBone() const { return hips_bone_; }

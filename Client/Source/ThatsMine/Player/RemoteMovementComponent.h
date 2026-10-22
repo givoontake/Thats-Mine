@@ -27,8 +27,6 @@ protected:
 	virtual void TickComponent(float delta_seconds, ELevelTick tick_type, FActorComponentTickFunction* this_tick_function) override;
 
 private:
-	// 새 상태가 이보다 오래 오지 않으면 입력을 멈춘다.
-	static constexpr float STALE_SECONDS = 0.5f;
 	// 받은 좌표와의 차이를 메우는 시간. 다음 좌표가 올 주기에 맞춘다.
 	static constexpr float CORRECTION_SECONDS = 0.1f;
 	static constexpr float ROTATION_SMOOTH_SECONDS = 0.05f;
@@ -38,7 +36,6 @@ private:
 	FRemoteMoveState state_;
 	FVector2D move_input_ = FVector2D::ZeroVector;
 	bool has_state_ = false;
-	double state_time_ = 0.0;
 	float view_pitch_ = 0.0f;
 	// 남은 보간 이동량과 남은 시간
 	FVector correction_ = FVector::ZeroVector;

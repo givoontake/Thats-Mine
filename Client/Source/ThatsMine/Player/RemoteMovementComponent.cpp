@@ -67,7 +67,6 @@ void URemoteMovementComponent::ApplyState(const FRemoteMoveState& state)
 
 	state_ = state;
 	has_state_ = true;
-	state_time_ = GetWorld()->GetTimeSeconds();
 }
 
 void URemoteMovementComponent::SetAiming(bool is_aiming)
@@ -119,9 +118,6 @@ void URemoteMovementComponent::TickComponent(float delta_seconds, ELevelTick tic
 		correction_remaining_ -= delta_seconds;
 	}
 
-	// 받은 입력으로 이동 계산을 이어 간다. 새 상태가 오래 끊기면 멈춘다.
-	if (GetWorld()->GetTimeSeconds() - state_time_ <= STALE_SECONDS)
-	{
-		character->ApplyMovementInput(move_input_);
-	}
+	// 받은 입력으로 이동 계산을 이어 간다. 멈춤은 서버가 멈춤 패킷으로 알려 입력을 0으로 바꾼다.
+	character->ApplyMovementInput(move_input_);
 }

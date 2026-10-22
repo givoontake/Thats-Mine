@@ -227,11 +227,6 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type end_play_reason)
 {
 	FinishAction(action_id_);
 	++action_id_;
-	for (auto& [weapon, ammo] : weapon_ammo_)
-	{
-		GetWorldTimerManager().ClearTimer(ammo.reload_timer);
-		GetWorldTimerManager().ClearTimer(ammo.shot_wait_timer);
-	}
 	GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
 	GetWorldTimerManager().ClearTimer(protection_timer_);
 	GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
@@ -343,13 +338,14 @@ void APlayerCharacter::RebindKeys()
 void APlayerCharacter::Interact()
 {
 	// 높은 곳의 상자는 점프해서 열 수 있도록 공중에서도 상호작용한다.
-	if (is_stunned_ || is_action_locked_ || !GetWorld())
+	if (is_stunned_ || !GetWorld())
 	{
 		return;
 	}
 	if (const AHintBox* box = FindInteractBox())
 	{
-		GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box);
+		const UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
+		GetWorld()->GetSubsystem<UBoxLayoutSubsystem>()->RequestOpen(box, camera->GetComponentLocation(), camera->GetForwardVector());
 	}
 }
 
@@ -485,24 +481,6 @@ void APlayerCharacter::Look(const FInputActionValue& value)
 	AddControllerPitchInput(look.Y);
 }
 
-void APlayerCharacter::OnMovementModeChanged(EMovementMode previous_movement_mode, uint8 previous_custom_mode)
-{
-	Super::OnMovementModeChanged(previous_movement_mode, previous_custom_mode);
-	if (!GetCharacterMovement()->IsFalling() || !is_action_locked_)
-	{
-		return;
-	}
-
-	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	FAnimMontageInstance* montage_instance = anim_instance ? anim_instance->GetMontageInstanceForID(active_montage_instance_id_) : nullptr;
-	UAnimMontage* montage = montage_instance ? montage_instance->Montage.Get() : nullptr;
-	FinishAction(action_id_);
-	if (montage)
-	{
-		anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), montage);
-	}
-}
-
 void APlayerCharacter::SelectWeaponFromKey(FKey key)
 {
 	if (is_stunned_)
@@ -533,6 +511,12 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	{
 		is_equipping_ = false;
 		has_pending_melee_hit_ = false;
+		equip_real_time_ = FPlatformTime::Seconds();
+		// 장비를 바꾸면 이전 무기의 재장전은 취소된다. 서버도 같은 규칙으로 취소한다.
+		if (FWeaponAmmoState* previous_ammo = weapon_ammo_.Find(current_weapon_))
+		{
+			previous_ammo->is_reloading = false;
+		}
 		const FWeaponSettings* previous_settings = GetCurrentWeaponSettings();
 		if (UAnimInstance* anim_instance = GetMesh()->GetAnimInstance(); anim_instance && previous_settings)
 		{
@@ -563,30 +547,23 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	{
 		if (settings->equip_montage && anim_instance)
 		{
-			anim_instance->Montage_Play(settings->equip_montage, settings->equip_montage->GetPlayLength() / EQUIP_DURATION, EMontagePlayReturnType::MontageLength, 0.0f, false);
+			anim_instance->Montage_Play(settings->equip_montage, settings->equip_montage->GetPlayLength() / GetEquipDuration(weapon), EMontagePlayReturnType::MontageLength, 0.0f, false);
 		}
-		// 빠르게 다시 바꾸면 타이머를 새로 걸어 이전 장착의 끝이 새 장착 상태를 해제하지 않는다.
+		// 빠르게 다시 바꾸면 타이머를 새로 걸어 이전 장착의 끝이 새 장착 상태를 해제하지 않는다. 탄창이 빈 무기의 재장전은 서버가 대기 끝에 시작해 알린다.
 		is_equipping_ = true;
 		const FTimerDelegate equipped = FTimerDelegate::CreateWeakLambda(this, [this]()
 		{
 			is_equipping_ = false;
-			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_); ammo && ammo->rounds == 0)
-			{
-				BeginReload(current_weapon_);
-			}
-			PlayReloadAnimation(current_weapon_);
 			UpdateEquipmentDisplay();
 		});
-		GetWorldTimerManager().SetTimer(equip_timer_, equipped, EQUIP_DURATION, false);
+		GetWorldTimerManager().SetTimer(equip_timer_, equipped, GetEquipDuration(weapon), false);
 	}
-	if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon); ammo && ammo->rounds == 0)
-	{
-		BeginReload(weapon);
-	}
-	if (has_weapon_changed)
-	{
-		PlayReloadAnimation(weapon);
-	}
+}
+
+float APlayerCharacter::GetEquipDuration(EWeaponType weapon)
+{
+	const int32 index = static_cast<int32>(weapon);
+	return index < UE_ARRAY_COUNT(EQUIP_DURATIONS_MS) ? EQUIP_DURATIONS_MS[index] / 1000.0f : 0.0f;
 }
 
 void APlayerCharacter::UpdateWeaponVisuals()
@@ -693,18 +670,13 @@ void APlayerCharacter::PrimaryAction()
 		{
 			// 곡괭이는 사용 가능 횟수가 있어야 휘두르고, 최대치에서 쓰면 충전을 시작한다.
 			const bool is_pickaxe = current_weapon_ == EWeaponType::PICKAXE;
-			UpdatePickaxeCharges();
 			if ((is_pickaxe && pickaxe_charges_ <= 0) || !PlayAction(settings->primary_action, &settings->melee_hit))
 			{
 				return;
 			}
+			// 횟수는 서버가 휘두르기마다 보내는 값으로 맞춘다. 그 전까지 쓴 만큼 미리 줄여 표시한다.
 			if (is_pickaxe)
 			{
-				if (pickaxe_charges_ == PICKAXE_MAX_CHARGES)
-				{
-					pickaxe_charge_start_ = GetWorld()->GetTimeSeconds();
-					GetWorldTimerManager().SetTimer(pickaxe_charge_timer_, this, &APlayerCharacter::UpdatePickaxeCharges, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
-				}
 				--pickaxe_charges_;
 				UpdateEquipmentDisplay();
 			}
@@ -716,13 +688,15 @@ void APlayerCharacter::PrimaryAction()
 
 void APlayerCharacter::PickUp()
 {
-	if (is_stunned_)
+	const double real_now = FPlatformTime::Seconds();
+	if (is_stunned_ || real_now < next_pickup_real_time_)
 	{
 		return;
 	}
 	if (PlayAction(pickup_action_))
 	{
-		action_real_time_ = FPlatformTime::Seconds();
+		action_real_time_ = real_now;
+		next_pickup_real_time_ = real_now + pickup_action_.montage->GetPlayLength() / pickup_action_.play_rate;
 		on_action_started_.Broadcast(EPlayerAction::PICKUP, current_weapon_);
 	}
 }
@@ -730,7 +704,7 @@ void APlayerCharacter::PickUp()
 bool APlayerCharacter::PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit)
 {
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	if (is_action_locked_ || GetCharacterMovement()->IsFalling() || !action.montage || !anim_instance || action.play_rate <= 0.0f)
+	if (!action.montage || !anim_instance || action.play_rate <= 0.0f)
 	{
 		return false;
 	}
@@ -835,12 +809,12 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	UWorld* world = GetWorld();
 	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
 	UCameraComponent* camera = is_aiming_ ? first_person_camera_ : third_person_camera_;
-	if (is_equipping_ || is_action_locked_ || !world || IsActorBeingDestroyed() || !IsValid(weapon_mesh) || !IsValid(camera) || !camera->IsActive() || !weapon_mesh->DoesSocketExist(settings.muzzle_socket))
+	if (is_equipping_ || !world || IsActorBeingDestroyed() || !IsValid(weapon_mesh) || !IsValid(camera) || !camera->IsActive() || !weapon_mesh->DoesSocketExist(settings.muzzle_socket))
 	{
 		return;
 	}
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_);
-	if (!ammo || ammo->rounds <= 0 || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if (!ammo || ammo->rounds <= 0 || ammo->is_reloading)
 	{
 		return;
 	}
@@ -895,13 +869,11 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 
 	const FWeaponSettings* weapon_settings = GetCurrentWeaponSettings();
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	float fire_duration = 0.0f;
 	if (anim_instance && weapon_settings && weapon_settings->primary_action.montage)
 	{
 		const FActionSettings& action = weapon_settings->primary_action;
-		fire_duration = anim_instance->Montage_Play(action.montage, action.play_rate, EMontagePlayReturnType::Duration, 0.0f, false);
+		anim_instance->Montage_Play(action.montage, action.play_rate, EMontagePlayReturnType::Duration, 0.0f, false);
 	}
-	ammo->fire_end_time = now + fire_duration;
 	UpdateEquipmentDisplay();
 	on_shot_fired_.Broadcast(shot);
 }
@@ -1149,24 +1121,6 @@ void APlayerCharacter::UseAmmo(EWeaponType weapon, int32 rounds)
 		return;
 	}
 	ammo->rounds = rounds;
-	const double shot_remaining = ammo->fire_end_time - GetWorld()->GetTimeSeconds();
-	if (rounds == 0 && weapon == EWeaponType::PISTOL && shot_remaining > 0.0)
-	{
-		// 마지막 권총 반동이 끝난 뒤 재장전을 시작한다. 대기 중에는 재장전 동작을 재생하지 않는다.
-		ammo->is_waiting_for_shot = true;
-		// 실행 중인 타이머를 지우면 이 람다도 함께 해제되므로, 람다 안에서 대기 타이머를 지우지 않는다.
-		const FTimerDelegate completed = FTimerDelegate::CreateWeakLambda(this, [this, weapon]()
-		{
-			weapon_ammo_.FindChecked(weapon).is_waiting_for_shot = false;
-			BeginReload(weapon);
-			UpdateEquipmentDisplay();
-		});
-		GetWorldTimerManager().SetTimer(ammo->shot_wait_timer, completed, static_cast<float>(shot_remaining), false);
-	}
-	else if (rounds == 0)
-	{
-		BeginReload(weapon);
-	}
 	UpdateEquipmentDisplay();
 }
 
@@ -1179,11 +1133,6 @@ void APlayerCharacter::GainAmmo(EWeaponType weapon, int32 rounds)
 	}
 	ShowAcquirePopup(FText::Format(NSLOCTEXT("Item", "AmmoText", "{0} 탄약 {1}발"), weapon_settings_[weapon].display_name, rounds), NSLOCTEXT("Item", "NewAmmo", "탄약 획득!"), {});
 	ammo->spare_rounds += rounds;
-	// 들고 있는 총의 탄창이 비었을 때 소지 탄이 생기면, 탄이 떨어졌을 때처럼 바로 재장전한다.
-	if (weapon == current_weapon_ && ammo->rounds == 0)
-	{
-		BeginReload(weapon);
-	}
 	UpdateEquipmentDisplay();
 }
 
@@ -1196,7 +1145,28 @@ void APlayerCharacter::CompleteReload(EWeaponType weapon, int32 rounds, int32 sp
 	}
 	ammo->rounds = rounds;
 	ammo->spare_rounds = spare_rounds;
+	if (ammo->is_reloading)
+	{
+		ammo->is_reloading = false;
+		const FWeaponSettings* settings = weapon_settings_.Find(weapon);
+		UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+		if (weapon == current_weapon_ && settings && settings->hitscan.reload_montage && anim_instance)
+		{
+			anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), settings->hitscan.reload_montage);
+		}
+	}
 	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::StartServerReload(EWeaponType weapon)
+{
+	const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
+	if (weapon != current_weapon_ || !ammo || ammo->is_reloading)
+	{
+		return;
+	}
+	StartReloadState(weapon);
+	PlayReloadSound(weapon);
 }
 
 void APlayerCharacter::SetPickaxeCharges(int32 charges, int32 remaining_ms)
@@ -1209,28 +1179,14 @@ void APlayerCharacter::SetPickaxeCharges(int32 charges, int32 remaining_ms)
 	else
 	{
 		pickaxe_charge_start_ = GetWorld()->GetTimeSeconds() - (GetPickaxeChargeSeconds() - remaining_ms / 1000.0);
-		GetWorldTimerManager().SetTimer(pickaxe_charge_timer_, this, &APlayerCharacter::UpdatePickaxeCharges, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
+		GetWorldTimerManager().SetTimer(pickaxe_charge_timer_, this, &APlayerCharacter::UpdatePickaxeChargeDisplay, PICKAXE_CHARGE_DISPLAY_INTERVAL, true);
 	}
 	UpdateEquipmentDisplay();
 }
 
-void APlayerCharacter::UpdatePickaxeCharges()
+void APlayerCharacter::UpdatePickaxeChargeDisplay()
 {
-	if (pickaxe_charges_ < PICKAXE_MAX_CHARGES)
-	{
-		const double charge_seconds = GetPickaxeChargeSeconds();
-		const int32 gained = FMath::FloorToInt32((GetWorld()->GetTimeSeconds() - pickaxe_charge_start_) / charge_seconds);
-		if (gained > 0)
-		{
-			pickaxe_charges_ = FMath::Min(PICKAXE_MAX_CHARGES, pickaxe_charges_ + gained);
-			pickaxe_charge_start_ += gained * charge_seconds;
-		}
-	}
-	if (pickaxe_charges_ >= PICKAXE_MAX_CHARGES)
-	{
-		GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
-	}
-	// 인벤토리는 들고 있지 않은 곡괭이의 남은 시간도 표시하므로 들고 있는 무기와 관계없이 고친다.
+	// 인벤토리는 들고 있지 않은 곡괭이의 남은 시간도 표시하므로 들고 있는 무기와 관계없이 고친다. 1번이 차는 것은 서버가 알린다.
 	UpdateEquipmentDisplay();
 }
 
@@ -1281,7 +1237,7 @@ void APlayerCharacter::StartStun()
 	else if (URemoteMovementComponent* remote_movement = FindComponentByClass<URemoteMovementComponent>())
 	{
 		remote_movement->SetMoveInput(FVector2D::ZeroVector);
-		remote_movement->SetAiming(false);
+		SetAiming(false);
 	}
 }
 
@@ -1478,7 +1434,7 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 			{
 				display.rounds = ammo->rounds;
 				display.total_ammo = FText::AsNumber(ammo->spare_rounds);
-				display.is_reloading = ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer);
+				display.is_reloading = ammo->is_reloading;
 			}
 		}
 		// 곡괭이는 사용 가능 횟수와, 다 차 있지 않으면 다음 1번이 찰 때까지 남은 시간(분:초, 초 올림)을 표시한다.
@@ -1620,7 +1576,7 @@ void APlayerCharacter::Reload()
 	{
 		return;
 	}
-	if (is_equipping_ || is_action_locked_ || !GetWorld() || IsActorBeingDestroyed())
+	if (is_equipping_ || !GetWorld() || IsActorBeingDestroyed())
 	{
 		return;
 	}
@@ -1632,16 +1588,24 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if ((weapon == current_weapon_ && is_equipping_) || !ammo || !settings || !settings->hitscan.is_enabled || ammo->spare_rounds <= 0 || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || ammo->is_waiting_for_shot || GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if (weapon != current_weapon_ || is_equipping_ || !ammo || !settings || !settings->hitscan.is_enabled || ammo->spare_rounds <= 0 || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || ammo->is_reloading)
 	{
 		return;
 	}
-	// 장비를 바꿔도 해당 무기의 재장전 시간과 탄약은 유지한다.
-	const FTimerDelegate completed = FTimerDelegate::CreateUObject(this, &APlayerCharacter::FinishReload, weapon);
-	GetWorldTimerManager().SetTimer(ammo->reload_timer, completed, FMath::Max(0.01f, settings->hitscan.reload_duration), false);
-	PlayReloadAnimation(weapon);
+	// 바로 재장전을 보이고 서버에 알린다. 끝은 서버가 재장전 끝으로 알리고, 인정하지 않으면 지금 탄약으로 바로 끝낸다.
+	StartReloadState(weapon);
 	PlayReloadSound(weapon);
+	action_real_time_ = FPlatformTime::Seconds();
 	on_action_started_.Broadcast(EPlayerAction::RELOAD, weapon);
+}
+
+void APlayerCharacter::StartReloadState(EWeaponType weapon)
+{
+	FWeaponAmmoState& ammo = weapon_ammo_.FindChecked(weapon);
+	ammo.is_reloading = true;
+	ammo.reload_start_time = GetWorld()->GetTimeSeconds();
+	PlayReloadAnimation(weapon);
+	UpdateEquipmentDisplay();
 }
 
 void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
@@ -1649,7 +1613,7 @@ void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
 	const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	if (weapon != current_weapon_ || is_equipping_ || is_action_locked_ || !ammo || ammo->is_waiting_for_shot || !settings || !settings->hitscan.reload_montage || !anim_instance || !GetWorldTimerManager().IsTimerActive(ammo->reload_timer))
+	if (weapon != current_weapon_ || !ammo || !ammo->is_reloading || !settings || !settings->hitscan.reload_montage || !anim_instance)
 	{
 		return;
 	}
@@ -1658,30 +1622,10 @@ void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
 	{
 		return;
 	}
-	const float duration = GetWorldTimerManager().GetTimerRate(ammo->reload_timer);
+	const float duration = FMath::Max(0.01f, settings->hitscan.reload_duration);
 	const float play_rate = montage->GetPlayLength() / duration;
-	const float position = GetWorldTimerManager().GetTimerElapsed(ammo->reload_timer) * play_rate;
+	const float position = static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->reload_start_time) * play_rate;
 	anim_instance->Montage_Play(montage, play_rate, EMontagePlayReturnType::MontageLength, position, false);
-}
-
-void APlayerCharacter::FinishReload(EWeaponType weapon)
-{
-	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
-	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if (!ammo || !settings)
-	{
-		return;
-	}
-	if (weapon == current_weapon_ && settings->hitscan.reload_montage)
-	{
-		if (UAnimInstance* anim_instance = GetMesh()->GetAnimInstance())
-		{
-			anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), settings->hitscan.reload_montage);
-		}
-	}
-	// 탄창 탄과 소지 탄은 서버가 재장전을 끝내고 보낸 값으로만 바꾼다.
-	GetWorldTimerManager().ClearTimer(ammo->reload_timer);
-	UpdateEquipmentDisplay();
 }
 
 void APlayerCharacter::UpdateEquipmentDisplay()

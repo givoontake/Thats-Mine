@@ -47,8 +47,8 @@ class THATSMINE_API APlayerCharacter : public ACharacter
 	GENERATED_BODY()
 
 public:
-	// 무기를 바꾼 뒤 쓸 수 있을 때까지 시간(초). 장착 동작은 이 시간에 맞춰 재생하고, 장착 동작이 없는 무기도 이 시간 동안 쓸 수 없다.
-	static constexpr float EQUIP_DURATION = 0.5f;
+	// 무기를 바꾼 뒤 쓸 수 있을 때까지 시간(초). 서버와 같은 무기별 장비 교체 대기 시간이다. 장착 동작은 이 시간에 맞춰 재생한다.
+	static float GetEquipDuration(EWeaponType weapon);
 
 	APlayerCharacter();
 	virtual void PawnClientRestart() override;
@@ -65,15 +65,17 @@ public:
 
 	// 서버가 보낸 내 기절 게이지 값을 표시하고, 이후 초당 감소량만큼 줄여 표시한다.
 	void SetStunGauge(float gauge);
-	// 서버가 인정한 발사 뒤 남은 탄창 탄으로 바꾼다. 탄창이 비면 재장전한다. 권총은 마지막 반동이 끝난 뒤 재장전한다.
+	// 서버가 인정한 발사 뒤 남은 탄창 탄으로 바꾼다. 탄창이 빈 뒤의 재장전은 서버가 시작해 알린다.
 	void UseAmmo(EWeaponType weapon, int32 rounds);
-	// 탄약 상자에서 얻은 소지 탄을 더하고 획득 안내를 띄운다. 들고 있는 총의 탄창이 비었으면 재장전한다.
+	// 탄약 상자에서 얻은 소지 탄을 더하고 획득 안내를 띄운다.
 	void GainAmmo(EWeaponType weapon, int32 rounds);
-	// 서버의 재장전이 끝난 뒤 탄창 탄과 소지 탄으로 바꾼다.
+	// 서버가 내 재장전 시작을 알렸다. 자동 재장전이거나 내가 시작한 재장전을 인정한 것이다. 이미 그 재장전 중이면 그대로 둔다.
+	void StartServerReload(EWeaponType weapon);
+	// 서버의 재장전이 끝났거나 인정하지 않았다. 재장전을 끝내고 탄창 탄과 소지 탄으로 바꾼다.
 	void CompleteReload(EWeaponType weapon, int32 rounds, int32 spare_rounds);
 	// 들고 있는 총으로 지금 쏘면 쓰는 퍼짐 크기(도). 총이 아니면 0이다.
 	float GetCurrentShotSpread() const;
-	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다.
+	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다. 횟수는 서버가 보낸 값으로만 바뀌고 남은 시간은 표시만 센다.
 	void SetPickaxeCharges(int32 charges, int32 remaining_ms);
 	// 기절을 시작한다. 별 이펙트를 켜고, 내 캐릭터면 조준·점프를 풀고 멈춘 뒤 시점 회전을 포함한 모든 입력을 막고 게이지를 가득 채워 둔다. 끝나면 게이지는 0이다.
 	// 기절이 끝나면 보호 시간 동안 머리 위에 방패 이펙트를 켜고, 내 캐릭터면 게이지 아이콘을 방패로 바꿔 남은 초를 표시한다. 진행 중인 탐색은 취소한다.
@@ -93,6 +95,8 @@ public:
 	FOnActionStarted on_action_started_;
 	// 마지막으로 시작한 동작의 실제 시각(FPlatformTime 초). 발사 간격을 이 시각으로 세고, 서버로 보내는 동작 시각도 이 값으로 만든다.
 	double GetActionRealTime() const { return action_real_time_; }
+	// 마지막으로 다른 무기로 바꾼 실제 시각(FPlatformTime 초). 서버로 보내는 장비 교체 시각을 이 값으로 만든다.
+	double GetEquipRealTime() const { return equip_real_time_; }
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	FEquipmentDisplay GetEquipmentDisplay() const;
@@ -165,7 +169,6 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type end_play_reason) override;
 	virtual void PostInitializeComponents() override;
-	virtual void OnMovementModeChanged(EMovementMode previous_movement_mode, uint8 previous_custom_mode) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* player_input_component) override;
 	virtual void CalcCamera(float delta_time, FMinimalViewInfo& out_result) override;
 
@@ -296,6 +299,9 @@ private:
 	// 무기마다 다음 발사를 할 수 있는 실제 시각(FPlatformTime 초)
 	TMap<EWeaponType, double> next_fire_times_;
 	double action_real_time_ = 0.0;
+	double equip_real_time_ = 0.0;
+	// 다음 줍기를 할 수 있는 실제 시각(FPlatformTime 초). 줍기 동작이 끝나기 전에는 다시 줍지 않는다. 서버도 같은 조건으로 막는다.
+	double next_pickup_real_time_ = 0.0;
 
 	UPROPERTY(Transient)
 	TArray<FInventoryHint> acquired_hints_;
@@ -334,12 +340,14 @@ private:
 	void PlayMuzzleEffect(const FHitscanSettings& settings);
 	void PlayFireSound(const FHitscanSettings& settings) const;
 	void PlayReloadSound(EWeaponType weapon) const;
+	// 들고 있는 총의 재장전을 시작하고 서버에 알린다.
 	void BeginReload(EWeaponType weapon);
-	void FinishReload(EWeaponType weapon);
+	// 재장전 중 상태로 두고 재장전 동작을 재생한다.
+	void StartReloadState(EWeaponType weapon);
 	void PlayReloadAnimation(EWeaponType weapon);
 	void UpdateStunGaugeDisplay();
-	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채우고 장비·인벤토리 표시를 고친다. 다 차면 충전 표시 타이머를 멈춘다.
-	void UpdatePickaxeCharges();
+	// 곡괭이 남은 충전 시간 표시를 고친다.
+	void UpdatePickaxeChargeDisplay();
 	// 남은 보호 시간을 게이지에 표시하고, 다 되면 보호를 끝낸다.
 	void UpdateProtection();
 	void EndProtection();
