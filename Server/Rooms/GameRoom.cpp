@@ -382,16 +382,18 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		break;
 	}
 	case C2S_TREASURE_REVEAL: {
-		// 시험용이라 방장이 요청할 때만 플레이 중인 전원에게 보물 위치를 알려 준다. 혼자 하는 방에서는 그 사람이 방장이다.
-		if (room_state_.load() != RoomState::PLAY || request_session.GetSessionKey().player_id != host_id_) break;
-		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
-		S2C_TREASURE_REVEAL_PACKET reveal_p;
-		reveal_p.header = { static_cast<std::uint16_t>(sizeof(reveal_p)), S2C_TREASURE_REVEAL };
-		reveal_p.location[0] = treasure_placement_.location.x;
-		reveal_p.location[1] = treasure_placement_.location.y;
-		reveal_p.location[2] = treasure_placement_.location.z;
-		SendToPlaying(reinterpret_cast<char*>(&reveal_p), reveal_p.header.size);
+		// 시험용이라 설정으로 켰을 때 방장이 요청할 때만 플레이 중인 전원에게 보물 위치를 알려 준다. 혼자 하는 방에서는 그 사람이 방장이다.
+		if constexpr (IS_TREASURE_REVEAL_ENABLED) {
+			if (room_state_.load() != RoomState::PLAY || request_session.GetSessionKey().player_id != host_id_) break;
+			auto* room_player = FindPlayer(request_session.GetSessionKey());
+			if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+			S2C_TREASURE_REVEAL_PACKET reveal_p;
+			reveal_p.header = { static_cast<std::uint16_t>(sizeof(reveal_p)), S2C_TREASURE_REVEAL };
+			reveal_p.location[0] = treasure_placement_.location.x;
+			reveal_p.location[1] = treasure_placement_.location.y;
+			reveal_p.location[2] = treasure_placement_.location.z;
+			SendToPlaying(reinterpret_cast<char*>(&reveal_p), reveal_p.header.size);
+		}
 		break;
 	}
 	case C2S_AWARD_DONE: {

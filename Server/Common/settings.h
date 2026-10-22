@@ -46,6 +46,8 @@ constexpr int GAME_END_WAIT_MS = 10000; // 보물을 발견한 뒤 게임을 끝
 constexpr int AWARD_SCENE_MS = 5000; // 시상식에서 부문 하나를 보여 주는 시간
 constexpr int AWARD_END_MARGIN_MS = 1000; // 시상식이 끝난 뒤 방으로 돌려보낼 때까지 더 기다리는 시간. 마지막 화면 전환이 끝나게 둔다.
 constexpr float TREASURE_EDGE_MARGIN = 1000.0f; // 맵 경계에서 이만큼(cm) 안쪽에만 보물을 놓는다. 경계 너머 배경 산이 플레이 영역 가장자리를 덮는 곳이 있다.
+// 시험용 보물 위치 공개. 켜면 방장의 요청(클라이언트 F9)에 플레이 중인 전원에게 보물 위치를 알려 준다. 꺼져 있으면 요청을 버린다.
+constexpr bool IS_TREASURE_REVEAL_ENABLED = false;
 
 // 개수 힌트. 판마다 물체 종류마다 반경마다 하나씩, 보물 바닥에서 그 반경(cm) 안에 그 종류 물체가 몇 개 있는지 알려 준다.
 constexpr float HINT_OBJECT_COUNT_RADII[] = { 3000.0f, 1000.0f };
