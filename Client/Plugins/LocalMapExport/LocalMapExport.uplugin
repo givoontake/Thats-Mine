@@ -1,0 +1,1 @@
+{"FileVersion":3,"Version":1,"VersionName":"1.0","FriendlyName":"Local Map Export","EnabledByDefault":true,"CanContainContent":false,"Modules":[{"Name":"LocalMapExport","Type":"Editor","LoadingPhase":"Default"}]}
