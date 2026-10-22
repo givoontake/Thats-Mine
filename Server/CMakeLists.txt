@@ -23,6 +23,7 @@ add_executable(GameServer
     Core/main.cpp
     Core/GameServer.cpp
     Game/Player.cpp
+    Game/PlayerActionState.cpp
     Game/move_prediction.cpp
     Game/Boxes/BoxCandidateData.cpp
     Game/Boxes/BoxShapeData.cpp
@@ -81,6 +82,7 @@ add_executable(GameServer
     Database/db_login_result.h
     Database/db_login_task.h
     Game/Player.h
+    Game/PlayerActionState.h
     Game/weapon_ammo.h
     Game/move_prediction.h
     Game/player_snapshot.h

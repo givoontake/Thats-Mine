@@ -16,6 +16,13 @@ struct WeaponAmmo {
 	long long spread_time_ms = 0;
 };
 
+// 퍼짐 크기를 정할 쏜 사람의 상태. 조준·공중 여부는 막 바뀐 상태를 봐준 값이고, 수평 속도는 마지막으로 인정한 이동 상태의 값(cm/s)이다.
+struct ShotSpreadInput {
+	bool is_aimed;
+	bool is_falling;
+	float horizontal_speed;
+};
+
 // 인정한 발사 하나. 이번 게임에서 그 무기의 발사 번호와 서버가 정한 퍼짐 크기(도)다.
 struct FiredShot {
 	std::uint32_t shot_index;

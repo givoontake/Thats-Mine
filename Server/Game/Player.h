@@ -15,6 +15,7 @@
 #include "weapon_ammo.h"
 #include "air_state.h"
 #include "player_snapshot.h"
+#include "PlayerActionState.h"
 
 class MapData;
 
@@ -29,11 +30,10 @@ class Player
 	// 중계 간격 안에 여러 번 받으면 최신 이동 상태만 남긴다. 공중 단계가 바뀌었거나 서버가 이동을 멈췄으면 간격을 기다리지 않고 다음 틱에 중계한다.
 	MOVE_STATE move_state_{};
 	long long move_time_ms_ = 0;
-	// 마지막으로 받은 이동 키 입력(-127~127), 조준 여부, 손에 든 장비(WeaponType)
+	// 마지막으로 받은 이동 키 입력(-127~127)과 조준 여부
 	std::int8_t input_right_ = 0;
 	std::int8_t input_forward_ = 0;
 	bool is_aiming_ = false;
-	std::uint8_t weapon_ = 0;
 	// 마지막으로 인정한 위치 뒤로 받은 입력과 조준 중 가장 빠른 땅 이동 속도 상한(cm/s). 다음 위치를 검사할 때 쓴다.
 	float move_speed_cap_ = MOVE_SPEED_FORWARD;
 	// 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
@@ -73,11 +73,8 @@ class Player
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
 	std::uint32_t move_correction_id_ = 0;
 	bool is_awaiting_move_correction_ = false;
-	// 무기 값 순서의 탄약 상태. 게임마다 탄과 탄창 없이 시작한다.
-	std::vector<WeaponAmmo> ammo_;
-	// 곡괭이 사용 가능 횟수와, 최대치보다 적을 때 지금 1번이 차기 시작한 시각(ms). 다 차 있으면 0이다.
-	int pickaxe_charges_ = PICKAXE_MAX_CHARGES;
-	long long pickaxe_charge_start_ms_ = 0;
+	// 손에 든 장비, 탄약, 곡괭이 사용 횟수
+	PlayerActionState action_state_;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
 	std::vector<std::uint32_t> hint_indices_;
 	// 이번 게임에서 얻은 아이템. 종류마다 가진 가장 높은 등급이고 없으면 NO_ITEM_GRADE다.
@@ -93,10 +90,7 @@ class Player
 	std::array<long long, static_cast<std::size_t>(AwardCategory::COUNT)> award_reach_ms_{};
 
 	void ClearStun();
-	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채운다.
-	void UpdatePickaxeCharges(long long time_ms);
 	// 가진 아이템을 적용한 값. 아이템이 없으면 기본값이다.
-	int GetPickaxeChargeMs() const;
 	float GetStunGaugeDecayPerSecond() const;
 	int GetStunGaugeDecayDelayMs() const;
 
@@ -152,7 +146,12 @@ public:
 	std::int8_t GetInputRight() const { return input_right_; }
 	std::int8_t GetInputForward() const { return input_forward_; }
 	bool IsAiming() const { return is_aiming_; }
-	std::uint8_t GetWeapon() const { return weapon_; }
+	PlayerActionState& GetActionState() { return action_state_; }
+	const PlayerActionState& GetActionState() const { return action_state_; }
+	// 가진 아이템을 적용한 곡괭이 1번 충전 시간(ms)
+	int GetPickaxeChargeMs() const;
+	// time_ms에 쏠 때 퍼짐 크기를 정할 상태. 공중이나 조준하지 않은 상태는 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 상태로 본다.
+	ShotSpreadInput GetShotSpreadInput(long long time_ms) const;
 
 	void SetRoomPlayerState(RoomPlayerState new_state) { return room_player_state_.store(new_state); }
 
@@ -165,8 +164,6 @@ public:
 	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_on_steep_slope, bool is_open_air);
 	void SetMoveInput(std::int8_t input_right, std::int8_t input_forward);
 	void SetAiming(bool is_aiming, long long time_ms);
-	// 손에 든 장비를 바꾼다. 판정용 자세도 꺼내기 동작을 시작한다.
-	void SetWeapon(std::uint8_t weapon, long long time_ms);
 	// 스폰 자리를 마지막으로 인정한 위치로 둔다. 첫 이동 상태도 이 위치와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
 	void SetSpawnLocation(const float location[3], float yaw, long long time_ms);
 	void MarkMoveStateRelayed();
@@ -184,27 +181,6 @@ public:
 	std::uint32_t StartMoveCorrection(const float location[3], float velocity_z, const AirState& air, long long time_ms);
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.
 	void CompleteMoveCorrection(std::uint32_t correction_id);
-	// 무기 수만큼 탄약 상태를 탄과 탄창 없이 만든다.
-	void ResetAmmo(std::size_t weapon_count);
-	const WeaponAmmo* GetAmmo(std::uint8_t weapon) const { return weapon < ammo_.size() ? &ammo_[weapon] : nullptr; }
-	// 모든 무기의 발사 간격 검증 기준을 동기화로 보낸 서버 시각으로 채우고 보상을 비운다.
-	void ResetFireBasis(long long time_ms);
-	// 재장전 중이 아니고 탄이 있고 발사 간격 검증을 통과하면 탄 하나를 쓰고 인정한다. 인정하면 발사 번호와 그 발의 퍼짐 크기를 정하고 연사 누적을 늘린다.
-	// time_ms는 서버가 받은 시각, action_time_ms는 클라이언트가 보낸 동작 시각이다. 인정하지 않으면 값이 없다.
-	std::optional<FiredShot> TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms);
-	// 재장전 중이 아니고 탄창이 가득 차 있지 않고 소지 탄이 있으면 재장전을 시작한다.
-	bool TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
-	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채우고 true를 돌려준다.
-	bool FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
-	// 소지 탄을 count발 늘린다.
-	void AddSpareRounds(std::uint8_t weapon, int count);
-	// 곡괭이 사용 가능 횟수를 최대치로 채운다.
-	void ResetPickaxe();
-	// 사용 가능 횟수가 있으면 1번 쓰고 인정한다. 최대치에서 쓰면 충전을 시작한다.
-	bool TryUsePickaxe(long long time_ms);
-	int GetPickaxeCharges() const { return pickaxe_charges_; }
-	// 다음 1번이 찰 때까지 남은 시간(ms). 다 차 있으면 0이다.
-	long long GetPickaxeChargeRemainingMs(long long time_ms) const;
 	// 아이템을 가진다. 지금보다 높은 등급일 때만 바꾼다.
 	void AddItem(ItemKind kind, std::uint8_t grade);
 	// 아이템을 모두 잃는다.

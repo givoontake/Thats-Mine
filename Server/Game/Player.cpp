@@ -41,8 +41,7 @@ void Player::ClearPlayer()
 	ClearSendBuffer();
 	ClearMoveState();
 	ClearStun();
-	ammo_.clear();
-	ResetPickaxe();
+	action_state_.Clear();
 	ResetHints();
 	ResetItems();
 	ResetBlocks();
@@ -57,8 +56,7 @@ void Player::ResetGameData()
 	ClearSendBuffer();
 	ClearMoveState();
 	ClearStun();
-	ammo_.clear();
-	ResetPickaxe();
+	action_state_.Clear();
 	ResetHints();
 	ResetItems();
 	ResetBlocks();
@@ -73,78 +71,13 @@ void Player::AddAwardCount(AwardCategory category, long long time_ms)
 	award_reach_ms_[static_cast<std::size_t>(category)] = time_ms;
 }
 
-void Player::ResetAmmo(std::size_t weapon_count)
+ShotSpreadInput Player::GetShotSpreadInput(long long time_ms) const
 {
-	ammo_.assign(weapon_count, WeaponAmmo{});
-}
-
-void Player::ResetFireBasis(long long time_ms)
-{
-	for (WeaponAmmo& ammo : ammo_) {
-		ammo.last_fire_action_ms = static_cast<std::uint32_t>(time_ms);
-		ammo.last_fire_receive_ms = time_ms;
-		ammo.fire_reward_ms = 0;
-	}
-}
-
-std::optional<FiredShot> Player::TryFire(std::uint8_t weapon, const WeaponInfo& info, long long time_ms, std::uint32_t action_time_ms)
-{
-	if (weapon >= ammo_.size()) return std::nullopt;
-	WeaponAmmo& ammo = ammo_[weapon];
-	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0) return std::nullopt;
-	// 동작 시각은 받은 서버 시각에 흐른 시간을 더한 값이라 서버가 받은 시각보다 늦을 수 없다. 시각은 32비트로 돌아가므로 차이로 본다.
-	if (static_cast<std::int32_t>(action_time_ms - static_cast<std::uint32_t>(time_ms)) > 0) return std::nullopt;
-	const long long interval_ms = static_cast<std::int32_t>(action_time_ms - ammo.last_fire_action_ms);
-	const long long fire_interval_ms = static_cast<long long>(info.fire_interval * 1000.0f);
-	const long long usable_reward_ms = ammo.fire_reward_ms >= 0 ? ammo.fire_reward_ms : std::min(0LL, ammo.fire_reward_ms + FIRE_DEBT_FREE_MS);
-	if (interval_ms + usable_reward_ms < fire_interval_ms) return std::nullopt;
-	// 간격이 모자라면 모자란 만큼 보상을 쓰고, 남으면 남은 만큼 지난 보상이나 빚을 0 쪽으로 줄인다. 그 뒤 서버가 받은 간격과 동작 시각 간격의 차이를 더한다.
-	if (interval_ms < fire_interval_ms) ammo.fire_reward_ms -= fire_interval_ms - interval_ms;
-	else if (ammo.fire_reward_ms > 0) ammo.fire_reward_ms = std::max(0LL, ammo.fire_reward_ms - (interval_ms - fire_interval_ms));
-	else ammo.fire_reward_ms = std::min(0LL, ammo.fire_reward_ms + (interval_ms - fire_interval_ms));
-	ammo.fire_reward_ms = std::min(FIRE_REWARD_MAX_MS, ammo.fire_reward_ms + (time_ms - ammo.last_fire_receive_ms) - interval_ms);
-	ammo.last_fire_action_ms = action_time_ms;
-	ammo.last_fire_receive_ms = time_ms;
-	--ammo.rounds;
-	// 서버가 받은 발사 간격과 상태 변화는 지연 때문에 실제와 다를 수 있어, 퍼짐 크기는 연사 열기를 더 회복하고 막 바뀐 상태는 유리한 쪽으로 본다.
-	// 조준한 채 움직이는지는 마지막으로 인정한 이동 상태의 수평 속도로 본다.
-	const ShotSpreadSettings& spread = GetShotSpreadSettings(weapon);
-	const float elapsed_seconds = (time_ms - ammo.spread_time_ms) / 1000.0f;
+	// 서버가 받은 상태 변화는 지연 때문에 실제와 다를 수 있어, 막 바뀐 상태는 유리한 쪽으로 본다. 조준한 채 움직이는지는 마지막으로 인정한 이동 상태의 수평 속도로 본다.
 	const bool has_state = HasMoveState();
 	const bool is_falling = has_state && move_state_.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
 	const bool is_unaimed = !has_state || (!is_aiming_ && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
-	const float horizontal_speed = std::hypot(move_state_.velocity[0], move_state_.velocity[1]);
-	const FiredShot shot{ ammo.shot_count++, GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), !is_unaimed, horizontal_speed, is_falling) };
-	ammo.spread_heat = AddShotHeat(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds, info.fire_interval));
-	ammo.spread_time_ms = time_ms;
-	return shot;
-}
-
-bool Player::TryStartReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
-{
-	if (weapon >= ammo_.size()) return false;
-	WeaponAmmo& ammo = ammo_[weapon];
-	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= static_cast<int>(info.magazine_capacity)) return false;
-	ammo.reload_end_ms = time_ms + static_cast<long long>(info.reload_duration * 1000.0f);
-	return true;
-}
-
-bool Player::FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
-{
-	if (weapon >= ammo_.size()) return false;
-	WeaponAmmo& ammo = ammo_[weapon];
-	if (ammo.reload_end_ms == 0 || time_ms < ammo.reload_end_ms) return false;
-	ammo.reload_end_ms = 0;
-	const int loaded = std::min(static_cast<int>(info.magazine_capacity) - ammo.rounds, ammo.spare_rounds);
-	ammo.rounds += loaded;
-	ammo.spare_rounds -= loaded;
-	return true;
-}
-
-void Player::AddSpareRounds(std::uint8_t weapon, int count)
-{
-	if (weapon >= ammo_.size()) return;
-	ammo_[weapon].spare_rounds += count;
+	return { !is_unaimed, is_falling, std::hypot(move_state_.velocity[0], move_state_.velocity[1]) };
 }
 
 bool Player::AddHint(std::uint32_t hint)
@@ -162,39 +95,6 @@ std::optional<std::uint32_t> Player::TakeRandomHint()
 	const std::uint32_t hint = hint_indices_[index];
 	hint_indices_.erase(hint_indices_.begin() + index);
 	return hint;
-}
-
-void Player::ResetPickaxe()
-{
-	pickaxe_charges_ = PICKAXE_MAX_CHARGES;
-	pickaxe_charge_start_ms_ = 0;
-}
-
-void Player::UpdatePickaxeCharges(long long time_ms)
-{
-	if (pickaxe_charge_start_ms_ == 0) return;
-	const int charge_ms = GetPickaxeChargeMs();
-	const long long gained = (time_ms - pickaxe_charge_start_ms_) / charge_ms;
-	if (gained <= 0) return;
-	pickaxe_charges_ = static_cast<int>(std::min<long long>(PICKAXE_MAX_CHARGES, pickaxe_charges_ + gained));
-	pickaxe_charge_start_ms_ = pickaxe_charges_ == PICKAXE_MAX_CHARGES ? 0 : pickaxe_charge_start_ms_ + gained * charge_ms;
-}
-
-bool Player::TryUsePickaxe(long long time_ms)
-{
-	UpdatePickaxeCharges(time_ms);
-	if (pickaxe_charges_ <= 0) return false;
-	// 충전은 서버가 받은 시각부터 센다.
-	if (pickaxe_charges_ == PICKAXE_MAX_CHARGES) pickaxe_charge_start_ms_ = time_ms;
-	--pickaxe_charges_;
-	return true;
-}
-
-long long Player::GetPickaxeChargeRemainingMs(long long time_ms) const
-{
-	if (pickaxe_charge_start_ms_ == 0) return 0;
-	const int charge_ms = GetPickaxeChargeMs();
-	return charge_ms - (time_ms - pickaxe_charge_start_ms_) % charge_ms;
 }
 
 int Player::GetPickaxeChargeMs() const
@@ -283,12 +183,6 @@ void Player::SetAiming(bool is_aiming, long long time_ms)
 	is_aiming_ = is_aiming;
 	move_speed_cap_ = std::max(move_speed_cap_, GetMaxMoveSpeed(input_forward_, is_aiming_));
 	pose_.SetAiming(is_aiming);
-}
-
-void Player::SetWeapon(std::uint8_t weapon, long long time_ms)
-{
-	weapon_ = weapon;
-	pose_.ChangeWeapon(weapon, time_ms);
 }
 
 void Player::SetSpawnLocation(const float location[3], float yaw, long long time_ms)
@@ -493,7 +387,7 @@ void Player::ClearMoveState()
 	input_right_ = 0;
 	input_forward_ = 0;
 	is_aiming_ = false;
-	weapon_ = 0;
+	action_state_.ResetWeapon();
 	move_speed_cap_ = MOVE_SPEED_FORWARD;
 	is_awaiting_move_correction_ = false;
 	history_start_ = 0;

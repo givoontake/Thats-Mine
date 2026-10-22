@@ -327,7 +327,8 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		else {
 			const std::uint8_t weapon = reinterpret_cast<C2S_EQUIP_PACKET*>(packet)->weapon;
 			if (!server_->GetHitboxData().GetWeaponInfo(weapon)) break;
-			room_player->SetWeapon(weapon, tick_time_ms_);
+			room_player->GetActionState().SetWeapon(weapon);
+			room_player->GetPose().ChangeWeapon(weapon, tick_time_ms_);
 			const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, weapon };
 			QueueRelay(&equip_p, sizeof(equip_p));
 		}
@@ -346,7 +347,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const bool is_reload = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_RELOAD;
 		const PlayerAction action = is_reload ? PlayerAction::RELOAD : static_cast<PlayerAction>(reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action);
-		const std::uint8_t weapon = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->weapon : room_player->GetWeapon();
+		const std::uint8_t weapon = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->weapon : room_player->GetActionState().GetWeapon();
 		const bool can_act = action <= PlayerAction::PICKUP && action != PlayerAction::FIRE && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_time_ms_);
 		if (!can_act || !AcceptAction(*room_player, request_session, action, weapon, receive_time_ms)) break;
 		const int player_id = request_session.GetSessionKey().player_id;
@@ -703,8 +704,7 @@ void GameRoom::StartGame(int requester_id)
 	for (auto& room_player : room_players) {
 		if (!FindSession(room_player)) continue;
 		room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
-		room_player.ResetAmmo(server_->GetHitboxData().GetWeaponCount());
-		room_player.ResetPickaxe();
+		room_player.GetActionState().Reset(server_->GetHitboxData().GetWeaponCount());
 		room_player.ResetHints();
 		room_player.ResetItems();
 		++player_count;
@@ -927,7 +927,7 @@ int GameRoom::AppendInputState(char* buffer, const Player& player) const
 	const int player_id = player.GetSessionKey().player_id;
 	const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, player.GetInputRight(), player.GetInputForward() };
 	const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, player.IsAiming() };
-	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, player.GetWeapon() };
+	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, player.GetActionState().GetWeapon() };
 	std::memcpy(buffer, &input_p, sizeof(input_p));
 	std::memcpy(buffer + sizeof(input_p), &aim_p, sizeof(aim_p));
 	std::memcpy(buffer + sizeof(input_p) + sizeof(aim_p), &equip_p, sizeof(equip_p));
@@ -1001,7 +1001,7 @@ void GameRoom::ProcessLoadedPlayers()
 			sync_p.header = { static_cast<std::uint16_t>(sizeof(sync_p)), S2C_TIME_SYNC };
 			sync_p.server_time_ms = static_cast<std::uint32_t>(tick_time_ms_);
 			session->SendPacket(reinterpret_cast<char*>(&sync_p), sync_p.header.size);
-			room_player.ResetFireBasis(tick_time_ms_);
+			room_player.GetActionState().ResetFireBasis(tick_time_ms_);
 			if (match_phase_ == MatchPhase::STARTED) {
 				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
 				session->SendLargePacket(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
@@ -1033,20 +1033,20 @@ void GameRoom::ProcessLoadedPlayers()
 bool GameRoom::AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon_value, long long time_ms)
 {
 	if (action == PlayerAction::MELEE && weapon_value == static_cast<std::uint8_t>(WeaponType::PICKAXE)) {
-		if (player.TryUsePickaxe(time_ms)) {
+		if (player.GetActionState().TryUsePickaxe(time_ms, player.GetPickaxeChargeMs())) {
 			DigTreasure(player);
 			return true;
 		}
 		S2C_PICKAXE_CHARGES_PACKET charges_p;
 		charges_p.header = { static_cast<std::uint16_t>(sizeof(charges_p)), S2C_PICKAXE_CHARGES };
-		charges_p.charges = static_cast<std::uint8_t>(player.GetPickaxeCharges());
-		charges_p.remaining_ms = static_cast<std::uint32_t>(player.GetPickaxeChargeRemainingMs(time_ms));
+		charges_p.charges = static_cast<std::uint8_t>(player.GetActionState().GetPickaxeCharges());
+		charges_p.remaining_ms = static_cast<std::uint32_t>(player.GetActionState().GetPickaxeChargeRemainingMs(time_ms, player.GetPickaxeChargeMs()));
 		session.SendPacket(reinterpret_cast<char*>(&charges_p), charges_p.header.size);
 		return false;
 	}
 	const WeaponInfo* weapon = server_->GetHitboxData().GetWeaponInfo(weapon_value);
 	if (!weapon || !weapon->is_hitscan || action != PlayerAction::RELOAD) return true;
-	return player.TryStartReload(weapon_value, *weapon, time_ms);
+	return player.GetActionState().TryStartReload(weapon_value, *weapon, time_ms);
 }
 
 // 쏜 사람 이동 상태의 위치와 몸 방향으로 탄 광선 시작점(캡슐 안 어깨 고정점)을 구한다. 클라이언트도 같은 식으로 구한다.
@@ -1065,19 +1065,19 @@ static DirectX::XMFLOAT3 GetShotOrigin(const MOVE_STATE& move_state)
 void GameRoom::ProcessFire(Player& shooter, Session& session, const C2S_FIRE_PACKET& request_p, long long time_ms)
 {
 	const HitboxData& data = server_->GetHitboxData();
-	const std::uint8_t weapon = shooter.GetWeapon();
+	const std::uint8_t weapon = shooter.GetActionState().GetWeapon();
 	const WeaponInfo* info = data.GetWeaponInfo(weapon);
 	if (!data.IsLoaded() || !info || !info->is_hitscan || !shooter.HasMoveState() || shooter.IsAwaitingMoveCorrection()) return;
 	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
 	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
 	if (!std::isfinite(aim_length) || aim_length < 0.5f) return;
-	const std::optional<FiredShot> shot = shooter.TryFire(weapon, *info, time_ms, request_p.action_time_ms);
+	const std::optional<FiredShot> shot = shooter.GetActionState().TryFire(weapon, *info, shooter.GetShotSpreadInput(time_ms), time_ms, request_p.action_time_ms);
 	if (!shot) return;
 
 	S2C_AMMO_USE_PACKET use_p;
 	use_p.header = { static_cast<std::uint16_t>(sizeof(use_p)), S2C_AMMO_USE };
 	use_p.weapon = weapon;
-	use_p.rounds = static_cast<std::uint16_t>(shooter.GetAmmo(weapon)->rounds);
+	use_p.rounds = static_cast<std::uint16_t>(shooter.GetActionState().GetAmmo(weapon)->rounds);
 	session.SendPacket(reinterpret_cast<char*>(&use_p), use_p.header.size);
 	const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, shooter.GetSessionKey().player_id, static_cast<std::uint8_t>(PlayerAction::FIRE) };
 	QueueRelay(&action_p, sizeof(action_p));
@@ -1333,8 +1333,8 @@ void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box, bool is_shot)
 	}
 	else {
 		const std::uint8_t weapon = static_cast<std::uint8_t>(content.value);
-		if (opener.GetAmmo(weapon)) {
-			opener.AddSpareRounds(weapon, AMMO_BOX_ROUNDS[weapon]);
+		if (opener.GetActionState().GetAmmo(weapon)) {
+			opener.GetActionState().AddSpareRounds(weapon, AMMO_BOX_ROUNDS[weapon]);
 			S2C_AMMO_GAIN_PACKET gain_p;
 			gain_p.header = { static_cast<std::uint16_t>(sizeof(gain_p)), S2C_AMMO_GAIN };
 			gain_p.weapon = weapon;
@@ -1514,9 +1514,9 @@ void GameRoom::ProcessReloadDone()
 	for (auto& room_player : room_players_) {
 		auto session = FindSession(room_player);
 		if (!session || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		for (std::uint8_t weapon = 0; const WeaponAmmo* ammo = room_player.GetAmmo(weapon); ++weapon) {
+		for (std::uint8_t weapon = 0; const WeaponAmmo* ammo = room_player.GetActionState().GetAmmo(weapon); ++weapon) {
 			const WeaponInfo* info = server_->GetHitboxData().GetWeaponInfo(weapon);
-			if (!info || !room_player.FinishReload(weapon, *info, tick_time_ms_)) continue;
+			if (!info || !room_player.GetActionState().FinishReload(weapon, *info, tick_time_ms_)) continue;
 			S2C_RELOAD_DONE_PACKET done_p;
 			done_p.header = { static_cast<std::uint16_t>(sizeof(done_p)), S2C_RELOAD_DONE };
 			done_p.weapon = weapon;
