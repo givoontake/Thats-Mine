@@ -70,7 +70,6 @@ add_executable(GameServer
     Common/enum_class.h
     Common/error_code.h
     Common/hint_meshes.h
-    Common/hint_object_file.h
     Common/IndexRegistry.h
     Common/settings.h
     Common/random_seed.h

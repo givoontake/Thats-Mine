@@ -1,60 +1,134 @@
 #include "HintObjectSubsystem.h"
 
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "FoliageType.h"
+#include "InstancedFoliage.h"
+#include "InstancedFoliageActor.h"
+#include "hint_meshes.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHintObject, Log, All);
 
-// 힌트 물체 목록 파일. 서버를 --export-hint-objects로 실행해 만들고, 패키징할 때 Content/Data 폴더를 함께 넣는다.
-static const TCHAR* HINT_OBJECT_PATH = TEXT("Data/hint_objects.bin");
-
-void UHintObjectSubsystem::Initialize(FSubsystemCollectionBase& collection)
+bool UHintObjectSubsystem::DoesSupportWorldType(const EWorldType::Type world_type) const
 {
-	Super::Initialize(collection);
-	TArray<uint8> data;
-	uint32 count = 0;
-	if (!FFileHelper::LoadFileToArray(data, *(FPaths::ProjectContentDir() / HINT_OBJECT_PATH)) || data.Num() < sizeof(count))
+	return world_type == EWorldType::Game || world_type == EWorldType::PIE;
+}
+
+// 서버가 맵 데이터 항목 이름으로 찾는 것처럼, 폴리지는 폴리지 종류 이름을 먼저 보고 없으면 메시 이름을 본다. 배치물은 메시 이름을 본다.
+// 맵 범위 밖의 물체는 서버처럼 넣지 않는다.
+void UHintObjectSubsystem::OnWorldBeginPlay(UWorld& world)
+{
+	Super::OnWorldBeginPlay(world);
+	const double start_time = FPlatformTime::Seconds();
+	TMap<FString, uint8> kinds;
+	for (const HintMesh& entry : HINT_MESHES)
 	{
-		UE_LOG(LogHintObject, Error, TEXT("Hint object file not found."));
-		return;
+		kinds.Add(ANSI_TO_TCHAR(entry.name), static_cast<uint8>(entry.kind));
 	}
-	FMemory::Memcpy(&count, data.GetData(), sizeof(count));
-	if (data.Num() != sizeof(count) + count * sizeof(HintObjectRecord))
+	TArray<FHintObjectPoint> points;
+	const auto add_location = [&points](const FVector& location, uint8 kind)
 	{
-		UE_LOG(LogHintObject, Error, TEXT("Invalid hint object file."));
-		return;
-	}
-	const HintObjectRecord* records = reinterpret_cast<const HintObjectRecord*>(data.GetData() + sizeof(count));
-	for (uint32 index = 0; index < count; ++index)
-	{
-		const HintObjectRecord& record = records[index];
-		if (record.kind < static_cast<uint8>(HintObjectKind::COUNT))
+		if (location.X >= MAP_MIN[0] && location.X <= MAP_MAX[0] && location.Y >= MAP_MIN[1] && location.Y <= MAP_MAX[1])
 		{
-			cells_.FindOrAdd(FIntPoint(FMath::FloorToInt32(record.location[0] / CELL_SIZE), FMath::FloorToInt32(record.location[1] / CELL_SIZE))).Add(record);
+			points.Add({ FVector3f(location), kind });
+		}
+	};
+	const auto add_component = [&add_location](const UStaticMeshComponent* component, uint8 kind)
+	{
+		if (const UInstancedStaticMeshComponent* instanced = Cast<UInstancedStaticMeshComponent>(component))
+		{
+			FTransform transform;
+			for (int32 index = 0; index < instanced->GetInstanceCount(); ++index)
+			{
+				if (instanced->GetInstanceTransform(index, transform, true))
+				{
+					add_location(transform.GetLocation(), kind);
+				}
+			}
+			return;
+		}
+		add_location(component->GetComponentLocation(), kind);
+	};
+	for (TActorIterator<AActor> actor(&world); actor; ++actor)
+	{
+		if (AInstancedFoliageActor* foliage_actor = Cast<AInstancedFoliageActor>(*actor))
+		{
+			foliage_actor->ForEachFoliageInfo([&kinds, &add_component](UFoliageType* foliage_type, FFoliageInfo& info)
+			{
+				const UHierarchicalInstancedStaticMeshComponent* component = info.GetComponent();
+				if (component && component->GetStaticMesh())
+				{
+					const uint8* kind = kinds.Find(foliage_type->GetName());
+					kind = kind ? kind : kinds.Find(component->GetStaticMesh()->GetName());
+					if (kind)
+					{
+						add_component(component, *kind);
+					}
+				}
+				return true;
+			});
+			continue;
+		}
+		TInlineComponentArray<UStaticMeshComponent*> components(*actor);
+		for (const UStaticMeshComponent* component : components)
+		{
+			const uint8* kind = component->GetStaticMesh() ? kinds.Find(component->GetStaticMesh()->GetName()) : nullptr;
+			if (kind)
+			{
+				add_component(component, *kind);
+			}
 		}
 	}
+
+	// 칸마다 물체 수를 센 뒤 시작 위치를 정하고 칸 순서로 옮긴다.
+	const auto get_cell = [](const FVector3f& location)
+	{
+		const int32 cell_x = FMath::Clamp(FMath::FloorToInt32((location.X - MAP_MIN[0]) / CELL_SIZE), 0, GRID_X - 1);
+		const int32 cell_y = FMath::Clamp(FMath::FloorToInt32((location.Y - MAP_MIN[1]) / CELL_SIZE), 0, GRID_Y - 1);
+		return cell_y * GRID_X + cell_x;
+	};
+	cell_starts_.Init(0, GRID_X * GRID_Y + 1);
+	for (const FHintObjectPoint& point : points)
+	{
+		++cell_starts_[get_cell(point.location) + 1];
+	}
+	for (int32 cell = 0; cell < GRID_X * GRID_Y; ++cell)
+	{
+		cell_starts_[cell + 1] += cell_starts_[cell];
+	}
+	TArray<int32> cursors(cell_starts_.GetData(), GRID_X * GRID_Y);
+	points_.SetNumUninitialized(points.Num());
+	for (const FHintObjectPoint& point : points)
+	{
+		points_[cursors[get_cell(point.location)]++] = point;
+	}
+	UE_LOG(LogHintObject, Display, TEXT("Hint objects: %d (%.1f ms)"), points_.Num(), (FPlatformTime::Seconds() - start_time) * 1000.0);
 }
 
 TArray<int32> UHintObjectSubsystem::CountKinds(const FVector& location, float radius) const
 {
 	TArray<int32> counts;
 	counts.Init(0, static_cast<int32>(HintObjectKind::COUNT));
-	const FIntPoint center(FMath::FloorToInt32(location.X / CELL_SIZE), FMath::FloorToInt32(location.Y / CELL_SIZE));
-	const double radius_sq = FMath::Square(static_cast<double>(radius));
-	for (int32 x = center.X - 1; x <= center.X + 1; ++x)
+	if (cell_starts_.IsEmpty())
 	{
-		for (int32 y = center.Y - 1; y <= center.Y + 1; ++y)
+		return counts;
+	}
+	const int32 center_x = FMath::FloorToInt32((location.X - MAP_MIN[0]) / CELL_SIZE);
+	const int32 center_y = FMath::FloorToInt32((location.Y - MAP_MIN[1]) / CELL_SIZE);
+	const double radius_sq = FMath::Square(static_cast<double>(radius));
+	for (int32 cell_y = FMath::Max(center_y - 1, 0); cell_y <= FMath::Min(center_y + 1, GRID_Y - 1); ++cell_y)
+	{
+		for (int32 cell_x = FMath::Max(center_x - 1, 0); cell_x <= FMath::Min(center_x + 1, GRID_X - 1); ++cell_x)
 		{
-			const TArray<HintObjectRecord>* records = cells_.Find(FIntPoint(x, y));
-			if (!records)
+			const int32 cell = cell_y * GRID_X + cell_x;
+			for (int32 index = cell_starts_[cell]; index < cell_starts_[cell + 1]; ++index)
 			{
-				continue;
-			}
-			for (const HintObjectRecord& record : *records)
-			{
-				if (FVector::DistSquared(location, FVector(record.location[0], record.location[1], record.location[2])) <= radius_sq)
+				const FHintObjectPoint& point = points_[index];
+				if (FVector::DistSquared(location, FVector(point.location)) <= radius_sq)
 				{
-					++counts[record.kind];
+					++counts[point.kind];
 				}
 			}
 		}

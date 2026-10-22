@@ -2,10 +2,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include "HintObjectTree.h"
 #include "hint_meshes.h"
-#include "hint_object_file.h"
 #include "MapData.h"
 
 // 이 개수 이하의 구간은 더 나누지 않고 점을 직접 비교한다.
@@ -98,18 +96,4 @@ HintKindCounts HintObjectTree::CountKinds(float x, float y, float z, float radiu
 		if (base != static_cast<HintObjectKind>(kind)) counts[static_cast<std::size_t>(base)] += counts[kind];
 	}
 	return counts;
-}
-
-bool HintObjectTree::Export(const std::string& file_path) const
-{
-	if (!is_loaded_) return false;
-	std::ofstream file(file_path, std::ios::binary);
-	if (!file) return false;
-	const std::uint32_t count = static_cast<std::uint32_t>(points_.size());
-	file.write(reinterpret_cast<const char*>(&count), sizeof(count));
-	for (const HintPoint& point : points_) {
-		const HintObjectRecord record{ { point.x, point.y, point.z }, static_cast<std::uint8_t>(point.kind) };
-		file.write(reinterpret_cast<const char*>(&record), sizeof(record));
-	}
-	return static_cast<bool>(file);
 }

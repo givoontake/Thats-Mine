@@ -68,7 +68,7 @@ void UMagnifierCountWidget::NativeTick(const FGeometry& geometry, float delta_ti
 	// 서버 개수 힌트가 보물 바닥에서 세는 것처럼 발밑에서 센다.
 	const UCapsuleComponent* capsule = character->GetCapsuleComponent();
 	const FVector feet = capsule->GetComponentLocation() - FVector(0.0, 0.0, capsule->GetScaledCapsuleHalfHeight());
-	const TArray<int32> counts = GetGameInstance()->GetSubsystem<UHintObjectSubsystem>()->CountKinds(feet, COUNT_RADIUS);
+	const TArray<int32> counts = GetWorld()->GetSubsystem<UHintObjectSubsystem>()->CountKinds(feet, COUNT_RADIUS);
 	const UHintSubsystem* hints = GetWorld()->GetSubsystem<UHintSubsystem>();
 	const bool is_last_cell = FMath::CountBits64(hints->GetExclusionBoard()) == BLOCK_GRID_SIZE * BLOCK_GRID_SIZE - 1;
 	// 이 종류·개수가 가진 단서 힌트와 같은지. 돋보기 반경과 같은 반경의 개수 힌트만 본다.
