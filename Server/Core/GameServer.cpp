@@ -47,8 +47,8 @@ void GameServer::StartServer()
 {
 	if (!hitbox_data_.Load("Data/hitbox_data.bin")) std::cerr << "Hitbox data load fail.. " << std::endl;
 	if (!map_data_.Load("Data/Map")) std::cerr << "Map data load fail.. " << std::endl;
-	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt")) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!box_shape_data_.Load("Data/box_shapes.txt")) std::cerr << "Box shape data load fail.. " << std::endl;
+	if (!box_candidate_data_.Load("Data/box_candidates.txt", "Data/building_boxes.txt", box_shape_data_)) std::cerr << "Box candidate data load fail.. " << std::endl;
 	if (!map_region_data_.Load("Data/map_regions.txt")) std::cerr << "Map region data load fail.. " << std::endl;
 	if (!map_region_data_.LoadTreasureExclusions("Data/treasure_exclusions.txt")) std::cerr << "Treasure exclusion data load fail.. " << std::endl;
 	if (!hint_object_tree_.Build(map_data_)) std::cerr << "Hint object tree build fail.. " << std::endl;
@@ -67,8 +67,6 @@ void GameServer::CompleteAccept(AcceptOverlapped& accept_over)
 	auto* new_session = session_manager_->AcquireSession(accept_socket, iocp_handle_);
 	if (new_session) {
 		CreateIoCompletionPort(reinterpret_cast<HANDLE>(accept_socket), iocp_handle_, SESSION_IO_COMPLETION, 0);
-		// 세션 관리는 로그인 처리를 알지 않으므로, 새 세션을 로그인 대기 목록에 넣는 것은 세션을 받은 서버가 한다.
-		SyncLoginList(new_session->GetSessionKey().session_index);
 		new_session->RecvPacket();
 	}
 	else {
@@ -168,7 +166,7 @@ bool GameServer::RoutePacket(Session& session, std::unique_ptr<SessionPacketTask
 	case ModeState::LOGIN:
 		thread_manager_->GetDBThreadManager().GetLoginThread().EnqueueLoginPacket(task->session_key, task->packet.data(), task->receive_time_ms);
 		break;
-	// 방 전환 대기 중인 세션도 아직 로비 목록에 있으므로 로비가 받는다. 상태를 바꾸는 요청은 로비 상태가 아니라 거절된다.
+	// 방 전환 대기 중인 세션도 아직 로비 소속이므로 로비가 받는다. 상태를 바꾸는 요청은 로비 상태가 아니라 거절된다.
 	case ModeState::LOBBY:
 	case ModeState::MATCHING:
 	case ModeState::ROOM_PENDING:
@@ -234,8 +232,6 @@ void GameServer::ProcessDisconnects()
 		}
 		if (session->GetModeState() != ModeState::NONE) continue;
 
-		SyncLoginList(session_index);
-		SyncLobbyList(session_index);
 		thread_manager_->GetLobbyThreadManager().GetMatchmaker().Remove(session_index);
 		session->CloseSocket();
 		session_manager_->TryReleaseSession(*session);
@@ -243,14 +239,3 @@ void GameServer::ProcessDisconnects()
 	is_disconnect_cleanup_posted_.store(false);
 }
 
-// 세션 상태를 바꿔 로그인 대기 목록에 있어야 하는지가 달라진 쪽이 호출한다.
-void GameServer::SyncLoginList(int session_index)
-{
-	thread_manager_->GetDBThreadManager().GetLoginThread().GetLoginManager().SyncLoginList(session_index);
-}
-
-// 세션 상태를 바꿔 로비 목록에 있어야 하는지가 달라진 쪽이 호출한다.
-void GameServer::SyncLobbyList(int session_index)
-{
-	thread_manager_->GetLobbyThreadManager().SyncLobbyList(session_index);
-}

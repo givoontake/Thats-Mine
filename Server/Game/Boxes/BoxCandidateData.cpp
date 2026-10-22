@@ -1,4 +1,5 @@
 #include "BoxCandidateData.h"
+#include "BoxShapeData.h"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -26,15 +27,14 @@ static std::optional<BoxKind> ParseBoxKind(const std::string& text)
 	return std::nullopt;
 }
 
-// 상자 중심. 바닥 가운데에서 땅 기울기에 맞춰 기운 상자의 위쪽 축으로 종류별 중심 높이만큼 올린 곳이다.
-static DirectX::XMFLOAT3 ComputeBoxCenter(const BoxPlacement& placement)
+// 상자 중심. 바닥 가운데에서 땅 기울기에 맞춰 기운 상자의 위쪽 축으로 center_height만큼 올린 곳이다.
+static DirectX::XMFLOAT3 ComputeBoxCenter(const BoxPlacement& placement, float center_height)
 {
 	// 언리얼 회전(pitch, yaw, roll)의 위쪽 축
 	const float sp = std::sin(DirectX::XMConvertToRadians(placement.rotation.x)), cp = std::cos(DirectX::XMConvertToRadians(placement.rotation.x));
 	const float sy = std::sin(DirectX::XMConvertToRadians(placement.rotation.y)), cy = std::cos(DirectX::XMConvertToRadians(placement.rotation.y));
 	const float sr = std::sin(DirectX::XMConvertToRadians(placement.rotation.z)), cr = std::cos(DirectX::XMConvertToRadians(placement.rotation.z));
 	const DirectX::XMFLOAT3 up(-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp);
-	const float center_height = HINT_BOX_CENTER_HEIGHTS[static_cast<std::size_t>(placement.kind)];
 	return { placement.location.x + up.x * center_height, placement.location.y + up.y * center_height, placement.location.z + up.z * center_height };
 }
 
@@ -61,7 +61,6 @@ bool BoxCandidateData::LoadAnchors(const std::string& file_path)
 		const std::optional<BoxKind> kind = ParseBoxKind(kind_text);
 		if (!stream || !kind) return false;
 		placement.kind = *kind;
-		placement.center = ComputeBoxCenter(placement);
 		placement.orientation = ConvertUnrealRotation(placement.rotation);
 
 		if (anchor != last_anchor)
@@ -95,7 +94,6 @@ bool BoxCandidateData::LoadGroups(const std::string& file_path)
 		const std::optional<BoxKind> kind = ParseBoxKind(kind_text);
 		if (!stream || !kind) return false;
 		placement.kind = *kind;
-		placement.center = ComputeBoxCenter(placement);
 		placement.orientation = ConvertUnrealRotation(placement.rotation);
 
 		if (groups_.empty() || groups_.back().name != group_name) groups_.push_back({ group_name, {} });
@@ -105,12 +103,16 @@ bool BoxCandidateData::LoadGroups(const std::string& file_path)
 	return !groups_.empty();
 }
 
-bool BoxCandidateData::Load(const std::string& anchor_path, const std::string& group_path)
+bool BoxCandidateData::Load(const std::string& anchor_path, const std::string& group_path, const BoxShapeData& box_shapes)
 {
 	placements_.clear();
 	anchors_.clear();
 	groups_.clear();
-	is_loaded_ = LoadAnchors(anchor_path) && LoadGroups(group_path);
+	is_loaded_ = box_shapes.IsLoaded() && LoadAnchors(anchor_path) && LoadGroups(group_path);
+	// 중심 높이는 상자 모양 데이터의 메시 경계 상자 중심 높이다.
+	for (BoxPlacement& placement : placements_) {
+		placement.center = ComputeBoxCenter(placement, box_shapes.GetBounds(placement.kind).transform.position.z);
+	}
 	return is_loaded_;
 }
 

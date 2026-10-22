@@ -149,8 +149,6 @@ void GameRoom::LeaveToLobby(SessionKey session_key, RoomExitType exit_type)
 		return;
 	}
 	CompletePlayerRemoval(session_key, exit_type);
-	// 방을 떠나 로비 목록에 있어야 하는 상태가 되었으므로 목록을 맞춘다.
-	server_->SyncLobbyList(session_key.session_index);
 	// 방 퇴장·강퇴 완료를 본인에게 알린다.
 	S2C_REMOVE_PLAYER_PACKET remove_p;
 	remove_p.header.size = static_cast<std::uint16_t>(sizeof(remove_p));
@@ -192,20 +190,7 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char
 	room_players[added_slot].InitPlayer(session_key);
 	++current_player_count_;
 
-	if (!IsPrivate()) {
-		S2C_ADD_PUBLIC_ROOM_PACKET public_p;
-		public_p.header.size = static_cast<std::uint16_t>(sizeof(public_p));
-		public_p.header.type = S2C_ADD_PUBLIC_ROOM;
-		memcpy(public_p.room_name, room_name_, sizeof(public_p.room_name));
-		new_session.SendPacket(reinterpret_cast<char*>(&public_p), public_p.header.size);
-	}
-	else {
-		S2C_ADD_PRIVATE_ROOM_PACKET private_p;
-		private_p.header.size = static_cast<std::uint16_t>(sizeof(private_p));
-		private_p.header.type = S2C_ADD_PRIVATE_ROOM;
-		memcpy(private_p.room_name, room_name_, sizeof(private_p.room_name));
-		new_session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
-	}
+	SendRoomName(new_session);
 
 	// 본인의 입장을 본인 제외 나머지에게(방 생성 시 본인은 방에 추가된다)
 	for (int i = 0; i < room_players.size(); ++i) {
@@ -406,10 +391,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		reveal_p.location[0] = treasure_placement_.location.x;
 		reveal_p.location[1] = treasure_placement_.location.y;
 		reveal_p.location[2] = treasure_placement_.location.z;
-		for (auto& player : room_players_) {
-			auto session = FindSession(player);
-			if (session && player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&reveal_p), reveal_p.header.size);
-		}
+		SendToPlaying(reinterpret_cast<char*>(&reveal_p), reveal_p.header.size);
 		break;
 	}
 	case C2S_AWARD_DONE: {
@@ -477,17 +459,13 @@ void GameRoom::ProcessJoinTask(const RoomTask& task)
 
 	// 다른 방으로 재사용되기 전의 입장 요청이면 방을 찾지 못한 것으로 거절한다.
 	const int result = task.room_key == GetRoomKey() ? AddPlayer(*session, task.session_key, task.room_password) : ErrorCode::ROOM_NOT_FOUND;
-	if (result == SUCCESS) {
-		// ROOM이 되어 로비 목록에 있으면 안 되므로 목록을 맞춘다.
-		server_->SyncLobbyList(task.session_key.session_index);
-		return;
-	}
+	if (result == SUCCESS) return;
 
 	if (task.is_matching) {
 		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::MATCHING);
 		return;
 	}
-	// 로비는 거절하지 않으므로 방이 로비 상태로 바로 되돌리고 실패를 알린다. 방 전환 대기 중에도 로비 목록에 있었으므로 목록은 그대로다.
+	// 로비는 거절하지 않으므로 방이 로비 상태로 바로 되돌리고 실패를 알린다.
 	if (session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY)) server_->SendError(*session, result);
 }
 
@@ -608,7 +586,8 @@ void GameRoom::CompletePlayerRemoval(SessionKey session_key, RoomExitType exit_t
 	if (player_id == host_id_) FindNewHost(); // 여기서 찾기 및 못찾을 경우 삭제까지 같이 함
 }
 
-void GameRoom::SendCreateRoom(Session& session)
+// 공개 여부에 맞는 방 입장 패킷으로 방 이름을 보낸다.
+void GameRoom::SendRoomName(Session& session)
 {
 	if (!IsPrivate()) {
 		S2C_ADD_PUBLIC_ROOM_PACKET public_p;
@@ -624,6 +603,11 @@ void GameRoom::SendCreateRoom(Session& session)
 		memcpy(private_p.room_name, room_name_, sizeof(private_p.room_name));
 		session.SendPacket(reinterpret_cast<char*>(&private_p), private_p.header.size);
 	}
+}
+
+void GameRoom::SendCreateRoom(Session& session)
+{
+	SendRoomName(session);
 	S2C_UPDATE_HOST_PACKET host_p{};
 	host_p.header = {sizeof(host_p), S2C_UPDATE_HOST};
 	host_p.new_host_id = host_id_;
@@ -953,7 +937,7 @@ int GameRoom::AppendInputState(char* buffer, const Player& player) const
 }
 
 // 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.
-// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다. 게임 도중 합류하면 아직 줍지 않은 떨어진 힌트와 공개된 힌트도 보낸다.
+// 이미 시작 대기 중이면 남은 시간을, 게임이 시작됐으면 게임 시작을 이어서 보낸다.
 void GameRoom::ProcessLoadedPlayers()
 {
 	bool has_loaded_player = false;
@@ -1530,10 +1514,7 @@ void GameRoom::DigTreasure(const Player& digger)
 	char buffer[sizeof(found_p) + sizeof(S2C_TREASURE_LOCATION_PACKET)];
 	std::memcpy(buffer, &found_p, sizeof(found_p));
 	AppendTreasureLocation(buffer + sizeof(found_p));
-	for (auto& room_player : room_players_) {
-		auto session = FindSession(room_player);
-		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(buffer, sizeof(buffer));
-	}
+	SendToPlaying(buffer, sizeof(buffer));
 }
 
 void GameRoom::ProcessTimeLimit()
@@ -1545,10 +1526,7 @@ void GameRoom::ProcessTimeLimit()
 	char buffer[sizeof(over_p) + sizeof(S2C_TREASURE_LOCATION_PACKET)];
 	std::memcpy(buffer, &over_p, sizeof(over_p));
 	AppendTreasureLocation(buffer + sizeof(over_p));
-	for (auto& room_player : room_players_) {
-		auto session = FindSession(room_player);
-		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(buffer, sizeof(buffer));
-	}
+	SendToPlaying(buffer, sizeof(buffer));
 }
 
 void GameRoom::AppendTreasureLocation(char* buffer) const
@@ -1571,10 +1549,7 @@ void GameRoom::ProcessStunRelease()
 		release_p.header = { static_cast<std::uint16_t>(sizeof(release_p)), S2C_STUN_RELEASE };
 		release_p.player_id = target.GetSessionKey().player_id;
 		release_p.protection_ms = static_cast<std::uint32_t>(target.GetStunProtectionMs());
-		for (auto& room_player : room_players_) {
-			auto session = FindSession(room_player);
-			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&release_p), release_p.header.size);
-		}
+		SendToPlaying(reinterpret_cast<char*>(&release_p), release_p.header.size);
 	}
 }
 
@@ -1625,10 +1600,7 @@ void GameRoom::StartAward()
 		ClearGame();
 		return;
 	}
-	for (auto& room_player : room_players_) {
-		auto session = FindSession(room_player);
-		if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(reinterpret_cast<char*>(&award_p), award_p.header.size);
-	}
+	SendToPlaying(reinterpret_cast<char*>(&award_p), award_p.header.size);
 	award_end_ms_ = tick_time_ms_ + scene_count * AWARD_SCENE_MS + AWARD_END_MARGIN_MS;
 }
 
@@ -1775,12 +1747,6 @@ void GameRoom::CorrectMove(Player& player, Session& session, bool is_on_air_curv
 void GameRoom::ProcessGameStart()
 {
 	if (match_phase_ == MatchPhase::STARTED) return;
-	const auto send_to_playing = [&](char* packet, int packet_size) {
-		for (auto& room_player : room_players_) {
-			auto session = FindSession(room_player);
-			if (session && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) session->SendPacket(packet, packet_size);
-		}
-	};
 	if (match_phase_ == MatchPhase::LOADING) {
 		bool has_loading_player = false;
 		for (auto& room_player : room_players_) {
@@ -1792,7 +1758,7 @@ void GameRoom::ProcessGameStart()
 		S2C_GAME_READY_PACKET ready_p;
 		ready_p.header = { static_cast<std::uint16_t>(sizeof(ready_p)), S2C_GAME_READY };
 		ready_p.remaining_ms = GAME_READY_WAIT_MS;
-		send_to_playing(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
+		SendToPlaying(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
 		return;
 	}
 	if (tick_time_ms_ < game_start_ms_) return;

@@ -73,9 +73,6 @@ public:
 	const HintObjectTree& GetHintObjectTree() const { return hint_object_tree_; }
 	const DirectionHintData& GetDirectionHintData() const { return direction_hint_data_; }
 
-	void SyncLoginList(int session_index);
-	void SyncLobbyList(int session_index);
-
 	void StartServer();
 	void CompleteAccept(AcceptOverlapped& accept_over);
 	void FailAccept(AcceptOverlapped& accept_over, DWORD error);

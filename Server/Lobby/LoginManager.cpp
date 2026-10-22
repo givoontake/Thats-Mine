@@ -11,28 +11,19 @@ LoginManager::LoginManager(GameServer& game_server)
 {
 }
 
-bool LoginManager::ShouldBeListed(const SessionState& state)
+bool LoginManager::IsLoginSession(const SessionState& state)
 {
 	return state.life == LifeState::ACTIVE && state.mode == ModeState::LOGIN;
-}
-
-// 세션의 로그인 대기 목록 등록 여부를 현재 세션 상태에 맞춘다. 로비 목록의 맞추기와 같은 방식이며 어느 스레드에서 호출해도 된다.
-void LoginManager::SyncLoginList(int session_index)
-{
-	login_list_.Sync(session_index, [this, session_index]() {
-		auto* session = game_server_.GetSessionManager().FindSessionByIndex(session_index);
-		return session && ShouldBeListed(session->GetState());
-	});
 }
 
 // 로그인 요청을 조회할 세션인지 확인한다. 로그인 DB 스레드가 요청을 순서대로 처리하므로, 앞선 요청이 성공했으면 뒤의 요청은 여기서 걸러진다.
 bool LoginManager::IsWaitingLogin(SessionKey session_key)
 {
 	auto* session = game_server_.GetSessionManager().FindSession(session_key);
-	return session && ShouldBeListed(session->GetState());
+	return session && IsLoginSession(session->GetState());
 }
 
-// 조회에 성공한 결과를 반영한다. 중복 로그인이 아니면 로비 상태로 확정하고 로그인 대기 목록에서 로비 목록으로 옮긴 뒤 응답한다.
+// 조회에 성공한 결과를 반영한다. 중복 로그인이 아니면 로비 상태로 확정하고 응답한다.
 void LoginManager::ApplyLoginResult(SessionKey session_key, const DBLoginResult& result)
 {
 	auto& session_manager = game_server_.GetSessionManager();
@@ -45,10 +36,6 @@ void LoginManager::ApplyLoginResult(SessionKey session_key, const DBLoginResult&
 		game_server_.SendError(*session, ErrorCode::DUPLICATE_LOGIN_ID);
 		return;
 	}
-
-	const int session_index = session_key.session_index;
-	SyncLoginList(session_index);
-	game_server_.SyncLobbyList(session_index);
 
 	S2C_LOGIN_PACKET packet{};
 	packet.header = { sizeof(packet), S2C_LOGIN };

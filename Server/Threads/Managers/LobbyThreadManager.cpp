@@ -55,9 +55,8 @@ void LobbyThreadManager::EnqueueRequest(std::unique_ptr<SessionPacketTask> task)
 	request_tasks_.Enqueue(std::move(task));
 }
 
-// 로비 소속 세션이다. 로그인했고 방에 있지 않은 활성 세션이면 방 전환 대기 중이어도 포함한다.
-// 로비 목록 판단과 로비 요청을 처리할지의 판단에 같이 쓴다. 로그인 전 세션은 로그인 대기 목록에 따로 있으므로 로비 방송을 받지 않는다.
-bool LobbyThreadManager::ShouldBeListed(const SessionState& state)
+// 로비 소속 세션이다. 로그인했고 방에 있지 않은 활성 세션이면 방 전환 대기 중이어도 포함한다. 로비 요청을 처리할지 판단할 때 쓴다.
+bool LobbyThreadManager::IsLobbySession(const SessionState& state)
 {
 	return state.life == LifeState::ACTIVE && (state.mode == ModeState::LOBBY || state.mode == ModeState::MATCHING || state.mode == ModeState::ROOM_PENDING);
 }
@@ -67,19 +66,8 @@ void LobbyThreadManager::ProcessRequest(std::unique_ptr<SessionPacketTask> task)
 {
 	if (!task) return;
 	auto* session = game_server_.GetSessionManager().FindSession(task->session_key);
-	if (!session || !ShouldBeListed(session->GetState())) return;
+	if (!session || !IsLobbySession(session->GetState())) return;
 	ProcessPacket(task->packet.data(), *session);
-}
-
-// 세션의 로비 목록 등록 여부를 현재 세션 상태에 맞춘다. 어느 스레드에서 호출해도 된다.
-// 로비 목록에 영향을 주는 상태 변경을 한 쪽은 상태를 바꾼 뒤 이 함수를 호출한다.
-// 목록이 대상을 점유한 뒤 상태를 읽어 판단하므로, 호출 순서가 뒤섞여도 마지막 상태로 맞춰진다.
-void LobbyThreadManager::SyncLobbyList(int session_index)
-{
-	lobby_list_.Sync(session_index, [this, session_index]() {
-		auto* session = game_server_.GetSessionManager().FindSessionByIndex(session_index);
-		return session && ShouldBeListed(session->GetState());
-	});
 }
 
 // 대기·게임 중인 방의 정보 패킷을 이어 붙인 새 목록을 만들어 교체한다. 이전 목록은 보내던 쪽이 다 쓰면 해제된다.

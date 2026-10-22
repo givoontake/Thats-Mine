@@ -24,7 +24,6 @@ bool Player::InitPlayer(SessionKey session_key)
 	session_key_ = session_key;
 	room_player_state_.store(RoomPlayerState::WAIT);
 
-	ClearSendBuffer();
 	return true;
 }
 
@@ -38,7 +37,6 @@ void Player::ClearPlayer()
 	session_key_ = {};
 	room_player_state_.store(RoomPlayerState::WAIT);
 
-	ClearSendBuffer();
 	ClearMoveState();
 	ClearStun();
 	action_state_.Clear();
@@ -53,7 +51,6 @@ void Player::ResetGameData()
 {
 	room_player_state_.store(RoomPlayerState::WAIT);
 
-	ClearSendBuffer();
 	ClearMoveState();
 	ClearStun();
 	action_state_.Clear();
@@ -465,20 +462,4 @@ MOVE_STATE Player::PredictRewoundMove(const RewoundState& rewound, const MapData
 		input = &snapshot;
 	}
 	return PredictMove(map, state, input->input_right, input->input_forward, input->is_aiming, static_cast<float>(end_ms - time_ms) / 1000.0f);
-}
-
-bool Player::AddToSendBuffer(const char* data, int data_size)
-{
-	if (data_size <= 0) return true;
-	const int need_size = send_data_size_ + data_size;
-	if (need_size > BUF_SIZE) return false;
-	memcpy(send_buffer_ + send_data_size_, data, data_size);
-	send_data_size_ += data_size;
-	return true;
-}
-
-void Player::ClearSendBuffer()
-{
-	send_data_size_ = 0;
-	memset(send_buffer_, 0, sizeof(send_buffer_));
 }

@@ -19,8 +19,6 @@ constexpr int DB_IO_TIMEOUT_SECONDS = 5; // 연결된 뒤 쿼리를 주고받을
 constexpr int MIN_START_PLAYER_COUNT = 1; // 게임을 시작할 수 있는 최소 인원. 당분간 혼자서도 시작할 수 있게 1로 둔다(원래 2).
 constexpr int MAX_ROOM_NAME_SIZE = 48; // 16자 * UTF-8 1문자 크기(3)
 constexpr int MAX_ROOM_PASSWORD_SIZE = 48;
-constexpr int MAX_ARRAY_SIZE = 127;
-constexpr int ID_SIZE = 16;
 
 constexpr int MAX_PLAYER_NAME_SIZE = 48;
 constexpr int MAX_PLAYER_ID_SIZE = 48;
@@ -33,7 +31,7 @@ constexpr int LOADING_TIMEOUT_MS = 60000; // 게임 시작 후 전원의 로딩 
 constexpr int GAME_READY_WAIT_MS = 30000; // 시작 대기에 들어간 뒤 실제 게임 시작까지 기다리는 시간
 constexpr int GAME_TIME_LIMIT_MS = 7200000; // 게임이 시작된 뒤 보물을 찾지 못해도 게임을 끝내는 시간. 끝나면 보물 위치를 알리고 GAME_END_WAIT_MS 뒤 방으로 돌아간다.
 
-// 상자 배치. 게임 시작 때 힌트 상자 수만큼 유적 상자를 먼저 고르고, 나머지 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
+// 상자 배치. 게임 시작 때 유적별 규칙대로 유적 상자를 먼저 고르고, 나머지 자연 상자는 미첼 최적 후보 방식(spread_selection.h)으로 고른다.
 constexpr float BOX_MIN_DISTANCE = 5000.0f; // 자연 상자끼리 최소 수평 거리(cm). 지키는 후보를 계속 못 찾으면 줄여 가며 개수를 채운다.
 
 // 최종 보물. 임시로 크기 1의 보물 상자 모델(가로 약 170cm, 높이 130cm) 크기로 보고, 서버가 맵 안 무작위 위치에 놓는다. 위치는 서버만 안다.
@@ -61,7 +59,6 @@ constexpr int AMMO_BOX_COUNT = 50;
 constexpr int AMMO_BOX_ROUNDS[] = { 0, 1, 3 }; // 상자 하나로 느는 탄 수. 무기 값 순서: 곡괭이, 저격총, 권총. 0이면 그 무기의 탄약 상자를 만들지 않는다.
 // 힌트 상자 열기 검증(임시값). 게임이 시작된 뒤에만 열 수 있다.
 constexpr float HINT_BOX_OPEN_DISTANCE = 225.0f; // F키로 열 때 캡슐 중심에서 상자 중심까지 최대 거리(cm)
-constexpr float HINT_BOX_CENTER_HEIGHTS[] = { 45.5f, 53.1f }; // 상자 바닥 가운데에서 상자 중심까지 상자 위쪽 방향 거리(cm). BoxKind 순서(0.7배 나무 상자, 선물)
 constexpr float HINT_BOX_INTERACT_SCALE = 1.5f; // 상호작용 범위는 상자 메시 경계 상자를 이 배율로 키운 상자다. F키로 열 때 시선이 이 범위에 닿아야 한다. 클라이언트도 같은 값을 쓴다.
 // 선물은 탄에 맞으면 열리고, 나무 상자는 탄을 막기만 한다. 모양은 서버 상자 모양 파일의 직육면체다.
 constexpr int CHEST_OPEN_SHAPE_DELAY_MS = 500; // 나무 상자가 열린 뒤 열린 모양으로 바뀔 때까지 시간. 그 전에는 닫힌 모양이다. 클라이언트 여는 동작 시간과 같다.

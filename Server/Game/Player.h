@@ -23,8 +23,6 @@ class MapData;
 class Player
 {
 	SessionKey session_key_; // 세션 정리 후에도 방 슬롯을 식별하고, 재사용된 세션 인덱스의 오삭제를 막는다.
-	char send_buffer_[BUF_SIZE];
-	int send_data_size_ = 0;
 	std::atomic<RoomPlayerState> room_player_state_;
 
 	// 중계 간격 안에 여러 번 받으면 최신 이동 상태만 남긴다. 공중 단계가 바뀌었거나 서버가 이동을 멈췄으면 간격을 기다리지 않고 다음 틱에 중계한다.
@@ -110,8 +108,6 @@ public:
 	bool HasSession() const { return session_key_.session_id != 0; }
 	bool MatchesSessionKey(SessionKey session_key) const;
 	RoomPlayerState GetRoomPlayerState() const { return room_player_state_.load(); }
-	char* GetSendBuffer() { return send_buffer_; }
-	int GetSendDataSize() const { return send_data_size_; }
 	const MOVE_STATE& GetMoveState() const { return move_state_; }
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
@@ -162,8 +158,6 @@ public:
 	bool InitPlayer(SessionKey session_key);
 	void ClearPlayer();
 	void ResetGameData();
-	bool AddToSendBuffer(const char* data, int data_size);
-	void ClearSendBuffer();
 	// is_on_steep_slope는 move_state가 비탈 접촉인지, is_open_air는 공중이고 어떤 면에도 닿지 않았는지다.
 	void SetMoveState(const MOVE_STATE& move_state, long long time_ms, bool is_on_steep_slope, bool is_open_air);
 	void SetMoveInput(std::int8_t input_right, std::int8_t input_forward);
@@ -194,7 +188,6 @@ public:
 	bool CanUseBlock(std::uint8_t piece) const { return piece < BLOCK_PIECE_COUNT && block_counts_[piece] > 0; }
 	// 그 블록을 하나 쓰고 그 결과로 배제된 칸을 더한다.
 	void UseBlock(std::uint8_t piece, std::uint64_t excluded_cells);
-	void AddKeptExcludedCells(std::uint64_t cells) { kept_excluded_cells_ |= cells; }
 	std::uint64_t GetKeptExcludedCells() const { return kept_excluded_cells_; }
 	// 시상식 부문 기록을 1 늘리고 도달 시각을 남긴다.
 	void AddAwardCount(AwardCategory category, long long time_ms);

@@ -41,7 +41,7 @@ class Session
 	mutable std::shared_mutex socket_mutex_;
 	// 같은 소켓에 여러 스레드가 동시에 WSASend를 호출하지 않도록 송신 등록만 세션 단위로 직렬화한다.
 	// Microsoft 문서는 스트림 소켓에 동시 송신 요청을 보내면 일부 제공자에서 데이터가 섞일 수 있다고 경고한다.
-	// 로비 방송과 담당자의 응답 송신이 같은 세션에 동시에 일어날 수 있어 필요하다.
+	// 소속이 바뀌는 사이 이전 처리 단위와 새 처리 단위의 송신이 같은 세션에 동시에 일어날 수 있어 필요하다.
 	std::mutex send_mutex_;
 	mutable std::mutex session_mutex_;
 	std::atomic<SessionState> state_{};

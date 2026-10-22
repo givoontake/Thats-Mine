@@ -83,6 +83,7 @@ add_executable(GameServer
     Game/Player.h
     Game/PlayerActionState.h
     Game/weapon_ammo.h
+    Game/air_state.h
     Game/move_prediction.h
     Game/player_snapshot.h
     Game/Boxes/box_types.h

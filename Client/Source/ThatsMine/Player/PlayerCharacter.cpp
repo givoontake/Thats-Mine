@@ -396,9 +396,9 @@ const AHintBox* APlayerCharacter::FindInteractBox() const
 		return nullptr;
 	}
 	// 카메라는 목표만 정하고, 거리는 서버와 같이 캐릭터 중심에서 상자 중심까지 HINT_BOX_OPEN_DISTANCE로 제한한다.
-	// 상자 중심은 서버처럼 상자 바닥 가운데에서 상자 위쪽 방향으로 종류별 높이만큼 올린 점이다.
-	const BoxKind kind = box->ActorHasTag(TEXT("HintGift")) ? BoxKind::GIFT : BoxKind::TREASURE;
-	const FVector box_center = box->GetActorLocation() + box->GetActorUpVector() * HINT_BOX_CENTER_HEIGHTS[static_cast<int32>(kind)];
+	// 상자 중심은 서버처럼 상자 바닥 가운데에서 상자 위쪽 방향으로 메시 경계 상자 중심 높이만큼 올린 점이다.
+	const double center_height = box->GetStaticMeshComponent()->GetStaticMesh()->GetBounds().Origin.Z * box->GetActorScale3D().Z;
+	const FVector box_center = box->GetActorLocation() + box->GetActorUpVector() * center_height;
 	return FVector::Dist(start, box_center) <= HINT_BOX_OPEN_DISTANCE ? box : nullptr;
 }
 

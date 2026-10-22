@@ -135,7 +135,7 @@ void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 	}
 	if (result == SUCCESS) return;
 
-	// 로비는 거절하지 않으므로 로비 상태로 바로 되돌리고 실패를 알린다. 방 전환 대기 중에도 로비 목록에 있었으므로 목록은 그대로다.
+	// 로비는 거절하지 않으므로 로비 상태로 바로 되돌리고 실패를 알린다.
 	if (session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY)) game_server_.SendError(*session, result);
 }
 
@@ -172,8 +172,6 @@ int GameThreadManager::PublishRoom(const RoomInitData& data, Session& session, S
 	// 초기화가 끝나기 전까지 방 처리 상태는 FREE이므로 순회 경계 안에 있어도 처리되지 않는다.
 	new_room->SendCreateRoom(session);
 	new_room->CompleteRoomInitialization();
-	// ROOM이 되어 로비 목록에 있으면 안 되므로 목록을 맞춘다.
-	game_server_.SyncLobbyList(session_key.session_index);
 	return SUCCESS;
 }
 

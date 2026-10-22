@@ -7,7 +7,6 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-#include "ActiveList.h"
 #include "ConcurrentTaskQueue.h"
 #include "enum_class.h"
 #include "types.h"
@@ -31,8 +30,6 @@ private:
 	std::condition_variable lobby_cv_;
 	// 로비 요청 큐: 입출력 스레드가 로비 소속 세션의 패킷을 넣는다. 요청 단계에서 로비 스레드들이 나눠 처리한다.
 	ConcurrentTaskQueue<std::unique_ptr<SessionPacketTask>> request_tasks_;
-	// 로비 목록: 로그인했고 방에 있지 않은 활성 세션의 세션 번호. 로비 방송 대상이다.
-	ActiveList<MAX_PLAYER_COUNT> lobby_list_;
 	// 빠른 매칭 처리. 요청 단계가 끝난 뒤 한 스레드가 실행한다.
 	Matchmaker matchmaker_;
 	// 현재 로비 단계의 틱 시각. 로비 단계를 시작할 때 기록하고, 매칭 등록 시각 등에 같은 값을 쓴다.
@@ -47,7 +44,7 @@ private:
 	friend class LobbyThread;
 
 	void ProcessRequest(std::unique_ptr<SessionPacketTask> task);
-	static bool ShouldBeListed(const SessionState& state);
+	static bool IsLobbySession(const SessionState& state);
 	void RefreshRoomList();
 	void SendRoomList(Session& session);
 
@@ -57,7 +54,6 @@ public:
 	void Start();
 	void StartLobbyPhase(long long tick_time_ms);
 	void EnqueueRequest(std::unique_ptr<SessionPacketTask> task);
-	void SyncLobbyList(int session_index);
 	void ProcessPacket(char* packet, Session& session);
 	Matchmaker& GetMatchmaker() { return matchmaker_; }
 	void Close();

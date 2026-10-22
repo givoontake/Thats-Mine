@@ -201,6 +201,7 @@ public:
 	void HandlePacket(char* packet, Session& request_session, long long receive_time_ms);
 	void ProcessRoomTick(long long tick_time_ms);
 	void SendCreateRoom(Session& session);
+	void SendRoomName(Session& session);
 	bool AddHostSession(SessionKey session_key);
 	bool AddRoomTask(RoomTask task);
 	void AddPacketTask(std::unique_ptr<SessionPacketTask> task);
@@ -210,6 +211,7 @@ public:
 	
 	void ClearGame();
 
-	void BroadcastPackets();
 	void Broadcast(char* packet);
+	// 플레이 중인 사람에게만 보낸다.
+	void SendToPlaying(const char* packet, int packet_size);
 };
