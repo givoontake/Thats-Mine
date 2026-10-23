@@ -289,7 +289,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		room_player->SetMoveState(move_state, receive_time_ms, is_on_steep_slope, is_open_air);
 		// 멈춤을 알렸던 플레이어의 이동 상태가 다시 오면 그 사람의 이동 키 입력을 다시 중계한다.
 		if (was_move_stopped) {
-			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, room_player->GetInputRight(), room_player->GetInputForward() };
+			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, room_player->GetInputRight(), room_player->GetInputForward(), { move_state.location[0], move_state.location[1], move_state.location[2] }, { move_state.velocity[0], move_state.velocity[1] } };
 			QueueRelay(&input_p, sizeof(input_p));
 		}
 		break;
@@ -307,7 +307,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (type == C2S_MOVE_INPUT) {
 			const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
 			room_player->SetMoveInput(request_p->input_right, request_p->input_forward);
-			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, request_p->input_right, request_p->input_forward };
+			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, request_p->input_right, request_p->input_forward, { request_p->location[0], request_p->location[1], request_p->location[2] }, { request_p->velocity[0], request_p->velocity[1] } };
 			QueueRelay(&input_p, sizeof(input_p));
 		}
 		else if (type == C2S_AIM) {
@@ -929,7 +929,8 @@ void GameRoom::QueueRelay(const void* packet, int packet_size)
 int GameRoom::AppendInputState(char* buffer, const Player& player) const
 {
 	const int player_id = player.GetSessionKey().player_id;
-	const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, player.GetInputRight(), player.GetInputForward() };
+	const MOVE_STATE& move_state = player.GetMoveState();
+	const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, player.GetInputRight(), player.GetInputForward(), { move_state.location[0], move_state.location[1], move_state.location[2] }, { move_state.velocity[0], move_state.velocity[1] } };
 	const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, player.IsAiming() };
 	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, player.GetActionState().GetWeapon() };
 	std::memcpy(buffer, &input_p, sizeof(input_p));

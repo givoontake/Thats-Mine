@@ -76,10 +76,13 @@ struct C2S_MOVE_PACKET {
 };
 
 // 이동 키 입력이 바뀌었다. 오른쪽·앞쪽 축을 -127~127로 줄여 담는다.
+// location·velocity는 키 입력이 바뀐 순간의 위치와 수평 속도다. 받는 쪽이 멈춘 자리를 계산하는 데 쓴다.
 struct C2S_MOVE_INPUT_PACKET {
 	PACKET_HEADER header;
 	std::int8_t input_right;
 	std::int8_t input_forward;
+	float location[3];
+	float velocity[2];
 };
 
 // 조준을 시작하거나 끝냈다.
@@ -113,6 +116,8 @@ struct S2C_MOVE_INPUT_PACKET {
 	int player_id;
 	std::int8_t input_right;
 	std::int8_t input_forward;
+	float location[3];
+	float velocity[2];
 };
 
 // 다른 플레이어의 조준 여부

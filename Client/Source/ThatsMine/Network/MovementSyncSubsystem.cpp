@@ -242,6 +242,12 @@ void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
 	C2S_MOVE_INPUT_PACKET input_packet{};
 	input_packet.input_right = QuantizeInput(move_input.X);
 	input_packet.input_forward = QuantizeInput(move_input.Y);
+	const FVector location = character.GetActorLocation();
+	input_packet.location[0] = static_cast<float>(location.X);
+	input_packet.location[1] = static_cast<float>(location.Y);
+	input_packet.location[2] = static_cast<float>(location.Z);
+	input_packet.velocity[0] = static_cast<float>(character.GetVelocity().X);
+	input_packet.velocity[1] = static_cast<float>(character.GetVelocity().Y);
 	if ((!has_sent_input_ || input_packet.input_right != sent_input_right_ || input_packet.input_forward != sent_input_forward_) && SendPacketBody(network, C2S_MOVE_INPUT, input_packet))
 	{
 		sent_input_right_ = input_packet.input_right;
@@ -529,7 +535,7 @@ void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
 	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
-		remote_movement->SetMoveInput(FVector2D(packet.input_right / 127.0, packet.input_forward / 127.0));
+		remote_movement->ApplyMoveInput(FVector2D(packet.input_right / 127.0, packet.input_forward / 127.0), FVector(packet.location[0], packet.location[1], packet.location[2]), FVector2D(packet.velocity[0], packet.velocity[1]));
 	}
 }
 
