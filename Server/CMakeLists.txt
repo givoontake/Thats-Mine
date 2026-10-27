@@ -48,6 +48,7 @@ add_executable(GameServer
     Network/SessionManager.cpp
     Rooms/GameRoom.cpp
     Rooms/GameRoomPackets.cpp
+    Rooms/TickSendBuffer.cpp
     Threads/ServerThread.cpp
     Threads/Database/DBThread.cpp
     Threads/Database/LoginDBThread.cpp
@@ -123,6 +124,7 @@ add_executable(GameServer
     Packets/room_packets.h
     Rooms/GameRoom.h
     Rooms/room_lifecycle_tasks.h
+    Rooms/TickSendBuffer.h
     Threads/Database/DBThread.h
     Threads/Database/LoginDBThread.h
     Threads/Game/game_state.h

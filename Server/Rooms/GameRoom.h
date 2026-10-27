@@ -14,6 +14,7 @@
 #include "box_types.h"
 #include "hint_types.h"
 #include "treasure_types.h"
+#include "TickSendBuffer.h"
 class Session;
 
 class GameServer;
@@ -83,6 +84,8 @@ private:
 	long long tick_time_ms_ = 0;
 	// 이번 틱에 받은 동작·재장전·입력 변화의 중계 패킷을 받은 순서대로 이어 둔 것. 덮어쓰지 않고 틱 끝에 이동 상태와 함께 보낸다.
 	std::vector<char> pending_relays_;
+	// 방 자리마다 이번 틱에 그 사람에게 보낼 패킷. 틱 끝에 사람마다 한 번에 보내고, 방을 나가는 사람은 나갈 때 퇴장 알림과 함께 보낸다.
+	std::array<TickSendBuffer, MAX_ROOM_PLAYER_COUNT> tick_send_buffers_;
 	// 시작 단계, 전원 로딩 완료를 기다리는 마감 시각, 실제 게임 시작 시각(시작 대기에 들어갈 때 정한다)
 	MatchPhase match_phase_ = MatchPhase::LOADING;
 	long long loading_deadline_ms_ = 0;
@@ -112,6 +115,8 @@ private:
 	long long award_end_ms_ = 0;
 
 	Session* FindSession(const Player& player) const;
+	// 그 플레이어 자리의 이번 틱 송신 버퍼
+	TickSendBuffer& GetTickSendBuffer(const Player& player);
 	Player* FindPlayer(SessionKey session_key);
 	void LeaveToLobby(SessionKey session_key, RoomExitType exit_type);
 	void CompletePlayerRemoval(SessionKey session_key, RoomExitType exit_type);
@@ -128,19 +133,21 @@ private:
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
 	// 손에 든 weapon으로 한 동작이나 재장전을 인정하는지 본다. time_ms는 서버가 요청을 받은 시각, action_time_ms는 요청의 동작 시각이다.
-	bool AcceptAction(Player& player, Session& session, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
+	bool AcceptAction(Player& player, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
 	// 서버가 아는 곡괭이 사용 가능 횟수와 남은 충전 시간을 그 사람에게 보낸다.
-	void SendPickaxeCharges(const Player& player, Session& session, long long time_ms) const;
+	void SendPickaxeCharges(const Player& player, long long time_ms);
 	// 그 무기의 지금 탄창 탄과 소지 탄을 재장전 끝으로 그 사람에게 보낸다.
-	void SendReloadDone(const Player& player, Session& session, std::uint8_t weapon) const;
+	void SendReloadDone(const Player& player, std::uint8_t weapon);
 	// 그 플레이어를 멈춘 것으로 표시하고 방 전체에 멈춤을 알린다.
 	void RelayMoveStop(Player& player);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
-	void ProcessFire(Player& shooter, Session& session, const C2S_FIRE_PACKET& request_p, long long time_ms);
+	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
 	// 중계 패킷을 이번 틱 중계에 넣는다.
 	void QueueRelay(const void* packet, int packet_size);
 	// 그 플레이어의 이동 키 입력·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
 	int AppendInputState(char* buffer, const Player& player) const;
+	// 공개 여부에 맞는 방 입장 패킷으로 방 이름을 buffer에 쓰고 쓴 크기를 돌려준다.
+	int AppendRoomName(char* buffer) const;
 	void AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part);
 	bool CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& camera, const DirectX::XMFLOAT3& hit_point) const;
 	bool IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const;
@@ -162,12 +169,12 @@ private:
 	// 배제 판(블록 결과·돋보기 탐색 결과로 배제된 칸과 영역 지우기로 지운 칸)이 마지막으로 보낸 것과 다르면 배제 판 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 같으면 쓰지 않고 0을 돌려준다.
 	int AppendExclusionBoard(char* buffer, Player& player) const;
 	void ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p);
-	void SendAreaRemovalTime(Session& session) const;
+	void SendAreaRemovalTime(const Player& player);
 	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms, bool is_slope_slide, bool is_open_air) const;
 	bool IsOnGround(const float location[3]) const;
 	bool IsTouchingSteepSlope(const float location[3]) const;
 	bool IsTouchingSurface(const Player& player, const float location[3]) const;
-	void CorrectMove(Player& player, Session& session, bool is_on_air_curve);
+	void CorrectMove(Player& player, bool is_on_air_curve);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
 	void GenerateHints();
@@ -201,7 +208,6 @@ public:
 	void HandlePacket(char* packet, Session& request_session, long long receive_time_ms);
 	void ProcessRoomTick(long long tick_time_ms);
 	void SendCreateRoom(Session& session);
-	void SendRoomName(Session& session);
 	bool AddHostSession(SessionKey session_key);
 	bool AddRoomTask(RoomTask task);
 	void AddPacketTask(std::unique_ptr<SessionPacketTask> task);
