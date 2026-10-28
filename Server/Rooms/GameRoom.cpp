@@ -1060,8 +1060,7 @@ bool GameRoom::AcceptAction(Player& player, PlayerAction action, std::uint8_t we
 		return is_accepted;
 	}
 	if (action == PlayerAction::MELEE) return action_state.TryMelee(action_time_ms, time_ms);
-	const WeaponInfo* weapon = data.GetWeaponInfo(weapon_value);
-	return weapon && weapon->is_hitscan && action_state.TryStartReload(*weapon, action_time_ms, time_ms);
+	return IsGunWeapon(static_cast<WeaponType>(weapon_value)) && action_state.TryStartReload(action_time_ms, time_ms);
 }
 
 void GameRoom::SendPickaxeCharges(const Player& player, long long time_ms)
@@ -1120,12 +1119,11 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	const HitboxData& data = server_->GetHitboxData();
 	PlayerActionState& action_state = shooter.GetActionState();
 	const std::uint8_t weapon = action_state.GetWeapon();
-	const WeaponInfo* info = data.GetWeaponInfo(weapon);
-	if (!data.IsLoaded() || !info || !info->is_hitscan || !shooter.HasMoveState() || shooter.IsAwaitingMoveCorrection()) return;
+	if (!data.IsLoaded() || !IsGunWeapon(static_cast<WeaponType>(weapon)) || !shooter.HasMoveState() || shooter.IsAwaitingMoveCorrection()) return;
 	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
 	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
 	if (!std::isfinite(aim_length) || aim_length < 0.5f) return;
-	const std::optional<FiredShot> shot = action_state.TryFire(*info, shooter.GetShotSpreadInput(time_ms), request_p.action_time_ms, time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon));
+	const std::optional<FiredShot> shot = action_state.TryFire(shooter.GetShotSpreadInput(time_ms), request_p.action_time_ms, time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon));
 	if (!shot) return;
 
 	S2C_AMMO_USE_PACKET use_p;
@@ -1148,7 +1146,7 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	const long long shot_time_ms = std::max<long long>(time_ms - HIT_REWIND_MS, time_ms + static_cast<std::int32_t>(request_p.action_time_ms - static_cast<std::uint32_t>(time_ms)));
 
 	// 광선을 따라 가장 가까운 플레이어 히트박스와 상자 모양을 찾는다. 더 가까운 것을 찾을 때마다 검사 거리를 줄인다.
-	float distance = info->hitscan_distance;
+	float distance = WEAPON_HITSCAN_DISTANCES[weapon];
 	Player* hit_player = nullptr;
 	HitboxPart hit_part = HitboxPart::TORSO;
 	bool is_hit_protected = false;
@@ -1570,19 +1568,17 @@ void GameRoom::ProcessStunRelease()
 // 곡괭이 사용 가능 횟수가 1번이라도 차면 그 사람에게 보낸다.
 void GameRoom::ProcessActionStates()
 {
-	const HitboxData& data = server_->GetHitboxData();
 	for (auto& room_player : room_players_) {
 		if (!FindSession(room_player) || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
 		PlayerActionState& action_state = room_player.GetActionState();
 		const std::uint8_t held_weapon = action_state.GetWeapon();
-		if (const WeaponInfo* info = data.GetWeaponInfo(held_weapon); info && action_state.StartAutoReload(*info, tick_time_ms_)) {
+		if (action_state.StartAutoReload(tick_time_ms_)) {
 			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, room_player.GetSessionKey().player_id, held_weapon };
 			QueueRelay(&reload_p, sizeof(reload_p));
 			room_player.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::RELOAD), held_weapon, tick_time_ms_);
 		}
 		for (std::uint8_t weapon = 0; action_state.GetAmmo(weapon); ++weapon) {
-			const WeaponInfo* info = data.GetWeaponInfo(weapon);
-			if (info && action_state.FinishReload(weapon, *info, tick_time_ms_)) SendReloadDone(room_player, weapon);
+			if (action_state.FinishReload(weapon, tick_time_ms_)) SendReloadDone(room_player, weapon);
 		}
 		if (action_state.UpdatePickaxeCharges(tick_time_ms_, room_player.GetPickaxeChargeMs())) SendPickaxeCharges(room_player, tick_time_ms_);
 	}

@@ -28,11 +28,13 @@
 #include "Player/PlayerAnimInstance.h"
 #include "Player/PlayerCharacter.h"
 #include "Player/player_action.h"
+#include "game_packets.h"
+#include "settings.h"
 
 static const TCHAR* EXPORT_CHARACTER_BLUEPRINT = TEXT("/Game/Thats_Mine/Actors/Characters/BP_KayKitBarbarian.BP_KayKitBarbarian");
 static const TCHAR* EXPORT_BLEND_SPACE = TEXT("/Game/Thats_Mine/Animations/Move/BS_KayKitMovement.BS_KayKitMovement");
 static const TCHAR* EXPORT_JUMP_SEQUENCE = TEXT("/Game/Thats_Mine/Animations/Jump/Rig_Medium_MovementBasicJump_Idle.Rig_Medium_MovementBasicJump_Idle");
-static constexpr uint32 EXPORT_VERSION = 4;
+static constexpr uint32 EXPORT_VERSION = 5;
 static constexpr float EXPORT_SAMPLE_RATE = 30.0f;
 // 정해진 순서로 쓰는 고정 자세. 서버도 같은 순서를 쓴다.
 static const TCHAR* EXPORT_POSE_NAMES[] = { TEXT("IDLE"), TEXT("PICKAXE_HOLD"), TEXT("PISTOL_AIM"), TEXT("RIFLE_HOLD"), TEXT("RIFLE_AIM") };
@@ -327,13 +329,13 @@ FString UHitboxExportTools::ExportServerData(USkeletalMesh* mesh, UPhysicsAsset*
 	{
 		const uint8 weapon = static_cast<uint8>(pair.Key);
 		const FWeaponSettings& settings = pair.Value;
-		if (settings.melee_hit.is_enabled || settings.hitscan.is_enabled)
+		if (settings.melee_hit.is_enabled || IsGunWeapon(static_cast<WeaponType>(weapon)))
 		{
 			add_montage(settings.primary_action.montage, static_cast<uint8>(settings.melee_hit.is_enabled ? EPlayerAction::MELEE : EPlayerAction::FIRE), weapon, settings.primary_action.play_rate);
 		}
-		if (settings.hitscan.is_enabled && settings.hitscan.reload_montage)
+		if (IsGunWeapon(static_cast<WeaponType>(weapon)) && settings.hitscan.reload_montage)
 		{
-			add_montage(settings.hitscan.reload_montage, static_cast<uint8>(EPlayerAction::RELOAD), weapon, settings.hitscan.reload_montage->GetPlayLength() / FMath::Max(0.01f, settings.hitscan.reload_duration));
+			add_montage(settings.hitscan.reload_montage, static_cast<uint8>(EPlayerAction::RELOAD), weapon, settings.hitscan.reload_montage->GetPlayLength() / (WEAPON_RELOAD_DURATIONS_MS[weapon] / 1000.0f));
 		}
 		if (settings.equip_montage)
 		{
@@ -466,7 +468,7 @@ FString UHitboxExportTools::ExportServerData(USkeletalMesh* mesh, UPhysicsAsset*
 	}
 	writer.Write(head_pitch_up);
 	writer.Write(head_pitch_down);
-	// 무기별 상체 자세(0 없음, 1 곡괭이, 2 권총, 3 소총), 조준 상하 제한, 총(광선 판정) 여부와 사거리, 탄창 크기, 재장전 시간, 발사 간격. 무기 값 순서대로 쓴다.
+	// 무기별 상체 자세(0 없음, 1 곡괭이, 2 권총, 3 소총)와 조준 상하 제한. 무기 값 순서대로 쓴다.
 	writer.Write(static_cast<uint32>(weapon_settings.Num()));
 	for (uint8 weapon = 0; weapon < weapon_settings.Num(); ++weapon)
 	{
@@ -474,11 +476,6 @@ FString UHitboxExportTools::ExportServerData(USkeletalMesh* mesh, UPhysicsAsset*
 		writer.Write(static_cast<uint8>(settings.uses_pickaxe_pose ? 1 : (settings.uses_pistol_pose ? 2 : (settings.uses_rifle_pose ? 3 : 0))));
 		writer.Write(settings.aim_pitch_up_limit);
 		writer.Write(settings.aim_pitch_down_limit);
-		writer.Write(static_cast<uint8>(settings.hitscan.is_enabled ? 1 : 0));
-		writer.Write(settings.hitscan.distance);
-		writer.Write(static_cast<uint32>(FMath::Max(1, settings.hitscan.magazine_capacity)));
-		writer.Write(FMath::Max(0.01f, settings.hitscan.reload_duration));
-		writer.Write(FMath::Max(0.01f, settings.hitscan.fire_interval));
 	}
 	writer.Write(body_count);
 	writer.bytes.Append(shapes_writer.bytes);
@@ -567,7 +564,7 @@ FString UHitboxExportTools::VerifyServerData(USkeletalMesh* mesh, const FString&
 	reader.Read<float>();
 	reader.Read<float>();
 	const uint32 weapon_count = reader.Read<uint32>();
-	reader.offset += weapon_count * (2 + 5 * sizeof(float) + sizeof(uint32));
+	reader.offset += weapon_count * (1 + 2 * sizeof(float));
 	const uint32 body_count = reader.Read<uint32>();
 	for (uint32 body = 0; body < body_count; ++body)
 	{

@@ -58,7 +58,7 @@ public:
 	bool TryEquip(std::uint8_t weapon, bool is_aiming, std::uint32_t action_time_ms, long long time_ms);
 	// 손에 든 총을 쏜다. 교체 대기 중, 재장전 중, 탄이 없거나 발사 간격 검증을 통과하지 못하면 값이 없다.
 	// 인정하면 탄 하나를 쓰고 발사 번호와 퍼짐 크기를 정한다. 탄창이 비면 발사 동작(fire_motion_ms)이 끝날 때 자동 재장전을 예약한다.
-	std::optional<FiredShot> TryFire(const WeaponInfo& info, const ShotSpreadInput& spread_input, std::uint32_t action_time_ms, long long time_ms, long long fire_motion_ms);
+	std::optional<FiredShot> TryFire(const ShotSpreadInput& spread_input, std::uint32_t action_time_ms, long long time_ms, long long fire_motion_ms);
 	// 곡괭이를 휘두른다. 교체 대기 중이거나 사용 가능 횟수가 없으면 받지 않는다. 최대치에서 쓰면 충전을 시작한다.
 	bool TryUsePickaxe(std::uint32_t action_time_ms, long long time_ms, int charge_ms);
 	// 곡괭이가 아닌 장비로 휘두른다. 교체 대기 중이면 받지 않는다.
@@ -66,11 +66,11 @@ public:
 	// 줍는다. 직전 줍기 동작(pickup_motion_ms)이 끝나기 전이면 받지 않는다.
 	bool TryPickup(std::uint32_t action_time_ms, long long time_ms, long long pickup_motion_ms);
 	// 손에 든 무기의 재장전을 시작한다. 교체 대기 중, 이미 재장전 중, 소지 탄이 없거나 탄창이 가득 차 있으면 받지 않는다. 자동 재장전 예약은 지운다.
-	bool TryStartReload(const WeaponInfo& info, std::uint32_t action_time_ms, long long time_ms);
+	bool TryStartReload(std::uint32_t action_time_ms, long long time_ms);
 	// 예약한 자동 재장전 시각이 지났으면 손에 든 무기의 재장전을 시작하고 true를 돌려준다. 그새 시작할 수 없게 됐으면 예약만 지운다.
-	bool StartAutoReload(const WeaponInfo& info, long long time_ms);
+	bool StartAutoReload(long long time_ms);
 	// 재장전이 끝날 시각이 지났으면 소지 탄에서 탄창이 빈 만큼 채우고 true를 돌려준다.
-	bool FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms);
+	bool FinishReload(std::uint8_t weapon, long long time_ms);
 	// 소지 탄을 count발 늘린다. 손에 든 무기의 탄창이 비어 있었으면 자동 재장전을 예약한다.
 	void AddSpareRounds(std::uint8_t weapon, int count, long long time_ms);
 	// 지난 시간만큼 곡괭이 사용 가능 횟수를 채운다. 1번이라도 찼으면 true를 돌려준다.

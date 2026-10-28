@@ -17,6 +17,8 @@ enum class AirPhase : std::uint8_t { GROUND, RISING, FALLING };
 
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
 enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
+// 탄을 쏘는 무기인지. 서버와 클라이언트가 총 여부를 무기 종류로 판단한다.
+constexpr bool IsGunWeapon(WeaponType weapon) { return weapon == WeaponType::SNIPER || weapon == WeaponType::PISTOL; }
 
 // 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 얻으면 그 게임 동안 계속 적용된다.
 enum class ItemKind : std::uint8_t { PICKAXE_CHARGE, STUN_GAUGE_DECAY, STUN_GAUGE_DECAY_DELAY, STUN_PROTECTION, COUNT };

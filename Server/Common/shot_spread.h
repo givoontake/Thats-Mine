@@ -49,9 +49,9 @@ constexpr const ShotSpreadSettings& GetShotSpreadSettings(std::uint8_t weapon)
 }
 
 // 마지막 발사 뒤 elapsed_seconds가 지났을 때의 연사 열기
-inline int RecoverShotHeat(int heat, float elapsed_seconds, float fire_interval)
+inline int RecoverShotHeat(int heat, float elapsed_seconds, int fire_interval_ms)
 {
-	const int recovered = static_cast<int>(std::floor(std::max(0.0f, elapsed_seconds) / std::max(fire_interval, 0.01f))) - 1;
+	const int recovered = static_cast<int>(std::floor(std::max(0.0f, elapsed_seconds) * 1000.0f / std::max(fire_interval_ms, 10))) - 1;
 	return std::max(0, heat - std::max(0, recovered));
 }
 

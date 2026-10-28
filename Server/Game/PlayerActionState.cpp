@@ -86,13 +86,13 @@ bool PlayerActionState::TryEquip(std::uint8_t weapon, bool is_aiming, std::uint3
 	return true;
 }
 
-std::optional<FiredShot> PlayerActionState::TryFire(const WeaponInfo& info, const ShotSpreadInput& spread_input, std::uint32_t action_time_ms, long long time_ms, long long fire_motion_ms)
+std::optional<FiredShot> PlayerActionState::TryFire(const ShotSpreadInput& spread_input, std::uint32_t action_time_ms, long long time_ms, long long fire_motion_ms)
 {
 	if (weapon_ >= ammo_.size() || !AcceptActionTime(action_time_ms, time_ms) || IsEquipWaiting(action_time_ms)) return std::nullopt;
 	WeaponAmmo& ammo = ammo_[weapon_];
 	if (ammo.reload_end_ms != 0 || ammo.rounds <= 0) return std::nullopt;
 	const long long interval_ms = static_cast<std::int32_t>(action_time_ms - ammo.last_fire_action_ms);
-	const long long fire_interval_ms = static_cast<long long>(info.fire_interval * 1000.0f);
+	const long long fire_interval_ms = WEAPON_FIRE_INTERVALS_MS[weapon_];
 	const long long usable_reward_ms = ammo.fire_reward_ms >= 0 ? ammo.fire_reward_ms : std::min(0LL, ammo.fire_reward_ms + FIRE_DEBT_FREE_MS);
 	if (interval_ms + usable_reward_ms < fire_interval_ms) return std::nullopt;
 	// 간격이 모자라면 모자란 만큼 보상을 쓰고, 남으면 남은 만큼 지난 보상이나 빚을 0 쪽으로 줄인다. 그 뒤 서버가 받은 간격과 동작 시각 간격의 차이를 더한다.
@@ -107,8 +107,8 @@ std::optional<FiredShot> PlayerActionState::TryFire(const WeaponInfo& info, cons
 	// 서버가 받은 발사 간격은 지연 때문에 실제와 다를 수 있어, 퍼짐 크기는 연사 열기를 더 회복한 값으로 본다.
 	const ShotSpreadSettings& spread = GetShotSpreadSettings(weapon_);
 	const float elapsed_seconds = (time_ms - ammo.spread_time_ms) / 1000.0f;
-	const FiredShot shot{ ammo.shot_count++, GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, info.fire_interval), spread_input.is_aimed, spread_input.horizontal_speed, spread_input.is_falling) };
-	ammo.spread_heat = AddShotHeat(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds, info.fire_interval));
+	const FiredShot shot{ ammo.shot_count++, GetShotSpread(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, WEAPON_FIRE_INTERVALS_MS[weapon_]), spread_input.is_aimed, spread_input.horizontal_speed, spread_input.is_falling) };
+	ammo.spread_heat = AddShotHeat(spread, RecoverShotHeat(ammo.spread_heat, elapsed_seconds, WEAPON_FIRE_INTERVALS_MS[weapon_]));
 	ammo.spread_time_ms = time_ms;
 	// 탄창이 비면 발사 동작이 끝난 뒤 재장전한다.
 	if (ammo.rounds == 0) ScheduleAutoReload(time_ms + fire_motion_ms);
@@ -144,36 +144,36 @@ bool PlayerActionState::TryPickup(std::uint32_t action_time_ms, long long time_m
 	return true;
 }
 
-bool PlayerActionState::TryStartReload(const WeaponInfo& info, std::uint32_t action_time_ms, long long time_ms)
+bool PlayerActionState::TryStartReload(std::uint32_t action_time_ms, long long time_ms)
 {
 	if (weapon_ >= ammo_.size() || !AcceptActionTime(action_time_ms, time_ms) || IsEquipWaiting(action_time_ms)) return false;
 	WeaponAmmo& ammo = ammo_[weapon_];
-	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= static_cast<int>(info.magazine_capacity)) return false;
+	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= WEAPON_MAGAZINE_CAPACITIES[weapon_]) return false;
 	last_action_ms_ = action_time_ms;
-	ammo.reload_end_ms = time_ms + static_cast<long long>(info.reload_duration * 1000.0f);
+	ammo.reload_end_ms = time_ms + WEAPON_RELOAD_DURATIONS_MS[weapon_];
 	auto_reload_ms_ = 0;
 	return true;
 }
 
-bool PlayerActionState::StartAutoReload(const WeaponInfo& info, long long time_ms)
+bool PlayerActionState::StartAutoReload(long long time_ms)
 {
 	if (auto_reload_ms_ == 0 || time_ms < auto_reload_ms_) return false;
 	const long long start_ms = auto_reload_ms_;
 	auto_reload_ms_ = 0;
 	if (weapon_ >= ammo_.size()) return false;
 	WeaponAmmo& ammo = ammo_[weapon_];
-	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= static_cast<int>(info.magazine_capacity)) return false;
-	ammo.reload_end_ms = start_ms + static_cast<long long>(info.reload_duration * 1000.0f);
+	if (ammo.reload_end_ms != 0 || ammo.spare_rounds <= 0 || ammo.rounds >= WEAPON_MAGAZINE_CAPACITIES[weapon_]) return false;
+	ammo.reload_end_ms = start_ms + WEAPON_RELOAD_DURATIONS_MS[weapon_];
 	return true;
 }
 
-bool PlayerActionState::FinishReload(std::uint8_t weapon, const WeaponInfo& info, long long time_ms)
+bool PlayerActionState::FinishReload(std::uint8_t weapon, long long time_ms)
 {
 	if (weapon >= ammo_.size()) return false;
 	WeaponAmmo& ammo = ammo_[weapon];
 	if (ammo.reload_end_ms == 0 || time_ms < ammo.reload_end_ms) return false;
 	ammo.reload_end_ms = 0;
-	const int loaded = std::min(static_cast<int>(info.magazine_capacity) - ammo.rounds, ammo.spare_rounds);
+	const int loaded = std::min(WEAPON_MAGAZINE_CAPACITIES[weapon] - ammo.rounds, ammo.spare_rounds);
 	ammo.rounds += loaded;
 	ammo.spare_rounds -= loaded;
 	return true;

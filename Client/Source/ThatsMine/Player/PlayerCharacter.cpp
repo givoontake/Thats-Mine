@@ -152,9 +152,6 @@ APlayerCharacter::APlayerCharacter()
 	sniper.display_name = NSLOCTEXT("Equipment", "Sniper", "Stun Sniper");
 	sniper.selection_key = EKeys::One;
 	sniper.mesh.ComponentProperty = TEXT("Sniper");
-	sniper.hitscan.is_enabled = true;
-	// 유효 사거리 500m
-	sniper.hitscan.distance = 50000.0f;
 	sniper.can_aim = true;
 	sniper.uses_rifle_pose = true;
 	sniper.left_hand_grip_socket = TEXT("LeftHandGrip");
@@ -164,11 +161,6 @@ APlayerCharacter::APlayerCharacter()
 	pistol.display_name = NSLOCTEXT("Equipment", "Pistol", "Stun Pistol");
 	pistol.selection_key = EKeys::Two;
 	pistol.mesh.ComponentProperty = TEXT("Pistol");
-	pistol.hitscan.is_enabled = true;
-	// 유효 사거리 100m
-	pistol.hitscan.distance = 10000.0f;
-	pistol.hitscan.magazine_capacity = 7;
-	pistol.hitscan.fire_interval = 0.2f;
 	pistol.primary_action.play_rate = (14.0f / 30.0f) / 0.18f;
 	pistol.uses_pistol_pose = true;
 	weapon_settings_.Add(EWeaponType::PISTOL, pistol);
@@ -201,7 +193,7 @@ void APlayerCharacter::PostInitializeComponents()
 	weapon_ammo_.Reset();
 	for (const auto& [weapon, settings] : weapon_settings_)
 	{
-		if (settings.hitscan.is_enabled)
+		if (IsGunWeapon(static_cast<WeaponType>(weapon)))
 		{
 			// 탄과 소지 탄 없이 시작한다.
 			weapon_ammo_.Add(weapon, FWeaponAmmoState());
@@ -527,7 +519,7 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 			{
 				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->hitscan.reload_montage);
 			}
-			if (previous_settings->hitscan.is_enabled && previous_settings->primary_action.montage)
+			if (IsGunWeapon(static_cast<WeaponType>(current_weapon_)) && previous_settings->primary_action.montage)
 			{
 				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->primary_action.montage);
 			}
@@ -661,7 +653,7 @@ void APlayerCharacter::PrimaryAction()
 	}
 	if (const FWeaponSettings* settings = GetCurrentWeaponSettings())
 	{
-		if (settings->hitscan.is_enabled)
+		if (IsGunWeapon(static_cast<WeaponType>(current_weapon_)))
 		{
 			FireHitscan(settings->hitscan);
 		}
@@ -826,7 +818,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	}
 
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
-	next_fire_times_.Add(current_weapon_, real_now + FMath::Max(0.01f, settings.fire_interval));
+	next_fire_times_.Add(current_weapon_, real_now + WEAPON_FIRE_INTERVALS_MS[static_cast<uint8>(current_weapon_)] / 1000.0);
 	action_real_time_ = real_now;
 	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
@@ -835,11 +827,11 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	shot.weapon = current_weapon_;
 	// 연사 열기를 올린다. 화면의 퍼짐 표시에만 쓰고, 빗나감은 서버가 정한다.
 	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
-	ammo->spread_heat = AddShotHeat(spread_settings, RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), settings.fire_interval));
+	ammo->spread_heat = AddShotHeat(spread_settings, RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), WEAPON_FIRE_INTERVALS_MS[static_cast<uint8>(current_weapon_)]));
 	ammo->spread_time = now;
 	// 총구는 화염·궤적 표시에만 쓴다.
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
-	const float distance = FMath::Max(1.0f, settings.distance);
+	const float distance = WEAPON_HITSCAN_DISTANCES[static_cast<uint8>(current_weapon_)];
 	FCollisionQueryParams query(SCENE_QUERY_STAT(HitscanShot), false, this);
 	query.bFindInitialOverlaps = true;
 	for (const auto& [weapon, mesh] : weapon_meshes_)
@@ -1031,7 +1023,7 @@ void APlayerCharacter::PlayFireSound(const FHitscanSettings& settings) const
 		return;
 	}
 	const FVector location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
-	if (const float volume = GetHeardVolume(GetWorld(), location, settings.distance); volume > 0.0f)
+	if (const float volume = GetHeardVolume(GetWorld(), location, WEAPON_HITSCAN_DISTANCES[static_cast<uint8>(current_weapon_)]); volume > 0.0f)
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, sound, location, volume);
 	}
@@ -1108,7 +1100,7 @@ float APlayerCharacter::GetCurrentShotSpread() const
 		return 0.0f;
 	}
 	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
-	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->spread_time), settings->hitscan.fire_interval);
+	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->spread_time), WEAPON_FIRE_INTERVALS_MS[static_cast<uint8>(current_weapon_)]);
 	return GetShotSpread(spread_settings, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
 }
 
@@ -1344,7 +1336,7 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 	{
 		if (UAnimMontage* montage = settings->hitscan.reload_montage)
 		{
-			anim_instance->Montage_Play(montage, montage->GetPlayLength() / FMath::Max(0.01f, settings->hitscan.reload_duration), EMontagePlayReturnType::MontageLength, 0.0f, false);
+			anim_instance->Montage_Play(montage, montage->GetPlayLength() / (WEAPON_RELOAD_DURATIONS_MS[static_cast<uint8>(current_weapon_)] / 1000.0f), EMontagePlayReturnType::MontageLength, 0.0f, false);
 		}
 		return;
 	}
@@ -1422,13 +1414,13 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 	if (const FWeaponSettings* settings = weapon_settings_.Find(weapon))
 	{
 		display.name = settings->display_name;
-		display.uses_ammo = settings->hitscan.is_enabled || weapon == EWeaponType::PICKAXE;
+		display.uses_ammo = IsGunWeapon(static_cast<WeaponType>(weapon)) || weapon == EWeaponType::PICKAXE;
 		// ESC 메뉴나 지도·인벤토리 같은 창이 떠 있으면 에임을 숨긴다.
 		const AThatsMinePlayerController* controller = Cast<AThatsMinePlayerController>(GetController());
-		display.should_show_crosshair = settings->hitscan.is_enabled && !is_aiming_ && !(controller && controller->IsMenuOpen());
+		display.should_show_crosshair = IsGunWeapon(static_cast<WeaponType>(weapon)) && !is_aiming_ && !(controller && controller->IsMenuOpen());
 		if (display.uses_ammo)
 		{
-			display.capacity = FMath::Max(1, settings->hitscan.magazine_capacity);
+			display.capacity = FMath::Max(1, WEAPON_MAGAZINE_CAPACITIES[static_cast<uint8>(weapon)]);
 			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
 			{
 				display.rounds = ammo->rounds;
@@ -1587,7 +1579,7 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if (weapon != current_weapon_ || is_equipping_ || !ammo || !settings || !settings->hitscan.is_enabled || ammo->spare_rounds <= 0 || ammo->rounds >= FMath::Max(1, settings->hitscan.magazine_capacity) || ammo->is_reloading)
+	if (weapon != current_weapon_ || is_equipping_ || !ammo || !settings || !IsGunWeapon(static_cast<WeaponType>(weapon)) || ammo->spare_rounds <= 0 || ammo->rounds >= WEAPON_MAGAZINE_CAPACITIES[static_cast<uint8>(weapon)] || ammo->is_reloading)
 	{
 		return;
 	}
@@ -1621,7 +1613,7 @@ void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
 	{
 		return;
 	}
-	const float duration = FMath::Max(0.01f, settings->hitscan.reload_duration);
+	const float duration = WEAPON_RELOAD_DURATIONS_MS[static_cast<uint8>(weapon)] / 1000.0f;
 	const float play_rate = montage->GetPlayLength() / duration;
 	const float position = static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->reload_start_time) * play_rate;
 	anim_instance->Montage_Play(montage, play_rate, EMontagePlayReturnType::MontageLength, position, false);
@@ -1687,7 +1679,7 @@ void APlayerCharacter::SetAiming(bool is_aiming)
 				}
 			}
 			const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(GetActorLocation() - view_location, view_direction));
-			const FVector aim_end = aim_start + view_direction * FMath::Max(1.0f, settings->hitscan.distance);
+			const FVector aim_end = aim_start + view_direction * WEAPON_HITSCAN_DISTANCES[static_cast<uint8>(current_weapon_)];
 			FHitResult aim_hit;
 			const FVector aim_point = GetWorld()->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, settings->hitscan.trace_channel, query) ? aim_hit.ImpactPoint : aim_end;
 			// 조준 카메라 위치는 몸 방향을 따라 돌기 때문에 바뀐 방향으로 한 번 더 맞춘다.
