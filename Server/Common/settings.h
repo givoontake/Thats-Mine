@@ -97,10 +97,15 @@ constexpr float TERMINAL_FALL_DISTANCE = TERMINAL_FALL_SPEED * TERMINAL_FALL_SPE
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
 constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아래 끝까지 거리(cm). 양 끝 반구를 포함한다.
+// 언리얼 캐릭터는 걸을 때 캡슐을 바닥에서 1.9~2.4cm 사이로 띄워 두고, 벗어나면 그 가운데로 맞춘다. 서버 이동 예측이 바닥에 세울 때 이만큼(cm) 띄운다.
+constexpr float CHARACTER_FLOOR_DISTANCE = 2.15f;
 
 // 이동 검증. 어기면 마지막으로 인정한 위치로 되돌린다.
 // 허용치(cm): 캡슐 아래 끝(발)이 랜드스케이프보다 이만큼 넘게 아래면 땅속, 캡슐이 이동을 막는 배치물에 이만큼 넘게 파고들면 겹침으로 본다.
 constexpr float MOVE_TOLERANCE = 20.0f;
+// 서버 이동 예측이 배치물 막힘을 볼 때 캡슐 반지름과 반 높이를 줄이는 길이(cm). 언리얼처럼 캡슐이 벽에 닿으면 멈추게 하되, 위치 반올림으로 닿아 있는 상태를 겹침으로 보지 않게 조금 줄인다.
+// 예측을 시작하는 위치가 이 캡슐로 이미 겹치면(서버와 클라이언트 충돌 모양 차이) 이동 검증과 같이 MOVE_TOLERANCE만큼 줄인 캡슐로 본다.
+constexpr float MOVE_PREDICT_MARGIN = 2.0f;
 // 이동 속도 검사. 인정한 위치 사이마다 "실제 거리 - 갈 수 있는 거리"를 이번 오차로 보고, 이번 오차가 MOVE_MAX_STEP_EXCESS_DISTANCE(cm)를 넘거나
 // 0 아래로는 내려가지 않게 쌓은 초과 누적이 MOVE_MAX_EXCESS_DISTANCE(cm)를 넘으면 인정하지 않는다.
 // 갈 수 있는 거리는 땅끼리면 서버가 따라가는 최대 수평 속도를 위 가감속 식으로 바꿔 가며 쌓은 수평 거리이고, 앞뒤 중 하나라도 공중이면 정점에서 내려간 높이만큼 키운 최대 속도로 간 3차원 거리다.
@@ -121,6 +126,8 @@ constexpr float GROUND_CHECK_RADIUS_MARGIN = 10.0f;
 // 언리얼 캐릭터는 약 44.8도 넘는 비탈을 걷지 못하고 미끄러지며, 기울기 계산 오차를 고려해 조금 낮게 둔다.
 constexpr float SLOPE_SAMPLE_DISTANCE = 25.0f;
 constexpr float STEEP_SLOPE_MIN_DEGREES = 40.0f;
+// 걸을 수 있는 가장 가파른 면(도). 언리얼 캐릭터 이동 설정과 같은 값이다. 서버 이동 예측은 공중에서 이보다 가파른 랜드스케이프에 닿으면 서지 않고 면을 따라 미끄러진다.
+constexpr float WALKABLE_FLOOR_DEGREES = 44.765f;
 // 허공 낙하 검사. 공중에서 수직 속도를 바꾸는 것은 중력과 면에 닿는 것뿐이므로, 직전 두 상태가 모두 어떤 면에도 닿지 않았으면
 // 그 둘로 구한 수직 속도에 중력을 더해 이번 높이를 예측하고, AIR_STEP_TOLERANCE(cm)에 클라이언트 시각 단위(AIR_STEP_TIME_UNIT_SECONDS)가 만드는 오차를 더한 범위 안이어야 한다.
 // 시각 단위 오차는 속도 × 시각 단위 × (1 + 예측 시간 / 속도를 구한 구간)이다. 속도를 구하는 구간은 AIR_STEP_MIN_BASELINE_MS보다 짧게 잡지 않는다.
