@@ -20,6 +20,8 @@ public:
 	void SetMoveInput(const FVector2D& move_input) { move_input_ = move_input; }
 	// 받은 이동 키 입력과 보낸 사람이 키를 바꾼 순간의 위치·수평 속도. 멈춤이면 보낸 사람이 멈춘 자리에 맞춰 세운다.
 	void ApplyMoveInput(const FVector2D& move_input, const FVector& location, const FVector2D& sent_velocity);
+	// 서버가 멈춘 것으로 판단한 위치로 옮기고 이동 키 입력을 없는 것으로 두어 수평으로 바로 세운다. 공중이면 떨어지는 것은 이어 간다.
+	void ApplyMoveStop(const FVector& location);
 	void SetAiming(bool is_aiming);
 	void SetWeapon(EWeaponType weapon);
 	float GetViewPitch() const { return view_pitch_; }

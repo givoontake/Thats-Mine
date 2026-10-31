@@ -23,6 +23,7 @@
 #include "hint_types.h"
 #include "treasure_placement.h"
 #include "room_lifecycle_tasks.h"
+#include "move_prediction.h"
 
 // 종류별 힌트 패킷 중 가장 큰 크기. 힌트를 이어 붙일 버퍼를 잡을 때 쓴다.
 constexpr std::size_t MAX_HINT_PACKET_SIZE = std::max(sizeof(S2C_DIRECTION_HINT_PACKET), sizeof(S2C_COUNT_HINT_PACKET));
@@ -885,9 +886,14 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		if (FindSession(room_player)) CorrectMove(room_player, true);
 	}
 	// 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 멈춘 것으로 보고 방 전체에 알린다.
+	// 멈춘 위치는 명중 판정의 예측과 같이 마지막 이동 상태에서 틱마다 남긴 이동 키로 MOVE_STOP_DELAY_SECONDS만큼 간 자리다.
 	for (auto& room_player : room_players_) {
 		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsMoveStopped()) continue;
-		if (tick_time_ms - room_player.GetMoveTimeMs() > static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f)) RelayMoveStop(room_player);
+		const long long stop_ms = room_player.GetMoveTimeMs() + static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f);
+		if (tick_time_ms <= stop_ms) continue;
+		const std::optional<RewoundState> rewound = room_player.GetRewoundState(stop_ms);
+		const MOVE_STATE stopped = rewound ? room_player.PredictRewoundMove(*rewound, server_->GetMapData()) : room_player.GetMoveState();
+		RelayMoveStop(room_player, stopped.location);
 	}
 	// 이번 틱이 끝난 판정 상태를 남긴다. 명중 판정이 사격 시각으로 되감을 때 쓴다.
 	for (auto& room_player : room_players_) {
@@ -1084,10 +1090,10 @@ void GameRoom::SendReloadDone(const Player& player, std::uint8_t weapon)
 	GetTickSendBuffer(player).Append(&done_p, done_p.header.size);
 }
 
-void GameRoom::RelayMoveStop(Player& player)
+void GameRoom::RelayMoveStop(Player& player, const float location[3])
 {
 	player.SetMoveStopped();
-	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id };
+	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id, { location[0], location[1], location[2] } };
 	QueueRelay(&stop_p, sizeof(stop_p));
 }
 
@@ -1748,7 +1754,7 @@ void GameRoom::CorrectMove(Player& player, bool is_on_air_curve)
 	correction_p.air_phase = air.phase;
 	GetTickSendBuffer(player).Append(&correction_p, correction_p.header.size);
 	// 되돌린 위치에서 멈춘 것으로 보고 다른 플레이어에게도 알린다.
-	if (!player.IsMoveStopped()) RelayMoveStop(player);
+	if (!player.IsMoveStopped()) RelayMoveStop(player, location);
 }
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.

@@ -92,6 +92,22 @@ void URemoteMovementComponent::ApplyMoveInput(const FVector2D& move_input, const
 	SetMoveInput(move_input);
 }
 
+void URemoteMovementComponent::ApplyMoveStop(const FVector& location)
+{
+	APlayerCharacter* character = CastChecked<APlayerCharacter>(GetOwner());
+	UCharacterMovementComponent* movement = character->GetCharacterMovement();
+	if (is_controlled_stop_)
+	{
+		FinishControlledStop();
+	}
+	character->SetActorLocation(location, false, nullptr, ETeleportType::TeleportPhysics);
+	movement->Velocity.X = 0.0f;
+	movement->Velocity.Y = 0.0f;
+	correction_ = FVector::ZeroVector;
+	correction_remaining_ = 0.0f;
+	SetMoveInput(FVector2D::ZeroVector);
+}
+
 // 멈출 자리까지 남은 거리를 이번 프레임 평균 속도로 바꿔 넣는다. 제동 시작 위치까지 가는 중이면 지금 속도를 유지한다.
 void URemoteMovementComponent::UpdateControlledStop(float delta_seconds)
 {

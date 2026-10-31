@@ -138,8 +138,8 @@ private:
 	void SendPickaxeCharges(const Player& player, long long time_ms);
 	// 그 무기의 지금 탄창 탄과 소지 탄을 재장전 끝으로 그 사람에게 보낸다.
 	void SendReloadDone(const Player& player, std::uint8_t weapon);
-	// 그 플레이어를 멈춘 것으로 표시하고 방 전체에 멈춤을 알린다.
-	void RelayMoveStop(Player& player);
+	// 그 플레이어를 멈춘 것으로 표시하고 방 전체에 멈춘 위치와 함께 멈춤을 알린다.
+	void RelayMoveStop(Player& player, const float location[3]);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
 	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
 	// 중계 패킷을 이번 틱 중계에 넣는다.

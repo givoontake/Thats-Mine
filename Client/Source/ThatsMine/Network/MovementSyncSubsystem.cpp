@@ -539,7 +539,7 @@ void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
 	}
 }
 
-// 서버가 그 플레이어를 멈춘 것으로 판단했다. 이동 키 입력을 없는 것으로 두어 제동으로 멈춘다.
+// 서버가 그 플레이어를 멈춘 것으로 판단했다. 서버가 정한 위치로 옮겨 수평으로 바로 멈춘다.
 void UMovementSyncSubsystem::HandleMoveStopPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_MOVE_STOP_PACKET) - sizeof(PACKET_HEADER))
@@ -552,7 +552,7 @@ void UMovementSyncSubsystem::HandleMoveStopPacket(const TArray<uint8>& payload)
 	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
-		remote_movement->SetMoveInput(FVector2D::ZeroVector);
+		remote_movement->ApplyMoveStop(FVector(packet.location[0], packet.location[1], packet.location[2]));
 	}
 }
 
