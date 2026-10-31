@@ -81,11 +81,16 @@ FMapAssetCollector::FMapAssetCollector(UWorld* world, const FBox2D& play_area)
 			continue;
 		}
 		TInlineComponentArray<UPrimitiveComponent*> components(actor);
+		// 랜드스케이프는 충돌 조각 중 하나라도 플레이 영역과 넓이로 겹치는 액터만 담는다. 플레이 영역 밖 배경 랜드스케이프는 경계에 선으로만 닿으므로 빠진다.
+		TArray<const ULandscapeHeightfieldCollisionComponent*> actor_landscapes;
+		bool is_play_landscape = false;
 		for (UPrimitiveComponent* component : components)
 		{
 			if (const ULandscapeHeightfieldCollisionComponent* landscape = Cast<ULandscapeHeightfieldCollisionComponent>(component))
 			{
-				landscapes_.Add(landscape);
+				const FBox bounds = landscape->Bounds.GetBox();
+				is_play_landscape |= bounds.Min.X < play_area_.Max.X && bounds.Max.X > play_area_.Min.X && bounds.Min.Y < play_area_.Max.Y && bounds.Max.Y > play_area_.Min.Y;
+				actor_landscapes.Add(landscape);
 				continue;
 			}
 			uint8 flags = 0;
@@ -147,6 +152,10 @@ FMapAssetCollector::FMapAssetCollector(UWorld* world, const FBox2D& play_area)
 				continue;
 			}
 			collision.objects.Add({ flags, component->GetComponentTransform() });
+		}
+		if (is_play_landscape)
+		{
+			landscapes_.Append(actor_landscapes);
 		}
 	}
 
