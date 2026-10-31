@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <optional>
 #include <vector>
 #include "terrain_types.h"
@@ -10,7 +11,17 @@ class MapFileReader;
 class LandscapeData
 {
 	std::vector<TerrainHeightfield> heightfields_;
+	// 땅 높이를 찾을 조각을 바로 고르는 칸. 모든 조각 범위를 덮는 사각형을 가장 작은 조각 한 변 길이로 나누고,
+	// 칸마다 범위가 그 칸에 걸치는 조각 번호를 heightfields_ 순서대로 둔다.
+	DirectX::XMFLOAT2 grid_min_{};
+	DirectX::XMFLOAT2 grid_max_{};
+	float grid_cell_size_ = 0.0f;
+	int grid_columns_ = 0;
+	int grid_rows_ = 0;
+	std::vector<std::vector<std::uint32_t>> grid_cells_;
 	bool is_loaded_ = false;
+
+	void BuildGrid();
 
 public:
 	// 랜드스케이프 파일의 머리 뒤 충돌 조각 부분을 읽는다.

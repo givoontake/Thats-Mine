@@ -31,8 +31,39 @@ bool LandscapeData::Load(MapFileReader& reader)
 		heightfield.world_min = world_min;
 		heightfield.world_max = world_max;
 	}
+	BuildGrid();
 	is_loaded_ = true;
 	return true;
+}
+
+void LandscapeData::BuildGrid()
+{
+	grid_cells_.clear();
+	grid_columns_ = 0;
+	grid_rows_ = 0;
+	if (heightfields_.empty()) return;
+	grid_min_ = { heightfields_.front().world_min.x, heightfields_.front().world_min.y };
+	grid_max_ = { heightfields_.front().world_max.x, heightfields_.front().world_max.y };
+	grid_cell_size_ = std::min(grid_max_.x - grid_min_.x, grid_max_.y - grid_min_.y);
+	for (const TerrainHeightfield& heightfield : heightfields_) {
+		grid_min_ = { std::min(grid_min_.x, heightfield.world_min.x), std::min(grid_min_.y, heightfield.world_min.y) };
+		grid_max_ = { std::max(grid_max_.x, heightfield.world_max.x), std::max(grid_max_.y, heightfield.world_max.y) };
+		grid_cell_size_ = std::min({ grid_cell_size_, heightfield.world_max.x - heightfield.world_min.x, heightfield.world_max.y - heightfield.world_min.y });
+	}
+	grid_columns_ = static_cast<int>((grid_max_.x - grid_min_.x) / grid_cell_size_) + 1;
+	grid_rows_ = static_cast<int>((grid_max_.y - grid_min_.y) / grid_cell_size_) + 1;
+	grid_cells_.assign(static_cast<size_t>(grid_columns_) * grid_rows_, {});
+	// 조각 범위 양 끝 좌표가 드는 칸 사이를 모두 채운다. 땅 높이를 찾을 때 같은 식으로 칸을 구하므로, 범위 안의 점은 그 조각이 들어 있는 칸에 떨어진다.
+	for (std::uint32_t index = 0; index < heightfields_.size(); ++index) {
+		const TerrainHeightfield& heightfield = heightfields_[index];
+		const int first_column = std::min(static_cast<int>((heightfield.world_min.x - grid_min_.x) / grid_cell_size_), grid_columns_ - 1);
+		const int last_column = std::min(static_cast<int>((heightfield.world_max.x - grid_min_.x) / grid_cell_size_), grid_columns_ - 1);
+		const int first_row = std::min(static_cast<int>((heightfield.world_min.y - grid_min_.y) / grid_cell_size_), grid_rows_ - 1);
+		const int last_row = std::min(static_cast<int>((heightfield.world_max.y - grid_min_.y) / grid_cell_size_), grid_rows_ - 1);
+		for (int row = first_row; row <= last_row; ++row) {
+			for (int column = first_column; column <= last_column; ++column) grid_cells_[static_cast<size_t>(row) * grid_columns_ + column].push_back(index);
+		}
+	}
 }
 
 // 조각마다 선분을 조각 기준 좌표로 옮기고, 위에서 본 선분이 지나는 칸을 따라가며 칸의 삼각형 2개를 검사한다.
@@ -75,8 +106,11 @@ bool LandscapeData::IsSegmentBlockedByLandscape(const XMFLOAT3& start, const XMF
 // (x, y)가 속한 칸의 삼각형에서 세 꼭짓점 높이를 비율로 섞어 땅 높이를 구한다.
 std::optional<float> LandscapeData::GetGroundHeight(float x, float y) const
 {
-	if (!is_loaded_) return std::nullopt;
-	for (const TerrainHeightfield& heightfield : heightfields_) {
+	if (!is_loaded_ || x < grid_min_.x || x > grid_max_.x || y < grid_min_.y || y > grid_max_.y) return std::nullopt;
+	const int grid_column = std::min(static_cast<int>((x - grid_min_.x) / grid_cell_size_), grid_columns_ - 1);
+	const int grid_row = std::min(static_cast<int>((y - grid_min_.y) / grid_cell_size_), grid_rows_ - 1);
+	for (const std::uint32_t index : grid_cells_[static_cast<size_t>(grid_row) * grid_columns_ + grid_column]) {
+		const TerrainHeightfield& heightfield = heightfields_[index];
 		if (x < heightfield.world_min.x || x > heightfield.world_max.x || y < heightfield.world_min.y || y > heightfield.world_max.y) continue;
 		XMFLOAT3 local;
 		XMStoreFloat3(&local, XMVector3TransformCoord(XMVectorSet(x, y, 0.0f, 1.0f), XMLoadFloat4x4(&heightfield.world_to_local)));
