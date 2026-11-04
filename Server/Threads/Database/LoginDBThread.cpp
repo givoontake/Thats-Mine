@@ -42,9 +42,9 @@ DBLoginResult LoginDBThread::ProcessTask(const DBLoginTask& task)
 	// 앞선 요청으로 이미 로그인했거나 연결이 끝난 세션의 요청은 조회하지 않는다.
 	if (!login_manager_.IsWaitingLogin(task.session_key)) return {};
 	const char* SQL_LOGIN =
-		"SELECT player_id, id, password "
-		"FROM test_accounts "
-		"WHERE id=? "
+		"SELECT account_id, login_id, password "
+		"FROM account.accounts "
+		"WHERE login_id=? "
 		"LIMIT 1";
 	std::unique_ptr<sql::PreparedStatement> statement(connection_->prepareStatement(SQL_LOGIN));
 	statement->setString(1, task.login_id);
