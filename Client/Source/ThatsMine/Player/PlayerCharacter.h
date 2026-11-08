@@ -50,7 +50,8 @@ public:
 	// 무기를 바꾼 뒤 쓸 수 있을 때까지 시간(초). 서버와 같은 무기별 장비 교체 대기 시간이다. 장착 동작은 이 시간에 맞춰 재생한다.
 	static float GetEquipDuration(EWeaponType weapon);
 
-	APlayerCharacter();
+	// 이동 컴포넌트는 서버와 같은 공용 이동 계산을 쓰는 UPlayerMovementComponent로 만든다.
+	APlayerCharacter(const FObjectInitializer& object_initializer);
 	virtual void PawnClientRestart() override;
 	virtual void UnPossessed() override;
 	virtual FRotator GetViewRotation() const override;

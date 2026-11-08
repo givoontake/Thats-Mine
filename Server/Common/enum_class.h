@@ -14,8 +14,8 @@ enum class RoomState { EMPTY, INITIALIZING, WAIT, PLAY, WAITING_DELETE, DELETE_P
 // 로딩 단계에는 플레이어가 움직이지 못한다.
 enum class MatchPhase { LOADING, READY, STARTED };
 
-// 받은 이동 상태의 검사 결과. ROLLBACK: 마지막으로 인정한 위치로 되돌림, AIR_CORRECTION: 공중 높이만 어겨 서버가 계산한 공중 위치로 맞춤
-enum class MoveCheckResult { ACCEPTED, ROLLBACK, AIR_CORRECTION };
+// 받은 이동 상태의 검사 결과. ROLLBACK: 인정하지 않고 클라이언트를 서버 이동 상태로 맞춤
+enum class MoveCheckResult { ACCEPTED, ROLLBACK };
 
 // FREE: 빈 자리 또는 초기화 중(게임 스레드가 처리하지 않음), COMPLETE: 처리 가능, PROCESSING: 처리 중
 enum class RoomProcessState { FREE, COMPLETE, PROCESSING };

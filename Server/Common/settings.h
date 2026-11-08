@@ -75,67 +75,80 @@ constexpr float MOVE_SPEED_FORWARD = 600.0f;
 constexpr float MOVE_SPEED_BACKWARD = 300.0f;
 constexpr float MOVE_SPEED_AIMING = 150.0f;
 // 땅에서의 가감속. 언리얼 캐릭터 이동 설정과 같은 값이다. 상한보다 느리면 최대 가속으로 일정하게 빨라지고,
-// 상한보다 빠르면 "지면 마찰 × 제동 마찰 배수 × 속도 + 제동 감속"으로 느려지며, 제동은 MOVE_BRAKING_STEP_SECONDS 이하 단계로 나눠 계산한다.
+// 상한보다 빠르면 "지면 마찰 × 제동 마찰 배수 × 속도 + 제동 감속"으로 느려진다.
 constexpr float MOVE_MAX_ACCELERATION = 2048.0f;
 constexpr float MOVE_BRAKING_DECELERATION = 2048.0f;
 constexpr float MOVE_GROUND_FRICTION = 8.0f;
 constexpr float MOVE_BRAKING_FRICTION_FACTOR = 2.0f;
-constexpr float MOVE_BRAKING_STEP_SECONDS = 1.0f / 33.0f;
 constexpr float MOVE_MAX_STEP_HEIGHT = 60.0f; // 땅에서 걸어서 오르내릴 수 있는 높이(cm). 언리얼 캐릭터 이동 설정과 같은 값이다.
 
-// 점프와 낙하. 클라이언트 캐릭터 이동과 서버 높이 검증이 같은 값을 쓴다.
+// 점프와 낙하. 클라이언트 캐릭터 이동과 서버 이동 계산이 같은 값을 쓴다.
 // 중력은 프로젝트 기본 중력, 낙하 속도 상한은 게임 레벨 기본 물리 볼륨의 값과 같다.
 constexpr float JUMP_Z_VELOCITY = 500.0f; // 점프 순간 위쪽 속도(cm/s)
 constexpr float GRAVITY = 980.0f; // 중력 가속도(cm/s²)
 constexpr float TERMINAL_FALL_SPEED = 4000.0f; // 낙하 속도 상한(cm/s)
-// 미리 구한 값. 정점 시간은 v/g, 정점 높이는 위치에너지 식 v²/2g이고, 낙하 속도 상한에 닿는 시간과 그때까지 떨어진 거리도 같은 식이다.
-constexpr float JUMP_APEX_SECONDS = JUMP_Z_VELOCITY / GRAVITY;
-constexpr float JUMP_APEX_HEIGHT = JUMP_Z_VELOCITY * JUMP_Z_VELOCITY / (2.0f * GRAVITY);
-constexpr float TERMINAL_FALL_SECONDS = TERMINAL_FALL_SPEED / GRAVITY;
-constexpr float TERMINAL_FALL_DISTANCE = TERMINAL_FALL_SPEED * TERMINAL_FALL_SPEED / (2.0f * GRAVITY);
 
 // 캐릭터 이동 캡슐. 언리얼 캐릭터 캡슐과 같은 크기이고, 이동 상태의 위치가 이 캡슐의 중심이다.
 constexpr float CHARACTER_CAPSULE_RADIUS = 50.0f; // 반지름(cm)
 constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아래 끝까지 거리(cm). 양 끝 반구를 포함한다.
-// 언리얼 캐릭터는 걸을 때 캡슐을 바닥에서 1.9~2.4cm 사이로 띄워 두고, 벗어나면 그 가운데로 맞춘다. 서버 이동 예측이 바닥에 세울 때 이만큼(cm) 띄운다.
-constexpr float CHARACTER_FLOOR_DISTANCE = 2.15f;
 
-// 이동 검증. 어기면 마지막으로 인정한 위치로 되돌린다.
-// 허용치(cm): 캡슐 아래 끝(발)이 랜드스케이프보다 이만큼 넘게 아래면 땅속, 캡슐이 이동을 막는 배치물에 이만큼 넘게 파고들면 겹침으로 본다.
+// 공용 이동 계산(SharedMovement). 언리얼 캐릭터 이동의 엔진 고정값과 이 프로젝트 캐릭터 설정값을 그대로 쓴다.
+// 걸을 때 바닥과의 거리(cm)가 이 범위 안이면 그대로 두고, 벗어나면 가운데로 맞춘다.
+constexpr float MOVE_MIN_FLOOR_DISTANCE = 1.9f;
+constexpr float MOVE_MAX_FLOOR_DISTANCE = 2.4f;
+// 한 번 부를 때 이동을 이 시간(초) 이하 단계로 나누고, 단계는 이 횟수까지만 진행한다.
+constexpr float MOVE_MAX_SIMULATION_TIME_STEP = 0.05f;
+constexpr int MOVE_MAX_SIMULATION_ITERATIONS = 8;
+// 이보다 짧은 시간(초)은 진행하지 않는다.
+constexpr float MOVE_MIN_TICK_TIME = 1e-6f;
+// 제동 중 이 속도(cm/s) 이하가 되면 멈춘다.
+constexpr float MOVE_BRAKE_TO_STOP_SPEED = 10.0f;
+// 쓸기가 닿은 점이 캡슐 가장자리에서 이 거리(cm) 안이면 바닥·착지로 보지 않는다.
+constexpr float MOVE_SWEEP_EDGE_REJECT_DISTANCE = 0.15f;
+// 처음부터 겹쳐 있으면 빠져나올 거리에 이만큼(cm) 더 밀어내고, 빠져나온 자리가 비었는지는 캡슐을 이만큼 키워 본다.
+constexpr float MOVE_PENETRATION_PULLBACK_DISTANCE = 0.125f;
+constexpr float MOVE_PENETRATION_OVERLAP_INFLATION = 0.1f;
+// 턱 옆면으로 보는 면 법선의 위쪽 성분 상한
+constexpr float MOVE_MAX_STEP_SIDE_Z = 0.08f;
+// 걸을 수 있는 가장 가파른 면의 법선 위쪽 성분. 캐릭터 이동 설정의 걸을 수 있는 경사(약 44.8도)로 언리얼이 정한 값이다.
+constexpr float MOVE_WALKABLE_FLOOR_Z = 0.71f;
+// 가장자리에서 떨어지지 않게 할 때 옆으로 비켜 갈 자리 아래 바닥을 턱 높이보다 이만큼(cm) 더 내려가 찾는다. 캐릭터 이동 설정과 같은 값이다.
+constexpr float MOVE_LEDGE_CHECK_THRESHOLD = 4.0f;
+// 속도가 최고 속도의 제곱에 이 비율을 곱한 값을 넘어야 상한을 넘었다고 본다. 반올림으로 살짝 넘는 것은 넘지 않은 것으로 본다.
+constexpr float MOVE_OVER_SPEED_RATIO = 1.01f;
+// 미끄러지다 같은 벽에 또 닿으면 반올림 오차로 보고 벽에서 이만큼(cm) 떼어 낸다.
+constexpr float MOVE_SAME_WALL_NUDGE_DISTANCE = 0.01f;
+// 이동이 막히면 닿은 자리에서 이동 길이의 MOVE_HIT_PULLBACK_RATIO만큼 되돌리되, 그 거리는 아래 최소·최대(cm) 사이로 둔다. 이동의 MOVE_HIT_PULLBACK_EXTRA_RATIO만큼 더 되돌린다.
+constexpr float MOVE_HIT_PULLBACK_RATIO = 0.1f;
+constexpr float MOVE_HIT_PULLBACK_MIN_DISTANCE = 0.1f;
+constexpr float MOVE_HIT_PULLBACK_MAX_DISTANCE = 1.0f;
+constexpr float MOVE_HIT_PULLBACK_EXTRA_RATIO = 0.001f;
+// 이보다 짧은 이동(cm)은 하지 않는다.
+constexpr float MOVE_MIN_MOVE_DISTANCE = 4e-4f;
+// 두 번째 면에 닿아 다시 정한 미끄러짐 이동이 축마다 이 거리(cm) 안이면 가지 않는다.
+constexpr float MOVE_MIN_SLIDE_DISTANCE = 1e-3f;
+// 바닥 찾기는 캡슐 원기둥 부분을 이 비율로 줄여 아래로 쓴다. 가장자리에 걸려 다시 쓸 때는 두 번째 비율로 줄인다.
+constexpr float MOVE_FLOOR_SWEEP_SHRINK_SCALE = 0.9f;
+constexpr float MOVE_FLOOR_SWEEP_RETRY_SHRINK_SCALE = 0.1f;
+// 점프 정점을 지나는 단계는 정점에서 나눈다. 한 번 진행할 때 이 횟수까지만 나누고, 정점까지 이 시간(초)보다 짧게 남았으면 나누지 않는다.
+constexpr int MOVE_MAX_JUMP_APEX_ATTEMPTS = 2;
+constexpr float MOVE_JUMP_APEX_MIN_TIME = 1e-4f;
+// 서버 캡슐 쓸기. 캡슐과 도형 사이가 이 거리(cm) 안으로 좁혀지면 닿은 것으로 본다. Chaos 쓸기의 수렴 기준과 같은 값이다.
+constexpr float MOVE_SWEEP_CONTACT_DISTANCE = 1e-3f;
+// 볼록 도형에 닿았을 때 닿은 점에서 이 거리(cm) 안의 면 가운데 이동과 가장 맞서는 면을 닿은 면으로 본다. Chaos 쓸기와 같은 값이다.
+constexpr float MOVE_SWEEP_FACE_SEARCH_DISTANCE = 1.0f;
+
+// 이동 검증. 어기면 클라이언트를 서버 이동 상태로 맞춘다.
+// 허용치(cm): 캡슐 아래 끝(발)이 랜드스케이프보다 이만큼 넘게 아래면 땅속이고, 받은 위치가 그 시각의 서버 이동 상태에서 이만큼 넘게 벗어나면 인정하지 않는다.
+// 서버 이동 상태에서 받은 위치까지 쓸 때 캡슐을 이만큼 줄인다.
 constexpr float MOVE_TOLERANCE = 20.0f;
-// 서버 이동 예측이 배치물 막힘을 볼 때 캡슐 반지름과 반 높이를 줄이는 길이(cm). 언리얼처럼 캡슐이 벽에 닿으면 멈추게 하되, 위치 반올림으로 닿아 있는 상태를 겹침으로 보지 않게 조금 줄인다.
-// 예측을 시작하는 위치가 이 캡슐로 이미 겹치면(서버와 클라이언트 충돌 모양 차이) 이동 검증과 같이 MOVE_TOLERANCE만큼 줄인 캡슐로 본다.
-constexpr float MOVE_PREDICT_MARGIN = 2.0f;
-// 이동 속도 검사. 인정한 위치 사이마다 "실제 거리 - 갈 수 있는 거리"를 이번 오차로 보고, 이번 오차가 MOVE_MAX_STEP_EXCESS_DISTANCE(cm)를 넘거나
-// 0 아래로는 내려가지 않게 쌓은 초과 누적이 MOVE_MAX_EXCESS_DISTANCE(cm)를 넘으면 인정하지 않는다.
-// 갈 수 있는 거리는 땅끼리면 서버가 따라가는 최대 수평 속도를 위 가감속 식으로 바꿔 가며 쌓은 수평 거리이고, 앞뒤 중 하나라도 공중이면 정점에서 내려간 높이만큼 키운 최대 속도로 간 3차원 거리다.
-// 시간은 클라이언트 시각 차이(기준이 없으면 서버가 받은 시각 차이)이고, 한 번에 MOVE_MAX_STEP_SECONDS까지만 인정해 오래 보내지 않다가 한 번에 멀리 가는 것을 막는다.
-constexpr float MOVE_MAX_STEP_EXCESS_DISTANCE = 30.0f;
-constexpr float MOVE_MAX_EXCESS_DISTANCE = 100.0f;
-constexpr float MOVE_MAX_STEP_SECONDS = 0.5f;
-// 공중 높이 검사. 상승은 이륙 높이 + 정점 높이 + MOVE_TOLERANCE까지이고, 하강은 하강 시작점에서 떨어지는 곡선을 이 시간(초)만큼 늦추고 당긴 범위 ± MOVE_TOLERANCE 안이어야 한다.
-// 벗어나면 서버가 계산한 위치로 맞추고, 공중에서 이 시간 넘게 이동 상태가 오지 않아도 같이 맞춘다.
+// 공중 이동 끊김. 공중에서 이 시간(초) 넘게 이동 상태가 오지 않으면 그 클라이언트를 서버 이동 상태(공중 궤적)로 맞춘다.
 constexpr float MOVE_AIR_DELAY_SECONDS = 0.5f;
-// 이동 끊김. 이 시간(초) 넘게 이동 상태가 오지 않으면 서버가 그 플레이어를 멈춘 것으로 보고 다른 플레이어에게 멈춤을 알린다. 공중 이동 끊김과 같은 값이다.
+// 이동 끊김. 이 시간(초) 넘게 이동 상태가 오지 않으면 서버가 그 플레이어를 서버 이동 상태 자리에 세우고 다른 플레이어에게 멈춤을 알린다. 그 전까지는 서버 이동 상태를 계속 중계한다.
+// 공중 이동 끊김과 같은 값이다.
 constexpr float MOVE_STOP_DELAY_SECONDS = MOVE_AIR_DELAY_SECONDS;
-// 땅 확인. 캡슐을 이만큼(cm) 내리고 반지름을 이만큼 줄여 랜드스케이프나 캐릭터를 막는 배치물에 닿으면 땅 위다.
-// 내리는 깊이는 걸을 수 있는 가장 가파른 경사를 덮고, 줄인 반지름 때문에 옆 벽에 붙어 있는 것은 땅으로 보지 않는다.
+// 땅 확인. 캡슐 아래 이만큼(cm) 안에 랜드스케이프나 캐릭터를 막는 배치물 바닥이 있으면 땅 위다. 걸을 수 있는 가장 가파른 경사를 덮는 깊이다.
 constexpr float GROUND_CHECK_DEPTH = 30.0f;
-constexpr float GROUND_CHECK_RADIUS_MARGIN = 10.0f;
-// 비탈 접촉 확인. 랜드스케이프 기울기를 캐릭터 위치에서 앞뒤·좌우로 이만큼(cm) 떨어진 높이로 구하고, 이 각도(도) 이상인 비탈만 비탈 접촉으로 본다.
-// 언리얼 캐릭터는 약 44.8도 넘는 비탈을 걷지 못하고 미끄러지며, 기울기 계산 오차를 고려해 조금 낮게 둔다.
-constexpr float SLOPE_SAMPLE_DISTANCE = 25.0f;
-constexpr float STEEP_SLOPE_MIN_DEGREES = 40.0f;
-// 걸을 수 있는 가장 가파른 면(도). 언리얼 캐릭터 이동 설정과 같은 값이다. 서버 이동 예측은 공중에서 이보다 가파른 랜드스케이프에 닿으면 서지 않고 면을 따라 미끄러진다.
-constexpr float WALKABLE_FLOOR_DEGREES = 44.765f;
-// 허공 낙하 검사. 공중에서 수직 속도를 바꾸는 것은 중력과 면에 닿는 것뿐이므로, 직전 두 상태가 모두 어떤 면에도 닿지 않았으면
-// 그 둘로 구한 수직 속도에 중력을 더해 이번 높이를 예측하고, AIR_STEP_TOLERANCE(cm)에 클라이언트 시각 단위(AIR_STEP_TIME_UNIT_SECONDS)가 만드는 오차를 더한 범위 안이어야 한다.
-// 시각 단위 오차는 속도 × 시각 단위 × (1 + 예측 시간 / 속도를 구한 구간)이다. 속도를 구하는 구간은 AIR_STEP_MIN_BASELINE_MS보다 짧게 잡지 않는다.
-// 캡슐을 AIR_CONTACT_MARGIN(cm)만큼 키워 지형·배치물·다른 플레이어에 닿으면 면에 닿은 것으로 보고 이 검사를 하지 않는다.
-constexpr float AIR_STEP_TOLERANCE = 2.0f;
-constexpr float AIR_STEP_TIME_UNIT_SECONDS = 0.001f;
-constexpr int AIR_STEP_MIN_BASELINE_MS = 50;
-constexpr float AIR_CONTACT_MARGIN = 10.0f;
 // 클라이언트 시각 검사. 이동 상태 사이 "클라이언트 시각 차이 - 서버가 받은 시각 차이"를 쌓아 클라이언트 시각이 이만큼(ms) 넘게 앞서면 시간을 빠르게 돌린 것으로 보고 되돌린다.
 // 늦은 쪽은 CLOCK_MAX_BEHIND_MS까지만 쌓아, 오래 끊겼다가 한 번에 몰아 보내는 몫을 무한히 미리 쌓아 두지 못하게 한다.
 constexpr long long CLOCK_MAX_AHEAD_MS = 250;
@@ -144,9 +157,6 @@ constexpr long long CLOCK_MAX_BEHIND_MS = 2000;
 // 명중 판정. 서버가 탄 광선을 쏴서 처음 닿는 것을 맞힌다. 다른 플레이어는 사격 시각으로 되감은 위치·자세·기절 상태로 판정한다.
 constexpr float HIT_MARGIN = 0.0f; // 서버 히트박스를 키우는 여유(cm). 시험으로 정한다.
 constexpr int HIT_REWIND_MS = 1000; // 사격 시각을 되감는 최대 시간. 받은 시각보다 이보다 오래된 사격은 이 시간 전으로 맞춰 판정한다.
-// 되감은 시각이 맞은 사람의 마지막 이동 상태보다 뒤면 그 사이를 서버가 이동 키 입력으로 예측한다(move_prediction.h).
-// 이 시간 넘게 이동 상태가 오지 않았으면 그 뒤는 멈춘 것으로 본다. 이동 끊김과 같은 값이다.
-constexpr float HIT_PREDICT_MAX_SECONDS = MOVE_STOP_DELAY_SECONDS;
 constexpr float HIT_LATENCY_ALLOWANCE_SECONDS = 0.15f; // 카메라 검증에서 다른 플레이어 캡슐을 속도에 비례해 키우는 지연 허용 시간(초)
 // 탄 광선은 캡슐 안 오른쪽 어깨 높이의 고정점에서 시작한다. 캐릭터 위치(캡슐 중심)에서 몸 방향 기준 앞·오른쪽·위로 이만큼(cm) 옮긴 점이다.
 // 캡슐은 벽에 파고들지 못하므로 시작점이 벽 너머에 있을 수 없다. 총구는 화염·궤적 표시에만 쓴다. 클라이언트와 서버가 같은 식으로 구한다.

@@ -165,6 +165,8 @@ void URemoteMovementComponent::BeginPlay()
 	movement->SetDefaultMovementMode();
 	movement->bOrientRotationToMovement = false;
 	movement->bUseControllerDesiredRotation = false;
+	// 받은 입력으로 이어 가는 예측이므로 바닥 끝에서 떨어지지 않고 가장자리에 선다. 공중으로 넘어가는 것은 보낸 사람이 공중 상태를 보내면 따른다.
+	movement->bCanWalkOffLedges = false;
 	// 입력, 방향, 보간 이동을 먼저 넣은 뒤 이동을 계산한다.
 	movement->PrimaryComponentTick.AddPrerequisite(this, PrimaryComponentTick);
 	// 다른 플레이어와는 충돌하지 않고 통과한다.

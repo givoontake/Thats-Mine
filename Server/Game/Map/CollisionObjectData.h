@@ -2,11 +2,12 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "map_geometry.h"
 #include "terrain_types.h"
 
 struct MapMeshFile;
 
-// 게임 맵의 충돌 배치물(건물·나무·바위·경계 볼륨)을 갖고 선분 막힘과 캡슐 겹침을 답한다.
+// 게임 맵의 충돌 배치물(건물·나무·바위·경계 볼륨)을 갖고 선분 막힘, 캡슐 겹침, 캡슐 쓸기를 답한다.
 // 읽은 뒤에는 바뀌지 않으므로 여러 방 스레드가 잠금 없이 같이 읽는다.
 class CollisionObjectData
 {
@@ -28,6 +29,7 @@ class CollisionObjectData
 	void BuildGrid();
 	bool IsSegmentBlockedByObject(const TerrainObject& object, const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const;
 	bool IsCapsuleOverlappingObject(const TerrainObject& object, DirectX::FXMVECTOR bottom, DirectX::FXMVECTOR top, float radius, const DirectX::XMFLOAT3& min, const DirectX::XMFLOAT3& max) const;
+	MoveHit SweepCapsuleObject(const TerrainObject& object, const CapsuleSweep& sweep) const;
 
 public:
 	// 맵 폴더 항목들의 충돌 모양 파일과 배치 파일의 충돌 배치 부분을 읽는다. 항목 순서가 원본 순서다.
@@ -41,4 +43,7 @@ public:
 	bool IsSegmentBlockedByObjects(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end, std::uint8_t flag) const;
 	// 세로로 선 캡슐이 flag 채널을 막는 배치물과 겹치는지 본다. center는 캡슐 중심, half_height는 중심에서 위·아래 끝까지 거리(양 끝 반구 포함)다.
 	bool IsCapsuleOverlappingObjects(const DirectX::XMFLOAT3& center, float radius, float half_height, std::uint8_t flag) const;
+	// 세로로 선 캡슐을 중심 start에서 end까지 옮길 때 flag 채널을 막는 배치물에 처음 닿는 곳. 반지름과 반 높이가 0이면 선분 검사다.
+	// 삼각형은 양면 원본이 아니면 바깥쪽 면으로 들어오는 이동만 막는다. 언리얼 쓸기와 같다.
+	MoveHit SweepCapsule(const MoveVector& start, const MoveVector& end, float radius, float half_height, std::uint8_t flag, bool is_ignoring_moving_out) const;
 };

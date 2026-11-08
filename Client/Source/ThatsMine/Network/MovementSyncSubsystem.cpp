@@ -466,7 +466,7 @@ void UMovementSyncSubsystem::HandleStunReleasePacket(const TArray<uint8>& payloa
 	}
 }
 
-// 서버가 내 이동을 인정하지 않았다. 받은 위치로 바로 옮겨 수평으로 멈추고, 공중이면 받은 수직 속도로 이어 떨어진다.
+// 서버가 내 이동을 인정하지 않았다. 받은 서버 이동 상태의 위치·속도·공중 단계로 바로 바꾼다.
 // 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다.
 void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& payload)
 {
@@ -481,12 +481,8 @@ void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& pay
 	{
 		character->SetActorLocation(FVector(packet.location[0], packet.location[1], packet.location[2]), false, nullptr, ETeleportType::TeleportPhysics);
 		UCharacterMovementComponent* movement = character->GetCharacterMovement();
-		movement->StopMovementImmediately();
-		if (packet.air_phase != AirPhase::GROUND)
-		{
-			movement->SetMovementMode(MOVE_Falling);
-			movement->Velocity = FVector(0.0, 0.0, packet.velocity_z);
-		}
+		movement->SetMovementMode(packet.air_phase != AirPhase::GROUND ? MOVE_Falling : MOVE_Walking);
+		movement->Velocity = FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]);
 	}
 	C2S_MOVE_CORRECTION_ACK_PACKET ack{};
 	ack.correction_id = packet.correction_id;

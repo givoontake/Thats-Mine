@@ -229,13 +229,13 @@ struct S2C_STUN_RELEASE_PACKET {
 	std::uint32_t protection_ms;
 };
 
-// 서버가 이동을 인정하지 않아 서버 위치(캡슐 중심, cm)로 맞춘다. 받은 클라이언트는 그 위치로 바로 옮기고 같은 번호로 확인을 보낸다.
-// 수평 속도는 없애고, 공중이면 수직 속도(cm/s)로 서버 곡선을 이어 떨어진다.
+// 서버가 이동을 인정하지 않아 서버 이동 상태로 맞춘다. 받은 클라이언트는 그 위치(캡슐 중심, cm)와 속도(cm/s)로 바로 바꾸고 같은 번호로 확인을 보낸다.
+// 공중이면 서버가 계산한 궤적 위의 위치와 속도로 이어 떨어진다.
 struct S2C_MOVE_CORRECTION_PACKET {
 	PACKET_HEADER header;
 	std::uint32_t correction_id;
 	float location[3];
-	float velocity_z;
+	float velocity[3];
 	AirPhase air_phase;
 };
 

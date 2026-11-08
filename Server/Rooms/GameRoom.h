@@ -138,8 +138,8 @@ private:
 	void SendPickaxeCharges(const Player& player, long long time_ms);
 	// 그 무기의 지금 탄창 탄과 소지 탄을 재장전 끝으로 그 사람에게 보낸다.
 	void SendReloadDone(const Player& player, std::uint8_t weapon);
-	// 그 플레이어를 멈춘 것으로 표시하고 방 전체에 멈춘 위치와 함께 멈춤을 알린다.
-	void RelayMoveStop(Player& player, const float location[3]);
+	// 그 플레이어의 서버 이동 상태를 그 자리에 세우고 방 전체에 멈춘 위치와 함께 멈춤을 알린다.
+	void RelayMoveStop(Player& player);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
 	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
 	// 중계 패킷을 이번 틱 중계에 넣는다.
@@ -170,11 +170,9 @@ private:
 	int AppendExclusionBoard(char* buffer, Player& player) const;
 	void ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p);
 	void SendAreaRemovalTime(const Player& player);
-	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms, bool is_slope_slide, bool is_open_air) const;
+	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms) const;
 	bool IsOnGround(const float location[3]) const;
-	bool IsTouchingSteepSlope(const float location[3]) const;
-	bool IsTouchingSurface(const Player& player, const float location[3]) const;
-	void CorrectMove(Player& player, bool is_on_air_curve);
+	void CorrectMove(Player& player);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
 	void GenerateHints();

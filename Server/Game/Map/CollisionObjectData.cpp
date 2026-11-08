@@ -19,9 +19,6 @@ constexpr float LARGE_OBJECT_SIZE = 20000.0f;
 // 상자 나무 끝 노드의 최대 삼각형 수
 constexpr std::uint32_t BVH_LEAF_SIZE = 4;
 constexpr int BVH_STACK_SIZE = 64;
-// 캡슐 겹침 검사의 GJK 반복 한도와, 더 가까워지지 않는다고 볼 비율
-constexpr int GJK_MAX_ITERATIONS = 32;
-constexpr float GJK_EPSILON = 1e-6f;
 
 // 여러 칸에 걸친 배치물을 한 번만 보도록, 스레드마다 배치물별 마지막 검사 번호를 둔다.
 static thread_local std::vector<std::uint32_t> visited_objects;
@@ -48,12 +45,6 @@ static bool SegmentHitsConvex(const XMFLOAT3& start, const XMFLOAT3& end, const 
 		if (enter > exit) return false;
 	}
 	return !convex.planes.empty();
-}
-
-// 두 축 정렬 상자가 겹치는지 본다.
-static bool BoxesOverlap(const XMFLOAT3& first_min, const XMFLOAT3& first_max, const XMFLOAT3& second_min, const XMFLOAT3& second_max)
-{
-	return first_min.x <= second_max.x && first_max.x >= second_min.x && first_min.y <= second_max.y && first_max.y >= second_min.y && first_min.z <= second_max.z && first_max.z >= second_min.z;
 }
 
 // 점 목록이 이루는 볼록 도형에서 direction 쪽으로 가장 먼 점
@@ -663,4 +654,148 @@ bool CollisionObjectData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, fl
 		}
 	}
 	return false;
+}
+
+// 점 세 개를 지나는 면(xyz는 법선, w는 원점에서 면까지 거리). 법선은 inside 반대쪽을 보게 맞춘다.
+static XMVECTOR MakeOutwardPlane(FXMVECTOR a, FXMVECTOR b, FXMVECTOR c, GXMVECTOR inside)
+{
+	XMVECTOR normal = XMVector3Normalize(XMVector3Cross(XMVectorSubtract(b, a), XMVectorSubtract(c, a)));
+	if (XMVectorGetX(XMVector3Dot(normal, XMVectorSubtract(inside, a))) > 0.0f) normal = XMVectorNegate(normal);
+	return XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, a)));
+}
+
+// 배치 하나에 캡슐 쓸기를 한다. 구·캡슐은 월드 캡슐로, 상자·볼록 도형·삼각형은 꼭짓점과 면을 월드 좌표로 옮겨 쓴다.
+// 한쪽 면 삼각형의 막는 방향은 메시 기준 좌표에서 본다. 배치가 뒤집혀(음수 배율) 있어도 메시의 바깥쪽 면이 그대로 막는다.
+MoveHit CollisionObjectData::SweepCapsuleObject(const TerrainObject& object, const CapsuleSweep& sweep) const
+{
+	const MoveVector delta = sweep.end - sweep.start;
+	MoveHit best;
+	best.trace_start = sweep.start;
+	best.trace_end = sweep.end;
+	for (std::uint32_t i = object.first_capsule; i < object.first_capsule + object.capsule_count; ++i) {
+		const TerrainWorldCapsule& capsule = object_capsules_[i];
+		const XMVECTOR ends[2] = { XMLoadFloat3(&capsule.start), XMLoadFloat3(&capsule.end) };
+		best = GetFirstBlockingHit(best, SweepConvex(sweep, ends, capsule.radius, {}, false), delta);
+	}
+	const TerrainSource& source = sources_[object.source];
+	if (!source.has_local_shapes) return best;
+	const XMMATRIX local_to_world = XMLoadFloat4x4(&object.local_to_world);
+	const XMMATRIX world_to_local = XMLoadFloat4x4(&object.world_to_local);
+	for (const TerrainBox& box : source.boxes) {
+		XMVECTOR corners[8];
+		XMVECTOR center = XMVectorZero();
+		for (int corner = 0; corner < 8; ++corner) {
+			const XMVECTOR local = XMVectorSet((corner & 1) ? box.half_size.x : -box.half_size.x, (corner & 2) ? box.half_size.y : -box.half_size.y, (corner & 4) ? box.half_size.z : -box.half_size.z, 0.0f);
+			corners[corner] = XMVector3TransformCoord(XMVectorAdd(XMLoadFloat3(&box.center), XMVector3Rotate(local, XMLoadFloat4(&box.rotation))), local_to_world);
+			center = XMVectorAdd(center, XMVectorScale(corners[corner], 0.125f));
+		}
+		// 축마다 그 축 비트가 같은 꼭짓점 넷이 한 면이다. 나머지 두 비트가 다른 세 꼭짓점으로 면을 만든다.
+		XMVECTOR planes[6];
+		for (int axis = 0; axis < 3; ++axis) {
+			const int first_bit = 1 << ((axis + 1) % 3);
+			const int second_bit = 1 << ((axis + 2) % 3);
+			for (int side = 0; side < 2; ++side) {
+				const int base = side ? (1 << axis) : 0;
+				planes[axis * 2 + side] = MakeOutwardPlane(corners[base], corners[base | first_bit], corners[base | second_bit], center);
+			}
+		}
+		best = GetFirstBlockingHit(best, SweepConvex(sweep, corners, 0.0f, planes, false), delta);
+	}
+	thread_local std::vector<XMVECTOR> points;
+	thread_local std::vector<XMVECTOR> planes;
+	// 면 법선은 위치 변환 행렬의 역행렬을 뒤집은 행렬로 옮긴다.
+	const XMMATRIX normal_to_world = XMMatrixTranspose(world_to_local);
+	for (const TerrainConvex& convex : source.convexes) {
+		if (convex.vertices.empty()) continue;
+		points.clear();
+		for (const XMFLOAT3& vertex : convex.vertices) points.push_back(XMVector3TransformCoord(XMLoadFloat3(&vertex), local_to_world));
+		planes.clear();
+		for (const TerrainPlane& plane : convex.planes) {
+			const XMVECTOR local_normal = XMLoadFloat3(&plane.normal);
+			const XMVECTOR normal = XMVector3Normalize(XMVector3TransformNormal(local_normal, normal_to_world));
+			const XMVECTOR point = XMVector3TransformCoord(XMVectorScale(local_normal, plane.distance), local_to_world);
+			planes.push_back(XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, point))));
+		}
+		best = GetFirstBlockingHit(best, SweepConvex(sweep, points, 0.0f, planes, false), delta);
+	}
+	if (source.nodes.empty()) return best;
+
+	// 쓸기 범위를 메시 기준 좌표로 옮겨, 그 상자와 겹치는 상자 나무 노드로만 내려간다.
+	const auto [local_min, local_max] = TransformBounds(sweep.min, sweep.max, world_to_local);
+	const XMVECTOR local_delta = XMVector3TransformNormal(sweep.delta, world_to_local);
+	// 뒤집힌 배치는 메시 기준 바깥쪽 면이 월드에서 꼭짓점 순서와 반대쪽을 본다.
+	const bool is_mirrored = XMVectorGetX(XMMatrixDeterminant(local_to_world)) < 0.0f;
+	const XMVECTOR start_center = XMVectorSet(sweep.start.x, sweep.start.y, sweep.start.z, 0.0f);
+	std::uint32_t stack[BVH_STACK_SIZE];
+	int stack_size = 0;
+	stack[stack_size++] = 0;
+	while (stack_size > 0) {
+		const std::uint32_t index = stack[--stack_size];
+		const TerrainBvhNode& node = source.nodes[index];
+		if (!BoxesOverlap(local_min, local_max, node.min, node.max)) continue;
+		if (node.count > 0) {
+			for (std::uint32_t triangle = node.first; triangle < node.first + node.count; ++triangle) {
+				const XMVECTOR local[3] = {
+					XMLoadFloat3(&source.vertices[source.triangles[triangle * 3]]),
+					XMLoadFloat3(&source.vertices[source.triangles[triangle * 3 + 1]]),
+					XMLoadFloat3(&source.vertices[source.triangles[triangle * 3 + 2]]),
+				};
+				const XMVECTOR local_cross = XMVector3Cross(XMVectorSubtract(local[1], local[0]), XMVectorSubtract(local[2], local[0]));
+				// 한쪽 면만 막는 삼각형은 꼭짓점 순서의 법선과 같은 방향으로 들어오는 이동만 막는다. 선분 검사와 같은 규칙이다.
+				if (!source.is_double_sided && XMVectorGetX(XMVector3Dot(local_cross, local_delta)) <= 0.0f) continue;
+				const XMVECTOR corners[3] = { XMVector3TransformCoord(local[0], local_to_world), XMVector3TransformCoord(local[1], local_to_world), XMVector3TransformCoord(local[2], local_to_world) };
+				XMVECTOR normal = XMVector3Cross(XMVectorSubtract(corners[1], corners[0]), XMVectorSubtract(corners[2], corners[0]));
+				if (XMVectorGetX(XMVector3LengthSq(normal)) < 1e-12f) continue;
+				normal = XMVector3Normalize(normal);
+				// 바깥쪽 면은 꼭짓점 순서 법선의 반대쪽이다. 양면이면 캡슐이 있는 쪽 면으로 본다.
+				if (source.is_double_sided) {
+					if (XMVectorGetX(XMVector3Dot(normal, XMVectorSubtract(start_center, corners[0]))) < 0.0f) normal = XMVectorNegate(normal);
+				}
+				else if (!is_mirrored) {
+					normal = XMVectorNegate(normal);
+				}
+				const XMVECTOR face = XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, corners[0])));
+				best = GetFirstBlockingHit(best, SweepConvex(sweep, corners, 0.0f, { &face, 1 }, true), delta);
+			}
+			continue;
+		}
+		if (stack_size + 2 > BVH_STACK_SIZE) return best;
+		stack[stack_size++] = node.first;
+		stack[stack_size++] = index + 1;
+	}
+	return best;
+}
+
+// 격자보다 큰 배치물, 쓸기 범위가 걸치는 격자 칸의 배치물을 모두 쓸어 가장 먼저 막는 결과를 고른다.
+MoveHit CollisionObjectData::SweepCapsule(const MoveVector& start, const MoveVector& end, float radius, float half_height, std::uint8_t flag, bool is_ignoring_moving_out) const
+{
+	MoveHit best;
+	best.trace_start = start;
+	best.trace_end = end;
+	if (!is_loaded_) return best;
+	const CapsuleSweep sweep = MakeCapsuleSweep(start, end, radius, half_height, is_ignoring_moving_out);
+	const MoveVector delta = end - start;
+	const std::uint32_t query = BeginObjectVisit(objects_.size());
+	const auto check = [&](std::uint32_t index)
+	{
+		if (visited_objects[index] == query) return;
+		visited_objects[index] = query;
+		const TerrainObject& object = objects_[index];
+		if ((object.flags & flag) == 0 || !BoxesOverlap(sweep.min, sweep.max, object.world_min, object.world_max)) return;
+		best = GetFirstBlockingHit(best, SweepCapsuleObject(object, sweep), delta);
+	};
+	for (const std::uint32_t index : large_objects_) check(index);
+	if (grid_columns_ == 0) return best;
+	const int x0 = static_cast<int>(std::floor((sweep.min.x - grid_min_x_) / GRID_CELL_SIZE));
+	const int y0 = static_cast<int>(std::floor((sweep.min.y - grid_min_y_) / GRID_CELL_SIZE));
+	const int x1 = static_cast<int>(std::floor((sweep.max.x - grid_min_x_) / GRID_CELL_SIZE));
+	const int y1 = static_cast<int>(std::floor((sweep.max.y - grid_min_y_) / GRID_CELL_SIZE));
+	if (x1 < 0 || y1 < 0 || x0 >= grid_columns_ || y0 >= grid_rows_) return best;
+	for (int y = std::max(y0, 0); y <= std::min(y1, grid_rows_ - 1); ++y) {
+		for (int x = std::max(x0, 0); x <= std::min(x1, grid_columns_ - 1); ++x) {
+			const int cell = y * grid_columns_ + x;
+			for (std::uint32_t i = cell_starts_[cell]; i < cell_starts_[cell + 1]; ++i) check(cell_objects_[i]);
+		}
+	}
+	return best;
 }

@@ -23,7 +23,7 @@
 #include "hint_types.h"
 #include "treasure_placement.h"
 #include "room_lifecycle_tasks.h"
-#include "move_prediction.h"
+#include "MoveSimulation.h"
 
 // 종류별 힌트 패킷 중 가장 큰 크기. 힌트를 이어 붙일 버퍼를 잡을 때 쓴다.
 constexpr std::size_t MAX_HINT_PACKET_SIZE = std::max(sizeof(S2C_DIRECTION_HINT_PACKET), sizeof(S2C_COUNT_HINT_PACKET));
@@ -287,17 +287,13 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingMoveCorrection()) break;
 		// 기절 중에도 위치와 공중 단계는 중력과 관성으로 움직인 결과라 평소처럼 검사한다.
 		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
-		// 이동 시각은 받은 순간의 서버 시각으로 잡는다. 처리한 틱 시각을 쓰면 같은 간격으로 온 패킷도 틱 하나만큼 간격이 흔들려 빠를수록 속도 검사 오차가 커진다.
-		const bool is_on_steep_slope = move_state.air_phase == AirPhase::FALLING && IsTouchingSteepSlope(move_state.location);
-		const bool is_open_air = move_state.air_phase != AirPhase::GROUND && !IsTouchingSurface(*room_player, move_state.location);
-		// 직전과 이번 위치가 모두 비탈 접촉이면 비탈을 타고 온 구간으로 본다.
-		const MoveCheckResult result = CheckMove(*room_player, move_state, receive_time_ms, is_on_steep_slope && room_player->WasOnSteepSlope(), is_open_air);
-		if (result != MoveCheckResult::ACCEPTED) {
-			CorrectMove(*room_player, result == MoveCheckResult::AIR_CORRECTION);
+		// 이동 시각은 받은 순간의 서버 시각으로 잡는다. 처리한 틱 시각을 쓰면 같은 간격으로 온 패킷도 틱 하나만큼 간격이 흔들린다.
+		if (CheckMove(*room_player, move_state, receive_time_ms) != MoveCheckResult::ACCEPTED) {
+			CorrectMove(*room_player);
 			break;
 		}
 		const bool was_move_stopped = room_player->IsMoveStopped();
-		room_player->SetMoveState(move_state, receive_time_ms, is_on_steep_slope, is_open_air);
+		room_player->SetMoveState(server_->GetMapData(), move_state, receive_time_ms);
 		// 멈춤을 알렸던 플레이어의 이동 상태가 다시 오면 그 사람의 이동 키 입력을 다시 중계한다.
 		if (was_move_stopped) {
 			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, room_player->GetInputRight(), room_player->GetInputForward(), { move_state.location[0], move_state.location[1], move_state.location[2] }, { move_state.velocity[0], move_state.velocity[1] } };
@@ -315,6 +311,8 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		const std::uint8_t type = reinterpret_cast<PACKET_HEADER*>(packet)->type;
 		// 기절 중에는 조작을 받지 않으므로 이동 키 입력과 조준을 버린다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
 		if (type != C2S_EQUIP && room_player->IsStunned(tick_time_ms_)) break;
+		// 서버 이동 상태는 받은 순간까지 앞 입력으로 진행한 뒤 새 입력을 쓴다.
+		if (type != C2S_EQUIP) room_player->AdvanceMove(receive_time_ms);
 		if (type == C2S_MOVE_INPUT) {
 			const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
 			room_player->SetMoveInput(request_p->input_right, request_p->input_forward);
@@ -872,28 +870,26 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		StartAward();
 		return;
 	}
+	// 스폰한 플레이어의 서버 이동 상태를 이번 틱 시각까지 지금 이동 키 입력으로 진행한다. 스폰 자리에서 떨어지는 것처럼 시작 전에도 움직인다.
 	// 플레이 중인 플레이어의 판정용 자세를 지난 틱 이후 시간만큼 진행한다.
 	const float pose_delta_seconds = last_pose_tick_ms_ != 0 ? (tick_time_ms - last_pose_tick_ms_) / 1000.0f : 0.0f;
 	last_pose_tick_ms_ = tick_time_ms;
 	for (auto& room_player : room_players_) {
-		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
-		room_player.GetPose().Update(room_player.GetMoveState(), pose_delta_seconds, tick_time_ms);
+		if (!room_player.HasSession() || !room_player.HasMoveState()) continue;
+		room_player.AdvanceMove(tick_time_ms);
+		if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) room_player.GetPose().Update(room_player.GetMoveState(), pose_delta_seconds, tick_time_ms);
 	}
-	// 공중에서 이동 상태가 MOVE_AIR_DELAY_SECONDS 넘게 오지 않으면 서버가 계산한 공중 위치로 맞춘다.
+	// 공중에서 이동 상태가 MOVE_AIR_DELAY_SECONDS 넘게 오지 않으면 그 클라이언트를 서버 이동 상태(공중 궤적)로 맞춘다.
 	for (auto& room_player : room_players_) {
 		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingMoveCorrection()) continue;
-		if (room_player.GetAirState(tick_time_ms).phase == AirPhase::GROUND || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
-		if (FindSession(room_player)) CorrectMove(room_player, true);
+		if (room_player.IsMoveWalking() || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
+		if (FindSession(room_player)) CorrectMove(room_player);
 	}
-	// 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 멈춘 것으로 보고 방 전체에 알린다.
-	// 멈춘 위치는 명중 판정의 예측과 같이 마지막 이동 상태에서 틱마다 남긴 이동 키로 MOVE_STOP_DELAY_SECONDS만큼 간 자리다.
+	// 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 서버 이동 상태 자리에 세우고 방 전체에 알린다.
 	for (auto& room_player : room_players_) {
 		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsMoveStopped()) continue;
-		const long long stop_ms = room_player.GetMoveTimeMs() + static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f);
-		if (tick_time_ms <= stop_ms) continue;
-		const std::optional<RewoundState> rewound = room_player.GetRewoundState(stop_ms);
-		const MOVE_STATE stopped = rewound ? room_player.PredictRewoundMove(*rewound, server_->GetMapData()) : room_player.GetMoveState();
-		RelayMoveStop(room_player, stopped.location);
+		if (tick_time_ms <= room_player.GetMoveTimeMs() + static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f)) continue;
+		RelayMoveStop(room_player);
 	}
 	// 이번 틱이 끝난 판정 상태를 남긴다. 명중 판정이 사격 시각으로 되감을 때 쓴다.
 	for (auto& room_player : room_players_) {
@@ -916,9 +912,11 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		send_data_size += packet_size;
 	};
 
+	// 인정했거나 맞춘 이동 상태는 바로, 이동 상태가 오지 않는 동안은 클라이언트 전송 간격마다 서버 이동 상태를 보낸다. 멈춘 뒤에는 보내지 않는다.
 	for (auto& room_player : room_players_) {
-		if (!room_player.HasSession() || !room_player.CanRelayMoveState()) continue;
-		const MOVE_STATE& state = room_player.GetMoveState();
+		const bool is_relay_due = room_player.GetRoomPlayerState() == RoomPlayerState::PLAY && room_player.HasMoveState() && !room_player.IsMoveStopped() && room_player.IsMoveRelayDue(tick_time_ms);
+		if (!room_player.HasSession() || (!room_player.CanRelayMoveState() && !is_relay_due)) continue;
+		const MOVE_STATE state = room_player.GetMoveState();
 		S2C_MOVE_PACKET move_p;
 		move_p.header = { static_cast<std::uint16_t>(sizeof(move_p)), S2C_MOVE };
 		move_p.player_id = room_player.GetSessionKey().player_id;
@@ -928,7 +926,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		move_p.view_pitch = state.view_pitch;
 		move_p.air_phase = state.air_phase;
 		append(&move_p, sizeof(move_p));
-		room_player.MarkMoveStateRelayed();
+		room_player.MarkMoveStateRelayed(tick_time_ms);
 	}
 	for (std::size_t offset = 0; offset < pending_relays_.size();) {
 		const int packet_size = reinterpret_cast<const PACKET_HEADER*>(pending_relays_.data() + offset)->size;
@@ -990,7 +988,7 @@ void GameRoom::ProcessLoadedPlayers()
 			spawn_p.location[1] = point.y;
 			spawn_p.location[2] = point.z;
 			spawn_p.yaw = point.yaw;
-			room_player.SetSpawnLocation(spawn_p.location, spawn_p.yaw, tick_time_ms_);
+			room_player.SetSpawnLocation(server_->GetMapData(), spawn_p.location, spawn_p.yaw, tick_time_ms_);
 		}
 		else {
 			std::memcpy(spawn_p.location, room_player.GetMoveState().location, sizeof(spawn_p.location));
@@ -1090,10 +1088,11 @@ void GameRoom::SendReloadDone(const Player& player, std::uint8_t weapon)
 	GetTickSendBuffer(player).Append(&done_p, done_p.header.size);
 }
 
-void GameRoom::RelayMoveStop(Player& player, const float location[3])
+void GameRoom::RelayMoveStop(Player& player)
 {
-	player.SetMoveStopped();
-	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id, { location[0], location[1], location[2] } };
+	player.StopMove();
+	const MOVE_STATE state = player.GetMoveState();
+	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id, { state.location[0], state.location[1], state.location[2] } };
 	QueueRelay(&stop_p, sizeof(stop_p));
 }
 
@@ -1118,7 +1117,7 @@ static DirectX::XMFLOAT3 GetShotOrigin(const MOVE_STATE& move_state)
 
 // 발사는 손에 든 총으로 판정하고, 쏜 사람이 되돌리기 확인을 기다리는 중이면(발사 직전 이동 상태를 인정하지 않았으면) 버린다.
 // 인정하면 남은 탄창 탄을 쏜 사람에게 보내고 발사 동작을 중계한 뒤, 조준 방향에 서버가 (시드, 아이디, 무기, 발사 번호)로 정한 빗나감을 적용한 탄 광선을 쏜다.
-// 광선이 처음 닿는 것은 사격 시각으로 되감은(마지막 기록 뒤면 예측한) 다른 플레이어의 히트박스와 지금 상자 모양 중 가장 가까운 것이고, 그곳까지 지형이 막지 않고 쏜 사람 카메라에서 보였어야 한다.
+// 광선이 처음 닿는 것은 사격 시각으로 되감은(그 시각의 서버 이동 상태) 다른 플레이어의 히트박스와 지금 상자 모양 중 가장 가까운 것이고, 그곳까지 지형이 막지 않고 쏜 사람 카메라에서 보였어야 한다.
 // 선물이면 열고, 나무 상자면 탄만 막는다. 플레이어면 맞은 사람에게 명중을 알리고 기절 게이지를 올리되, 되감은 시각에 기절·보호 중이었으면 탄만 막는다.
 void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms)
 {
@@ -1159,15 +1158,8 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	std::optional<std::uint16_t> hit_box;
 	for (auto& target : room_players_) {
 		if (&target == &shooter || !target.HasSession() || target.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		std::optional<RewoundState> rewound = target.GetRewoundState(shot_time_ms);
+		const std::optional<RewoundState> rewound = target.GetRewoundState(shot_time_ms);
 		if (!rewound) continue;
-		// 사격 시각이 마지막 기록보다 뒤면 그 사이를 예측한다. 예측 시간 동안 갈 수 있는 거리만큼 넓혀 1차 판정을 통과한 플레이어만 예측한다.
-		if (rewound->predict_seconds > 0.0f) {
-			const MOVE_STATE& last = rewound->move_state;
-			const float reach = (std::max(std::hypot(last.velocity[0], last.velocity[1], last.velocity[2]), MOVE_SPEED_FORWARD) + GRAVITY * rewound->predict_seconds) * rewound->predict_seconds;
-			if (!IsRayNearCharacter(origin, direction, distance, DirectX::XMFLOAT3(last.location[0], last.location[1], last.location[2]), last.yaw, data.GetBroadphaseCapsule(), HIT_MARGIN + reach)) continue;
-			rewound->move_state = target.PredictRewoundMove(*rewound, server_->GetMapData());
-		}
 		const MOVE_STATE& state = rewound->move_state;
 		if (!IsRayNearCharacter(origin, direction, distance, DirectX::XMFLOAT3(state.location[0], state.location[1], state.location[2]), state.yaw, data.GetBroadphaseCapsule(), HIT_MARGIN)) continue;
 		const HitboxRayHit hit = RaycastHitboxes(origin, direction, distance, rewound->pose->BuildWorldHitboxes(state, shot_time_ms), HIT_MARGIN);
@@ -1409,7 +1401,8 @@ bool GameRoom::CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& req
 {
 	if (!opener.HasMoveState() || request_p.box >= box_placement_indices_.size()) return false;
 	const BoxPlacement& placement = server_->GetBoxCandidateData().GetPlacements()[box_placement_indices_[request_p.box]];
-	const float* location = opener.GetMoveState().location;
+	const MOVE_STATE state = opener.GetMoveState();
+	const float* location = state.location;
 	if (std::hypot(placement.center.x - location[0], placement.center.y - location[1], placement.center.z - location[2]) > HINT_BOX_OPEN_DISTANCE) return false;
 
 	const DirectX::XMFLOAT3 camera(request_p.camera[0], request_p.camera[1], request_p.camera[2]);
@@ -1519,7 +1512,8 @@ void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request
 void GameRoom::DigTreasure(const Player& digger)
 {
 	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || !digger.HasMoveState()) return;
-	const float* location = digger.GetMoveState().location;
+	const MOVE_STATE state = digger.GetMoveState();
+	const float* location = state.location;
 	const float dx = location[0] - treasure_placement_.location.x;
 	const float dy = location[1] - treasure_placement_.location.y;
 	const float dz = location[2] - CHARACTER_CAPSULE_HALF_HEIGHT - treasure_placement_.location.z;
@@ -1626,135 +1620,51 @@ void GameRoom::SendAreaRemovalTime(const Player& player)
 	GetTickSendBuffer(player).Append(&time_p, time_p.header.size);
 }
 
-// 이전에 인정한 위치와 새 위치를 비교한다. 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고,
-// 두 위치의 캡슐 중심을 이은 선분이 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨)을 지나면 관통이다.
-// 새 위치의 캡슐이 이동을 막는 배치물에 허용치 넘게 파고들어도 인정하지 않는다. 게임 시작 전에는 시작 구역 밖으로 나간 위치도 인정하지 않는다. 첫 이동은 스폰 자리와 비교한다.
-// 이번 이동이나 누적으로 갈 수 있는 거리보다 허용치 넘게 더 움직이면 속도 조작으로 보고 인정하지 않는다. 여기까지 어기면 되돌린다.
-// 마지막으로 공중 높이와 땅 위라는 알림을 본다. 땅에서 떠나는 이동은 떠난 뒤의 공중 상태로, 공중에서 오는 이동은 지금 공중 상태로 높이를 본다.
-// 점프는 알린 위치에서 시작하므로 그 위치가 땅 위여야 한다. is_slope_slide는 하강 중 직전과 이번 위치가 모두 비탈 접촉인지, is_open_air는 공중이고 어떤 면에도 닿지 않았는지다.
-// 땅 위에 있다가 어기면 되돌리고, 공중에서 어기면 서버가 계산한 공중 위치로 맞춘다. 클라이언트 시각이 거꾸로 가거나 서버보다 너무 앞서도 되돌린다.
-MoveCheckResult GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms, bool is_slope_slide, bool is_open_air) const
+// 받은 이동 상태를 그 상태가 나타내는 서버 시각의 서버 이동 상태와 비교한다. 클라이언트 시각이 거꾸로 가거나 서버보다 너무 앞서면 인정하지 않는다.
+// 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고, 게임 시작 전에는 시작 구역 밖으로 나간 위치도 인정하지 않는다.
+// 서버 이동 상태와의 거리가 허용치를 넘으면 인정하지 않는다. 공중에서는 서버 이동 상태가 공중 시작 상태로 이어 간 궤적이므로 그 시각의 궤적 위치와 비교한다.
+// 서버 이동 상태 위치에서 받은 위치까지 허용치만큼 줄인 캡슐을 쓸어 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨)에 막히면 관통이다.
+// 쓸기는 언리얼처럼 한쪽 면 삼각형을 바깥쪽에서 들어올 때만 막고, 이미 파고든 채 빠져나가는 이동은 막지 않는다.
+// 점프는 알린 위치에서 시작하므로 그 위치가 땅 위여야 하고, 입력이라 기절 중에는 할 수 없다. 땅 위라고 알리면 땅 위여야 한다.
+MoveCheckResult GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms) const
 {
 	const float* next = move_state.location;
 	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2]) || move_state.air_phase > AirPhase::FALLING) return MoveCheckResult::ROLLBACK;
 	const std::optional<long long> clock_drift = player.GetClockDrift(move_state, time_ms);
 	if (!clock_drift || *clock_drift > CLOCK_MAX_AHEAD_MS) return MoveCheckResult::ROLLBACK;
-	const LandscapeData& landscape = server_->GetMapData().GetLandscape();
-	const CollisionObjectData& collision_objects = server_->GetMapData().GetCollisionObjects();
-	const std::optional<float> ground = landscape.GetGroundHeight(next[0], next[1]);
+	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(next[0], next[1]);
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
-	// 캡슐을 허용치만큼 줄여도 겹치면 허용치보다 깊이 파고든 것이다.
-	if (collision_objects.IsCapsuleOverlappingObjects({ next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN)) return MoveCheckResult::ROLLBACK;
 	if (match_phase_ != MatchPhase::STARTED && (next[0] < START_AREA_MIN[0] || next[0] > START_AREA_MAX[0] || next[1] < START_AREA_MIN[1] || next[1] > START_AREA_MAX[1])) return MoveCheckResult::ROLLBACK;
-	const float* previous = player.GetMoveState().location;
-	if (player.GetMoveStepExcess(move_state, time_ms) > MOVE_MAX_STEP_EXCESS_DISTANCE || player.GetMoveExcess(move_state, time_ms) > MOVE_MAX_EXCESS_DISTANCE) return MoveCheckResult::ROLLBACK;
-	if (collision_objects.IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { next[0], next[1], next[2] }, TERRAIN_BLOCKS_PAWN)) return MoveCheckResult::ROLLBACK;
-	const AirState air = player.GetAirState(time_ms);
-	const AirState judged = air.phase == AirPhase::GROUND ? player.GetNextAirState(move_state, time_ms, false) : air;
-	const MoveCheckResult air_failure = air.phase == AirPhase::GROUND ? MoveCheckResult::ROLLBACK : MoveCheckResult::AIR_CORRECTION;
-	// 점프는 입력이라 기절 중에는 할 수 없다.
-	if (air.phase == AirPhase::GROUND && move_state.air_phase == AirPhase::RISING && (!IsOnGround(next) || player.IsInputLocked(time_ms))) return air_failure;
-	// 비탈을 타고 떨어지는 중이면 비탈이 낙하를 늦추므로 낙하 곡선 대신 직전 위치보다 올라가지 않는지만 본다.
-	// 언리얼 캐릭터는 떨어지는 중 면에 부딪혀 위로 꺾일 이동을 수평으로 바꾸므로, 비탈을 타고 올라가지 않는다.
-	if (judged.phase == AirPhase::FALLING && is_slope_slide) {
-		if (next[2] > previous[2]) return air_failure;
-	}
-	else if (judged.phase != AirPhase::GROUND && !IsAirHeightAllowed(judged, next[2], time_ms)) return air_failure;
-	// 허공에서는 직전 두 상태로 예측한 자유 낙하 높이에서 벗어나지 않아야 한다. 닿은 면이 없으니 늦게 떨어질 이유가 없다.
-	if (is_open_air) {
-		const std::optional<std::pair<float, float>> predicted = player.GetPredictedAirZ(move_state);
-		if (predicted && std::abs(next[2] - predicted->first) > predicted->second) return air_failure;
-	}
-	if (move_state.air_phase == AirPhase::GROUND && !IsOnGround(next)) return air_failure;
+	const MOVE_STATE expected = player.PredictMoveState(player.GetStateTimeMs(move_state, time_ms));
+	const float deviation = std::hypot(next[0] - expected.location[0], next[1] - expected.location[1], next[2] - expected.location[2]);
+	if (deviation > MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
+	const MoveVector from{ expected.location[0], expected.location[1], expected.location[2] };
+	if (server_->GetMapData().GetCollisionObjects().SweepCapsule(from, { next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, true).is_blocking) return MoveCheckResult::ROLLBACK;
+	if (expected.air_phase == AirPhase::GROUND && move_state.air_phase == AirPhase::RISING && (!IsOnGround(next) || player.IsInputLocked(time_ms))) return MoveCheckResult::ROLLBACK;
+	if (move_state.air_phase == AirPhase::GROUND && !IsOnGround(next)) return MoveCheckResult::ROLLBACK;
 	return MoveCheckResult::ACCEPTED;
 }
 
-// 캡슐을 GROUND_CHECK_DEPTH만큼 내리고 반지름을 GROUND_CHECK_RADIUS_MARGIN만큼 줄여 랜드스케이프나 캐릭터를 막는 배치물에 닿으면 땅 위로 본다.
+// 캡슐 아래 GROUND_CHECK_DEPTH 안에 랜드스케이프나 캐릭터를 막는 배치물 바닥이 있으면 땅 위로 본다. 처음부터 바닥에 파고들어 있어도 땅 위다.
+// 바닥은 언리얼 바닥 찾기와 같은 쓸기로 찾고, 면 기울기는 보지 않는다.
 bool GameRoom::IsOnGround(const float location[3]) const
 {
-	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(location[0], location[1]);
-	if (ground && location[2] - CHARACTER_CAPSULE_HALF_HEIGHT <= *ground + GROUND_CHECK_DEPTH) return true;
-	return server_->GetMapData().GetCollisionObjects().IsCapsuleOverlappingObjects({ location[0], location[1], location[2] - GROUND_CHECK_DEPTH },
-		CHARACTER_CAPSULE_RADIUS - GROUND_CHECK_RADIUS_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT, TERRAIN_BLOCKS_PAWN);
+	const MoveFloor floor = MoveSimulation::ComputeFloorDist(server_->GetMapData(), { location[0], location[1], location[2] }, GROUND_CHECK_DEPTH, GROUND_CHECK_DEPTH, CHARACTER_CAPSULE_RADIUS, nullptr);
+	return floor.hit.is_start_penetrating || (floor.is_blocking && floor.floor_distance <= GROUND_CHECK_DEPTH);
 }
 
-// 캡슐 아래 반구 중심에서 그 자리 랜드스케이프 면까지의 거리(cm)와 면 법선의 위쪽 성분(cos 기울기). 면은 앞뒤·좌우 높이로 구한 기울기의 평면으로 본다.
-static std::optional<std::pair<float, float>> GetLandscapeContact(const LandscapeData& landscape, const float location[3])
+// 이동을 인정하지 않고 클라이언트를 지금 서버 이동 상태(위치·속도·공중 단계)로 맞춘다. 공중이면 서버가 계산한 궤적 위의 위치다.
+// 서버 이동 상태는 그대로 이어 가고, 다른 플레이어에게는 다음 틱에 중계한다.
+void GameRoom::CorrectMove(Player& player)
 {
-	const std::optional<float> ground = landscape.GetGroundHeight(location[0], location[1]);
-	const std::optional<float> ground_x0 = landscape.GetGroundHeight(location[0] - SLOPE_SAMPLE_DISTANCE, location[1]);
-	const std::optional<float> ground_x1 = landscape.GetGroundHeight(location[0] + SLOPE_SAMPLE_DISTANCE, location[1]);
-	const std::optional<float> ground_y0 = landscape.GetGroundHeight(location[0], location[1] - SLOPE_SAMPLE_DISTANCE);
-	const std::optional<float> ground_y1 = landscape.GetGroundHeight(location[0], location[1] + SLOPE_SAMPLE_DISTANCE);
-	if (!ground || !ground_x0 || !ground_x1 || !ground_y0 || !ground_y1) return std::nullopt;
-	const float slope_x = (*ground_x1 - *ground_x0) / (2.0f * SLOPE_SAMPLE_DISTANCE);
-	const float slope_y = (*ground_y1 - *ground_y0) / (2.0f * SLOPE_SAMPLE_DISTANCE);
-	const float normal_z = 1.0f / std::sqrt(1.0f + slope_x * slope_x + slope_y * slope_y);
-	const float sphere_z = location[2] - CHARACTER_CAPSULE_HALF_HEIGHT + CHARACTER_CAPSULE_RADIUS;
-	return std::pair<float, float>{ (sphere_z - *ground) * normal_z, normal_z };
-}
-
-// 비탈 접촉: 공중에서 캡슐 아래 반구가 걸을 수 없는 가파른 비탈에 닿아 있는지 본다. 걸을 수 있는 면에서는 클라이언트가 바로 걷기로 바뀌므로 비탈 접촉으로 보지 않는다.
-// 그 자리 랜드스케이프 기울기가 STEEP_SLOPE_MIN_DEGREES 이상이고, 그 기울기로 본 면까지의 거리가 캡슐 아래 반구 중심에서 반지름 + MOVE_TOLERANCE 이하면 비탈 접촉이다.
-// 배치물은 면 기울기를 알 수 없어 비탈 접촉으로 보지 않는다.
-bool GameRoom::IsTouchingSteepSlope(const float location[3]) const
-{
-	const std::optional<std::pair<float, float>> contact = GetLandscapeContact(server_->GetMapData().GetLandscape(), location);
-	return contact && contact->second <= std::cos(DirectX::XMConvertToRadians(STEEP_SLOPE_MIN_DEGREES)) && contact->first <= CHARACTER_CAPSULE_RADIUS + MOVE_TOLERANCE;
-}
-
-// 캡슐을 AIR_CONTACT_MARGIN만큼 키웠을 때 랜드스케이프(기울기와 관계없이), 캐릭터를 막는 배치물, 다른 플레이어 캡슐에 닿는지 본다.
-bool GameRoom::IsTouchingSurface(const Player& player, const float location[3]) const
-{
-	const std::optional<std::pair<float, float>> contact = GetLandscapeContact(server_->GetMapData().GetLandscape(), location);
-	if (contact && contact->first <= CHARACTER_CAPSULE_RADIUS + AIR_CONTACT_MARGIN) return true;
-	if (server_->GetMapData().GetCollisionObjects().IsCapsuleOverlappingObjects({ location[0], location[1], location[2] },
-		CHARACTER_CAPSULE_RADIUS + AIR_CONTACT_MARGIN, CHARACTER_CAPSULE_HALF_HEIGHT + AIR_CONTACT_MARGIN, TERRAIN_BLOCKS_PAWN)) return true;
-	// 두 캡슐은 서 있으므로 높이 차이에서 원기둥 부분 길이를 뺀 만큼이 위아래 거리다.
-	for (const Player& other : room_players_) {
-		if (&other == &player || other.GetRoomPlayerState() != RoomPlayerState::PLAY || !other.HasMoveState()) continue;
-		const float* other_location = other.GetMoveState().location;
-		const float vertical = std::max(0.0f, std::abs(location[2] - other_location[2]) - 2.0f * (CHARACTER_CAPSULE_HALF_HEIGHT - CHARACTER_CAPSULE_RADIUS));
-		if (std::hypot(location[0] - other_location[0], location[1] - other_location[1], vertical) <= 2.0f * CHARACTER_CAPSULE_RADIUS + AIR_CONTACT_MARGIN) return true;
-	}
-	return false;
-}
-
-// 이동을 인정하지 않고 서버 위치로 맞춘다. 수평 속도는 없애고, 공중이면 수직 속도는 서버 곡선을 그대로 따른다.
-// is_on_air_curve이고 공중이면 마지막으로 인정한 수평 위치에서 곡선의 지금 높이로 맞춘다. 그 높이가 땅 아래면 땅에 내려놓는다.
-// 그 위치까지 바닥 배치물 등에 막히면 마지막으로 인정한 위치에서 속도 0으로 떨어지기 시작한 것으로 본다. 아래가 막혀 있어 곧 그 위에 내려선다.
-// 아니면 마지막으로 인정한 위치로 되돌린다. 맞춘 위치는 다른 플레이어에게 다음 틱에 중계하고, 본인에게는 그 위치로 옮기라고 보낸다.
-void GameRoom::CorrectMove(Player& player, bool is_on_air_curve)
-{
-	AirState air = player.GetAirState(tick_time_ms_);
-	const float* previous = player.GetMoveState().location;
-	float location[3] = { previous[0], previous[1], previous[2] };
-	if (is_on_air_curve && air.phase != AirPhase::GROUND) {
-		float curve_z = GetAirHeight(air, tick_time_ms_);
-		AirState curve_air = air;
-		const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(location[0], location[1]);
-		if (ground && curve_z - CHARACTER_CAPSULE_HALF_HEIGHT < *ground) {
-			curve_z = *ground + CHARACTER_CAPSULE_HALF_HEIGHT;
-			curve_air = {};
-		}
-		if (server_->GetMapData().GetCollisionObjects().IsSegmentBlockedByObjects({ previous[0], previous[1], previous[2] }, { previous[0], previous[1], curve_z }, TERRAIN_BLOCKS_PAWN)) {
-			air = { AirPhase::FALLING, previous[2], tick_time_ms_ };
-		}
-		else {
-			location[2] = curve_z;
-			air = curve_air;
-		}
-	}
-	const float velocity_z = air.phase == AirPhase::GROUND ? 0.0f : GetAirVelocityZ(air, tick_time_ms_);
+	const MOVE_STATE state = player.PredictMoveState(tick_time_ms_);
 	S2C_MOVE_CORRECTION_PACKET correction_p;
 	correction_p.header = { static_cast<std::uint16_t>(sizeof(correction_p)), S2C_MOVE_CORRECTION };
-	correction_p.correction_id = player.StartMoveCorrection(location, velocity_z, air, tick_time_ms_);
-	std::memcpy(correction_p.location, location, sizeof(correction_p.location));
-	correction_p.velocity_z = velocity_z;
-	correction_p.air_phase = air.phase;
+	correction_p.correction_id = player.StartMoveCorrection(tick_time_ms_);
+	std::memcpy(correction_p.location, state.location, sizeof(correction_p.location));
+	std::memcpy(correction_p.velocity, state.velocity, sizeof(correction_p.velocity));
+	correction_p.air_phase = state.air_phase;
 	GetTickSendBuffer(player).Append(&correction_p, correction_p.header.size);
-	// 되돌린 위치에서 멈춘 것으로 보고 다른 플레이어에게도 알린다.
-	if (!player.IsMoveStopped()) RelayMoveStop(player, location);
 }
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.

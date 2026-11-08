@@ -66,6 +66,81 @@ void LandscapeData::BuildGrid()
 	}
 }
 
+// 조각마다 월드 상자를 조각 기준 좌표로 옮겨 걸치는 칸을 고르고, 칸 꼭짓점 높이가 상자 높이 범위에 걸치는 칸만 삼각형을 월드 좌표로 넘긴다.
+template <typename Visit>
+bool LandscapeData::VisitTriangles(const XMFLOAT3& min, const XMFLOAT3& max, Visit visit) const
+{
+	for (const TerrainHeightfield& heightfield : heightfields_) {
+		if (!BoxesOverlap(min, max, heightfield.world_min, heightfield.world_max)) continue;
+		const XMMATRIX local_to_world = XMLoadFloat4x4(&heightfield.local_to_world);
+		const auto [local_min, local_max] = TransformBounds(min, max, XMLoadFloat4x4(&heightfield.world_to_local));
+		const float scale = heightfield.collision_scale;
+		const int size = static_cast<int>(heightfield.size);
+		const int x0 = std::max(0, static_cast<int>(std::floor(local_min.x / scale)));
+		const int y0 = std::max(0, static_cast<int>(std::floor(local_min.y / scale)));
+		const int x1 = std::min(size - 1, static_cast<int>(std::floor(local_max.x / scale)));
+		const int y1 = std::min(size - 1, static_cast<int>(std::floor(local_max.y / scale)));
+		const auto height = [&](int x, int y)
+		{
+			return (heightfield.heights[static_cast<size_t>(y) * (size + 1) + x] - 32768.0f) / 128.0f;
+		};
+		for (int y = y0; y <= y1; ++y) {
+			for (int x = x0; x <= x1; ++x) {
+				if (heightfield.quad_flags[static_cast<size_t>(y) * size + x] & QUAD_NO_COLLISION) continue;
+				const float h0 = height(x, y);
+				const float h1 = height(x + 1, y);
+				const float h2 = height(x, y + 1);
+				const float h3 = height(x + 1, y + 1);
+				if (std::max({ h0, h1, h2, h3 }) < local_min.z || std::min({ h0, h1, h2, h3 }) > local_max.z) continue;
+				const XMVECTOR p0 = XMVector3TransformCoord(XMVectorSet(x * scale, y * scale, h0, 1.0f), local_to_world);
+				const XMVECTOR p1 = XMVector3TransformCoord(XMVectorSet((x + 1) * scale, y * scale, h1, 1.0f), local_to_world);
+				const XMVECTOR p2 = XMVector3TransformCoord(XMVectorSet(x * scale, (y + 1) * scale, h2, 1.0f), local_to_world);
+				const XMVECTOR p3 = XMVector3TransformCoord(XMVectorSet((x + 1) * scale, (y + 1) * scale, h3, 1.0f), local_to_world);
+				if (visit(p0, p1, p3) || visit(p0, p3, p2)) return true;
+			}
+		}
+	}
+	return false;
+}
+
+MoveHit LandscapeData::SweepCapsule(const MoveVector& start, const MoveVector& end, float radius, float half_height, bool is_ignoring_moving_out) const
+{
+	MoveHit best;
+	best.trace_start = start;
+	best.trace_end = end;
+	if (!is_loaded_) return best;
+	const CapsuleSweep sweep = MakeCapsuleSweep(start, end, radius, half_height, is_ignoring_moving_out);
+	const MoveVector delta = end - start;
+	VisitTriangles(sweep.min, sweep.max, [&](FXMVECTOR a, FXMVECTOR b, FXMVECTOR c)
+	{
+		XMVECTOR normal = XMVector3Normalize(XMVector3Cross(XMVectorSubtract(b, a), XMVectorSubtract(c, a)));
+		if (XMVectorGetZ(normal) < 0.0f) normal = XMVectorNegate(normal);
+		const XMVECTOR face = XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, a)));
+		const XMVECTOR corners[3] = { a, b, c };
+		best = GetFirstBlockingHit(best, SweepConvex(sweep, corners, 0.0f, { &face, 1 }, true), delta);
+		return false;
+	});
+	return best;
+}
+
+// 큰 월드 좌표에서 오차가 생기지 않도록 캡슐 중심을 원점으로 옮겨 삼각형까지 거리를 잰다.
+bool LandscapeData::IsCapsuleOverlapping(const MoveVector& center, float radius, float half_height) const
+{
+	if (!is_loaded_) return false;
+	const std::optional<float> ground = GetGroundHeight(center.x, center.y);
+	if (ground && center.z - half_height < *ground) return true;
+	const float axis_half = std::max(half_height - radius, 0.0f);
+	const XMVECTOR origin = XMVectorSet(center.x, center.y, center.z, 0.0f);
+	const XMVECTOR axis[2] = { XMVectorSet(0.0f, 0.0f, -axis_half, 0.0f), XMVectorSet(0.0f, 0.0f, axis_half, 0.0f) };
+	const XMFLOAT3 min{ center.x - radius, center.y - radius, center.z - half_height };
+	const XMFLOAT3 max{ center.x + radius, center.y + radius, center.z + half_height };
+	return VisitTriangles(min, max, [&](FXMVECTOR a, FXMVECTOR b, FXMVECTOR c)
+	{
+		const XMVECTOR corners[3] = { XMVectorSubtract(a, origin), XMVectorSubtract(b, origin), XMVectorSubtract(c, origin) };
+		return GetConvexDistance(axis, corners).distance <= radius;
+	});
+}
+
 // 조각마다 선분을 조각 기준 좌표로 옮기고, 위에서 본 선분이 지나는 칸을 따라가며 칸의 삼각형 2개를 검사한다.
 bool LandscapeData::IsSegmentBlockedByLandscape(const XMFLOAT3& start, const XMFLOAT3& end) const
 {

@@ -27,6 +27,7 @@
 #include "Sound/SoundBase.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Player/ControlSettingsSubsystem.h"
+#include "Player/PlayerMovementComponent.h"
 #include "Settings/KeyBindingSubsystem.h"
 #include "Interaction/BoxLayoutSubsystem.h"
 #include "Interaction/HintBox.h"
@@ -120,7 +121,7 @@ static FMontageBlendSettings MakeInertialBlendOut(float blend_time)
 	return settings;
 }
 
-APlayerCharacter::APlayerCharacter()
+APlayerCharacter::APlayerCharacter(const FObjectInitializer& object_initializer) : Super(object_initializer.SetDefaultSubobjectClass<UPlayerMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = false;
 	for (const TCHAR* surface : FOOTSTEP_SURFACES)
