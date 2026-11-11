@@ -92,7 +92,6 @@ void GameRoom::Reset()
 	for (auto& room_player : room_players_) room_player.ClearPlayer();
 	host_id_ = -1;
 	current_player_count_.store(0);
-	pending_relays_.clear();
 	room_state_.store(RoomState::EMPTY);
 }
 
@@ -297,7 +296,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		// 멈춤을 알렸던 플레이어의 이동 상태가 다시 오면 그 사람의 이동 키 입력을 다시 중계한다.
 		if (was_move_stopped) {
 			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, room_player->GetInputRight(), room_player->GetInputForward(), { move_state.location[0], move_state.location[1], move_state.location[2] }, { move_state.velocity[0], move_state.velocity[1] } };
-			QueueRelay(&input_p, sizeof(input_p));
+			SendToPlaying(reinterpret_cast<const char*>(&input_p), sizeof(input_p));
 		}
 		break;
 	}
@@ -317,13 +316,13 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 			const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
 			room_player->SetMoveInput(request_p->input_right, request_p->input_forward);
 			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, request_p->input_right, request_p->input_forward, { request_p->location[0], request_p->location[1], request_p->location[2] }, { request_p->velocity[0], request_p->velocity[1] } };
-			QueueRelay(&input_p, sizeof(input_p));
+			SendToPlaying(reinterpret_cast<const char*>(&input_p), sizeof(input_p));
 		}
 		else if (type == C2S_AIM) {
 			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
 			room_player->SetAiming(is_aiming, tick_time_ms_);
 			const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, is_aiming };
-			QueueRelay(&aim_p, sizeof(aim_p));
+			SendToPlaying(reinterpret_cast<const char*>(&aim_p), sizeof(aim_p));
 		}
 		else {
 			// 조준 중이면 장비를 바꾸지 않는다. 클라이언트도 같은 조건으로 막는다.
@@ -331,7 +330,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 			if (!server_->GetHitboxData().GetWeaponInfo(request_p->weapon) || !room_player->GetActionState().TryEquip(request_p->weapon, room_player->IsAiming(), request_p->action_time_ms, receive_time_ms)) break;
 			room_player->GetPose().ChangeWeapon(request_p->weapon, tick_time_ms_);
 			const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, request_p->weapon };
-			QueueRelay(&equip_p, sizeof(equip_p));
+			SendToPlaying(reinterpret_cast<const char*>(&equip_p), sizeof(equip_p));
 		}
 		break;
 	}
@@ -359,11 +358,11 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		const int player_id = request_session.GetSessionKey().player_id;
 		if (is_reload) {
 			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, player_id, weapon };
-			QueueRelay(&reload_p, sizeof(reload_p));
+			SendToPlaying(reinterpret_cast<const char*>(&reload_p), sizeof(reload_p));
 		}
 		else {
 			const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, player_id, static_cast<std::uint8_t>(action) };
-			QueueRelay(&action_p, sizeof(action_p));
+			SendToPlaying(reinterpret_cast<const char*>(&action_p), sizeof(action_p));
 		}
 		room_player->GetPose().StartAction(static_cast<std::uint8_t>(action), weapon, tick_time_ms_);
 		break;
@@ -554,7 +553,6 @@ void GameRoom::ClearGame()
 	game_start_ms_ = 0;
 	game_end_ms_ = 0;
 	award_end_ms_ = 0;
-	pending_relays_.clear();
 	S2C_RETURN_TO_ROOM_PACKET return_p;
 	return_p.header = { static_cast<std::uint16_t>(sizeof(return_p)), S2C_RETURN_TO_ROOM };
 	for (auto& room_player : room_players_) {
@@ -928,19 +926,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		append(&move_p, sizeof(move_p));
 		room_player.MarkMoveStateRelayed(tick_time_ms);
 	}
-	for (std::size_t offset = 0; offset < pending_relays_.size();) {
-		const int packet_size = reinterpret_cast<const PACKET_HEADER*>(pending_relays_.data() + offset)->size;
-		append(pending_relays_.data() + offset, packet_size);
-		offset += packet_size;
-	}
-	pending_relays_.clear();
 	flush();
-}
-
-void GameRoom::QueueRelay(const void* packet, int packet_size)
-{
-	const char* bytes = static_cast<const char*>(packet);
-	pending_relays_.insert(pending_relays_.end(), bytes, bytes + packet_size);
 }
 
 int GameRoom::AppendInputState(char* buffer, const Player& player) const
@@ -1093,7 +1079,7 @@ void GameRoom::RelayMoveStop(Player& player)
 	player.StopMove();
 	const MOVE_STATE state = player.GetMoveState();
 	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id, { state.location[0], state.location[1], state.location[2] } };
-	QueueRelay(&stop_p, sizeof(stop_p));
+	SendToPlaying(reinterpret_cast<const char*>(&stop_p), sizeof(stop_p));
 }
 
 // 상자 좌표의 모양을 상자 회전과 위치로 월드에 놓는다.
@@ -1137,7 +1123,7 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	use_p.rounds = static_cast<std::uint16_t>(action_state.GetAmmo(weapon)->rounds);
 	GetTickSendBuffer(shooter).Append(&use_p, use_p.header.size);
 	const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, shooter.GetSessionKey().player_id, static_cast<std::uint8_t>(PlayerAction::FIRE) };
-	QueueRelay(&action_p, sizeof(action_p));
+	SendToPlaying(reinterpret_cast<const char*>(&action_p), sizeof(action_p));
 	shooter.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon, tick_time_ms_);
 
 	DirectX::XMFLOAT3 unit_aim;
@@ -1574,7 +1560,7 @@ void GameRoom::ProcessActionStates()
 		const std::uint8_t held_weapon = action_state.GetWeapon();
 		if (action_state.StartAutoReload(tick_time_ms_)) {
 			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, room_player.GetSessionKey().player_id, held_weapon };
-			QueueRelay(&reload_p, sizeof(reload_p));
+			SendToPlaying(reinterpret_cast<const char*>(&reload_p), sizeof(reload_p));
 			room_player.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::RELOAD), held_weapon, tick_time_ms_);
 		}
 		for (std::uint8_t weapon = 0; action_state.GetAmmo(weapon); ++weapon) {

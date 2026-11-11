@@ -82,9 +82,8 @@ private:
 	std::atomic<char> current_player_count_{ 0 };
 	// 현재 처리 중인 틱 시각. 받은 이동 상태와 동작에 서버 시각으로 기록한다.
 	long long tick_time_ms_ = 0;
-	// 이번 틱에 받은 동작·재장전·입력 변화의 중계 패킷을 받은 순서대로 이어 둔 것. 덮어쓰지 않고 틱 끝에 이동 상태와 함께 보낸다.
-	std::vector<char> pending_relays_;
-	// 방 자리마다 이번 틱에 그 사람에게 보낼 패킷. 틱 끝에 사람마다 한 번에 보내고, 방을 나가는 사람은 나갈 때 퇴장 알림과 함께 보낸다.
+	// 방 자리마다 이번 틱에 그 사람에게 보낼 패킷. 처리한 순서대로 이어 붙이고, 틱 끝에 사람마다 한 번에 보낸다.
+	// 방을 나가는 사람은 나갈 때 퇴장 알림과 함께 보낸다.
 	std::array<TickSendBuffer, MAX_ROOM_PLAYER_COUNT> tick_send_buffers_;
 	// 시작 단계, 전원 로딩 완료를 기다리는 마감 시각, 실제 게임 시작 시각(시작 대기에 들어갈 때 정한다)
 	MatchPhase match_phase_ = MatchPhase::LOADING;
@@ -142,8 +141,6 @@ private:
 	void RelayMoveStop(Player& player);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
 	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
-	// 중계 패킷을 이번 틱 중계에 넣는다.
-	void QueueRelay(const void* packet, int packet_size);
 	// 그 플레이어의 이동 키 입력·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
 	int AppendInputState(char* buffer, const Player& player) const;
 	// 공개 여부에 맞는 방 입장 패킷으로 방 이름을 buffer에 쓰고 쓴 크기를 돌려준다.
@@ -216,6 +213,6 @@ public:
 	void ClearGame();
 
 	void Broadcast(char* packet);
-	// 플레이 중인 사람에게만 보낸다.
+	// 플레이 중인 사람마다 이번 틱 송신 버퍼에 붙인다. 틱 끝에 그 사람의 다른 패킷과 함께 한 번에 나간다.
 	void SendToPlaying(const char* packet, int packet_size);
 };
