@@ -1,5 +1,5 @@
 #pragma once
-#include "settings.h"
+#include "lobby_settings.h"
 
 // 시작 구역 안의 스폰 자리. 방 슬롯 번호 순서로 배정한다.
 // 좌표는 캐릭터 캡슐 중심(cm)이고, 방향은 도 단위로 위에서 볼 때 시계 방향으로 커진다. 모든 자리는 입구 쪽(서쪽)을 본다.

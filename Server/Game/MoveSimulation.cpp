@@ -2,6 +2,7 @@
 #include <cmath>
 #include "MoveSimulation.h"
 #include "MapData.h"
+#include "movement_settings.h"
 
 // 쓸기 결과로 만든 바닥. 처음부터 겹친 쓸기는 막힌 바닥으로 보지 않는다.
 static MoveFloor MakeSweepFloor(const MoveHit& hit, float floor_distance, bool is_walkable)

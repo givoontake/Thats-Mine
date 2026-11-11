@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 #include "ExOverlapped.h"
+#include "server_settings.h"
 
 enum class SendBufferState : std::uint8_t
 {
@@ -35,8 +36,6 @@ struct LargeSendBuffer
 
 	LargeSendBuffer(const char* data, int data_size);
 };
-
-constexpr int SEND_BUFFER_POOL_SIZE = 5;
 
 struct SendBufferPool
 {

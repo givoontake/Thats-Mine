@@ -24,6 +24,7 @@
 #include "UI/Timer/MatchTimerWidget.h"
 #include "UObject/UObjectGlobals.h"
 #include "game_protocol.h"
+#include "match_settings.h"
 
 #define LOCTEXT_NAMESPACE "GameStart"
 

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iterator>
+#include "combat_settings.h"
 #include "PlayerActionState.h"
 #include "shot_spread.h"
 

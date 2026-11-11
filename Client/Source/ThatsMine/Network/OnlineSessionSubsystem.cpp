@@ -10,6 +10,7 @@
 #include "Flow/ClientStateSubsystem.h"
 #include "GameNetworkSubsystem.h"
 #include "game_protocol.h"
+#include "lobby_settings.h"
 
 #define LOCTEXT_NAMESPACE "OnlineSession"
 constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_RETURN_TO_ROOM, S2C_KICK, S2C_CANCEL_MATCHING};

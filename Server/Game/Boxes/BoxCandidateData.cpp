@@ -8,8 +8,8 @@
 #include <random>
 #include <sstream>
 #include "random_seed.h"
-#include "settings.h"
 #include "spread_selection.h"
+#include "world_settings.h"
 
 // 유적마다 한 판에 놓는 상자 수 범위. 범위 안의 개수를 같은 확률로 정한다(0~1이면 놓을 확률 50%).
 struct BoxGroupRule {

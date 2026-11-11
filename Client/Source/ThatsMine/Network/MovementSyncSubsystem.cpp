@@ -12,6 +12,7 @@
 #include "Player/PlayerCharacter.h"
 #include "Player/RemoteMovementComponent.h"
 #include "game_protocol.h"
+#include "movement_settings.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMovementSync, Log, All);
 

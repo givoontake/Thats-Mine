@@ -14,6 +14,7 @@
 #include "Player/PlayerCharacter.h"
 #include "Styling/CoreStyle.h"
 #include "UI/game_font.h"
+#include "world_settings.h"
 
 TSharedRef<SWidget> UMagnifierCountWidget::RebuildWidget()
 {

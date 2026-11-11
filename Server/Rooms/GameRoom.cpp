@@ -25,6 +25,15 @@
 #include "treasure_placement.h"
 #include "room_lifecycle_tasks.h"
 #include "MoveSimulation.h"
+#include "combat_settings.h"
+#include "item_settings.h"
+#include "lobby_settings.h"
+#include "match_settings.h"
+#include "move_check_settings.h"
+#include "movement_settings.h"
+#include "server_settings.h"
+#include "stun_settings.h"
+#include "world_settings.h"
 
 // 종류별 힌트 패킷 중 가장 큰 크기. 힌트를 이어 붙일 버퍼를 잡을 때 쓴다.
 constexpr std::size_t MAX_HINT_PACKET_SIZE = std::max(sizeof(S2C_DIRECTION_HINT_PACKET), sizeof(S2C_COUNT_HINT_PACKET));

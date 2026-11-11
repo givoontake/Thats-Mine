@@ -3,6 +3,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
+#include "movement_settings.h"
 #include "shared_movement.h"
 
 // 공용 이동 계산은 float으로 계산한다. 위치는 큰 월드 좌표에서 오차가 생기지 않도록 기준 위치(origin)를 뺀 값으로 넘긴다.

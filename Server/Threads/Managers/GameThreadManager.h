@@ -22,10 +22,6 @@ class TimerThread;
 
 class GameThreadManager
 {
-public:
-    static constexpr int THREAD_COUNT = 12;
-    static constexpr int MIN_AVAILABLE_THREAD_COUNT = THREAD_COUNT / 2;
-
 private:
     GameServer& game_server_;
     std::mutex tick_mutex_;

@@ -74,12 +74,20 @@ add_executable(GameServer
     Common/error_code.h
     Common/hint_meshes.h
     Common/IndexRegistry.h
-    Common/settings.h
     Common/random_seed.h
     Common/shot_spread.h
     Common/spawn_points.h
     Common/spread_selection.h
     Common/types.h
+    Settings/combat_settings.h
+    Settings/item_settings.h
+    Settings/lobby_settings.h
+    Settings/match_settings.h
+    Settings/move_check_settings.h
+    Settings/movement_settings.h
+    Settings/server_settings.h
+    Settings/stun_settings.h
+    Settings/world_settings.h
     Core/GameServer.h
     Database/db_login_result.h
     Database/db_login_task.h
@@ -154,7 +162,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Network Packets Rooms SharedMovement Threads
+    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Network Packets Rooms Settings SharedMovement Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Matching Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)

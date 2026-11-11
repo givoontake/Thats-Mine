@@ -1,7 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
-#include "settings.h"
+#include "movement_settings.h"
 
 // 서버와 클라이언트가 같이 쓰는 캐릭터 이동 단계 계산. 충돌은 묻지 않는다.
 // 언리얼 캐릭터 이동(걷기·떨어지기)과 같은 처리 순서를 서버와 클라이언트가 각자 진행하면서, 단계마다 자기 충돌 결과를 넣어 부른다.

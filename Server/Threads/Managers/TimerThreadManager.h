@@ -6,9 +6,6 @@ class ServerThreadManager;
 
 class TimerThreadManager
 {
-public:
-    static constexpr int THREAD_COUNT = 1;
-
 private:
     TimerThread timer_thread_;
     std::thread thread_;

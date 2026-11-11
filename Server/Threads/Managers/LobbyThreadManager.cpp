@@ -12,6 +12,8 @@
 #include "packet_types.h"
 #include "room_packets.h"
 #include "room_lifecycle_tasks.h"
+#include "lobby_settings.h"
+#include "server_settings.h"
 
 LobbyThreadManager::LobbyThreadManager(GameServer& game_server)
 	: game_server_(game_server)
@@ -20,9 +22,9 @@ LobbyThreadManager::LobbyThreadManager(GameServer& game_server)
 
 void LobbyThreadManager::Start()
 {
-	thread_objects_.reserve(THREAD_COUNT);
-	threads_.reserve(THREAD_COUNT);
-	for (int i = 0; i < THREAD_COUNT; ++i) {
+	thread_objects_.reserve(LOBBY_THREAD_COUNT);
+	threads_.reserve(LOBBY_THREAD_COUNT);
+	for (int i = 0; i < LOBBY_THREAD_COUNT; ++i) {
 		thread_objects_.emplace_back(std::make_unique<LobbyThread>(*this));
 		thread_objects_.back()->Start();
 		threads_.emplace_back(&ServerThread::Run, thread_objects_.back().get());

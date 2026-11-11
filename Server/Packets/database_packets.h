@@ -1,6 +1,6 @@
 #pragma once
 #include "common_packets.h"
-#include "settings.h"
+#include "lobby_settings.h"
 
 #pragma pack(push, 1)
 struct C2S_LOGIN_PACKET {

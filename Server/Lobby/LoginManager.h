@@ -1,6 +1,5 @@
 #pragma once
 #include "enum_class.h"
-#include "settings.h"
 #include "types.h"
 
 class GameServer;

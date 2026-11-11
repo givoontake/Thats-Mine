@@ -12,10 +12,14 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include "combat_settings.h"
 #include "database_packets.h"
 #include "ex_overlapped.h"
+#include "lobby_settings.h"
+#include "movement_settings.h"
 #include "packet_types.h"
 #include "room_packets.h"
+#include "server_settings.h"
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")

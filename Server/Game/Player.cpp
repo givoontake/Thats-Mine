@@ -6,6 +6,11 @@
 #include "random_seed.h"
 #include "shot_spread.h"
 #include "MoveSimulation.h"
+#include "combat_settings.h"
+#include "item_settings.h"
+#include "move_check_settings.h"
+#include "movement_settings.h"
+#include "stun_settings.h"
 
 Player::Player()
 {

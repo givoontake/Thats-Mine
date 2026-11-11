@@ -12,7 +12,7 @@
 #include <jdbc/cppconn/connection.h>
 #include <jdbc/cppconn/driver.h>
 #include "DBThread.h"
-#include "settings.h"
+#include "server_settings.h"
 
 
 // -------------------- 유틸(로컬) --------------------

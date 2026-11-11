@@ -13,7 +13,7 @@
 #include "LobbyThread.h"
 #include "lobby_task.h"
 #include "session_tasks.h"
-#include "settings.h"
+#include "server_settings.h"
 
 class GameServer;
 class Session;
@@ -21,9 +21,6 @@ struct SessionState;
 
 class LobbyThreadManager
 {
-public:
-	static constexpr int THREAD_COUNT = 2;
-
 private:
 	GameServer& game_server_;
 	std::mutex lobby_mutex_;

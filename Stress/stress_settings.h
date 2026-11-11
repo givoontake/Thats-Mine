@@ -2,7 +2,8 @@
 #include <cstdint>
 #include "common_packets.h"
 #include "game_packets.h"
-#include "settings.h"
+#include "lobby_settings.h"
+#include "server_settings.h"
 
 // 부하 시험 설정. 방 하나에 MAX_ROOM_PLAYER_COUNT명씩 넣고, 서버 한도(MAX_PLAYER_COUNT)까지 잰다.
 constexpr int MAX_CLIENT_COUNT = MAX_PLAYER_COUNT;

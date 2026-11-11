@@ -8,6 +8,7 @@
 #include "InstancedFoliage.h"
 #include "InstancedFoliageActor.h"
 #include "hint_meshes.h"
+#include "world_settings.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHintObject, Log, All);
 

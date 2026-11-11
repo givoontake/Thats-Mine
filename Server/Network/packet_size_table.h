@@ -1,7 +1,6 @@
 #pragma once
 #include <array>
 #include <cstdint>
-#include "settings.h"
 #include "packet_types.h"
 #include "common_packets.h"
 #include "database_packets.h"

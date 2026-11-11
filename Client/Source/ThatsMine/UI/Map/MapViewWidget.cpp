@@ -15,7 +15,7 @@
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 #include "block_pieces.h"
-#include "settings.h"
+#include "world_settings.h"
 #include "UI/game_font.h"
 
 FVector2D UMapViewWidget::GetMapPosition(const FVector& location)

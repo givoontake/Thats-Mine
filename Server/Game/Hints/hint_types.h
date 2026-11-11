@@ -6,7 +6,6 @@
 #include <vector>
 #include <DirectXMath.h>
 #include "game_packets.h"
-#include "settings.h"
 
 // 힌트 물체 트리의 점. 물체 바닥 위치의 지도 좌표·높이(cm)와 종류다.
 struct HintPoint {

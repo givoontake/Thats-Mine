@@ -7,6 +7,7 @@
 #include "packet_types.h"
 #include "packet_size_table.h"
 #include "session_tasks.h"
+#include "server_settings.h"
 
 IOThread::IOThread(GameServer& game_server)
 	: game_server_(game_server)

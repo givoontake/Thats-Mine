@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstring>
 #include "ex_overlapped.h"
+#include "movement_settings.h"
+#include "server_settings.h"
 #include "spawn_points.h"
 
 bool Session::SendPacket(const void* packet, int size)

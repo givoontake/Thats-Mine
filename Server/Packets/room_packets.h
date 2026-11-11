@@ -1,6 +1,6 @@
 #pragma once
 #include "common_packets.h"
-#include "settings.h"
+#include "lobby_settings.h"
 #include "types.h"
 
 #pragma pack(push, 1)

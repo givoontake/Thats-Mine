@@ -1,5 +1,6 @@
 #include <cstring>
 #include "SendBuffer.h"
+#include "server_settings.h"
 
 SendBuffer::SendBuffer()
 {

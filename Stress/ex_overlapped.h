@@ -1,6 +1,6 @@
 #pragma once
 #include <WinSock2.h>
-#include "settings.h"
+#include "server_settings.h"
 
 enum class OperationType
 {

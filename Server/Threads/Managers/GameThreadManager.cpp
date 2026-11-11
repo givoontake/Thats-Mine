@@ -9,6 +9,8 @@
 #include "GamePhaseContext.h"
 #include "LobbyThreadManager.h"
 #include "room_packets.h"
+#include "lobby_settings.h"
+#include "server_settings.h"
 
 GameThreadManager::GameThreadManager(GameServer& game_server, TickWaitPolicy tick_policy)
     : game_server_(game_server), tick_wait_policy_(tick_policy), rooms_(std::make_unique<GameRoom[]>(MAX_ROOM_COUNT)), room_index_registry_(MAX_ROOM_COUNT)
@@ -28,9 +30,9 @@ GameRoom* GameThreadManager::GetRoomByIndex(int room_index) const
 
 void GameThreadManager::Start()
 {
-    thread_objects_.reserve(THREAD_COUNT);
-    threads_.reserve(THREAD_COUNT);
-    for (int i = 0; i < THREAD_COUNT; ++i) {
+    thread_objects_.reserve(GAME_THREAD_COUNT);
+    threads_.reserve(GAME_THREAD_COUNT);
+    for (int i = 0; i < GAME_THREAD_COUNT; ++i) {
         thread_objects_.emplace_back(std::make_unique<GameThread>(*this));
         thread_objects_.back()->Start();
         threads_.emplace_back(&ServerThread::Run, thread_objects_.back().get());
@@ -49,7 +51,7 @@ int GameThreadManager::GetAvailableThreadCount() const
 std::vector<GameThread*> GameThreadManager::SelectThreads()
 {
     std::vector<GameThread*> selected_game_threads;
-    selected_game_threads.reserve(THREAD_COUNT);
+    selected_game_threads.reserve(GAME_THREAD_COUNT);
     for (const auto& game_thread : thread_objects_) {
         GameThreadState expected_state = GameThreadState::AVAILABLE;
         if (game_thread->state_.compare_exchange_strong(expected_state, GameThreadState::PROCESSING))
@@ -62,7 +64,7 @@ bool GameThreadManager::StartGamePhase(long long tick_time_ms)
 {
     if (!game_server_.IsRunning()) return false;
     const std::vector<GameThread*> selected_game_threads = SelectThreads();
-    if (selected_game_threads.size() < MIN_AVAILABLE_THREAD_COUNT) {
+    if (selected_game_threads.size() < MIN_AVAILABLE_GAME_THREAD_COUNT) {
         for (GameThread* game_thread : selected_game_threads)
             game_thread->state_.store(GameThreadState::AVAILABLE);
         return false;
@@ -161,7 +163,6 @@ int GameThreadManager::CreatePublicRoom(char* packet, Session& session, SessionK
 	if (!packet) return ErrorCode::INVALID_REQUEST;
 	C2S_ADD_PUBLIC_ROOM_PACKET* public_p = reinterpret_cast<C2S_ADD_PUBLIC_ROOM_PACKET*>(packet);
 	RoomInitData data;
-	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
 	CopyCharBuf(data.room_name, sizeof(data.room_name), public_p->room_name, sizeof(public_p->room_name));
 	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::ROOM_NAME_TOO_SHORT;
 	data.room_key = GenerateRoomKey();
@@ -175,8 +176,6 @@ int GameThreadManager::CreatePrivateRoom(char* packet, Session& session, Session
 	if (!packet) return ErrorCode::INVALID_REQUEST;
 	C2S_ADD_PRIVATE_ROOM_PACKET* private_p = reinterpret_cast<C2S_ADD_PRIVATE_ROOM_PACKET*>(packet);
 	RoomInitData data;
-	constexpr size_t MIN_ROOM_NAME_LENGTH = 4;
-	constexpr size_t MIN_ROOM_PASSWORD_LENGTH = 4;
 	CopyCharBuf(data.room_name, sizeof(data.room_name), private_p->room_name, sizeof(private_p->room_name));
 	CopyCharBuf(data.room_password, sizeof(data.room_password), private_p->room_password, sizeof(private_p->room_password));
 	if (strnlen(data.room_name, sizeof(data.room_name)) < MIN_ROOM_NAME_LENGTH) return ErrorCode::ROOM_NAME_TOO_SHORT;

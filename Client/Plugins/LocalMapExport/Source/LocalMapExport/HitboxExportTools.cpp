@@ -29,7 +29,7 @@
 #include "Player/PlayerCharacter.h"
 #include "Player/player_action.h"
 #include "game_packets.h"
-#include "settings.h"
+#include "combat_settings.h"
 
 static const TCHAR* EXPORT_CHARACTER_BLUEPRINT = TEXT("/Game/Thats_Mine/Actors/Characters/BP_KayKitBarbarian.BP_KayKitBarbarian");
 static const TCHAR* EXPORT_BLEND_SPACE = TEXT("/Game/Thats_Mine/Animations/Move/BS_KayKitMovement.BS_KayKitMovement");

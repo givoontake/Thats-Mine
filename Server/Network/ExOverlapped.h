@@ -3,8 +3,8 @@
 #include <memory>
 #include <WinSock2.h>
 #include <MSWSock.h>
-#include "settings.h"
 #include "enum_class.h"
+#include "server_settings.h"
 #include "types.h"
 
 constexpr ULONG_PTR LISTEN_IO_COMPLETION = 1;

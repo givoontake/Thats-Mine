@@ -9,8 +9,8 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "TimerManager.h"
-#include "settings.h"
 #include "UObject/ConstructorHelpers.h"
+#include "world_settings.h"
 
 AHintBox::AHintBox()
 {

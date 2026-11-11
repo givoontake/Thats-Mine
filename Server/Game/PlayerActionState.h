@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <vector>
-#include "settings.h"
+#include "combat_settings.h"
 #include "hitbox_types.h"
 #include "weapon_ammo.h"
 

@@ -7,6 +7,7 @@
 #include "packet_types.h"
 #include "room_lifecycle_tasks.h"
 #include "session_tasks.h"
+#include "server_settings.h"
 
 GameServer::GameServer()
 {

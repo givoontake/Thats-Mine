@@ -10,6 +10,7 @@
 #include "matching_task.h"
 #include "packet_types.h"
 #include "common_packets.h"
+#include "lobby_settings.h"
 
 Matchmaker::Matchmaker(GameServer& game_server)
 	: game_server_(game_server)

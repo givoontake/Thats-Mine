@@ -1,3 +1,4 @@
+#include "server_settings.h"
 #include "SessionManager.h"
 #include <bcrypt.h>
 

@@ -22,6 +22,8 @@ public class ThatsMine : ModuleRules
 		// 서버와 같은 패킷 정의를 사용해 필드 크기와 번호가 달라지는 것을 막는다.
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Packets")));
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Common")));
+		// 서버와 같은 설정값을 쓴다.
+		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/Settings")));
 		// 서버와 같은 공용 이동 계산을 쓴다. 소스는 Player/shared_movement_build.cpp가 함께 빌드한다.
 		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../Server/SharedMovement")));
 

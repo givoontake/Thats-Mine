@@ -4,6 +4,7 @@
 #include "HintObjectGrid.h"
 #include "hint_meshes.h"
 #include "MapData.h"
+#include "world_settings.h"
 
 static bool IsInsideMap(float x, float y)
 {

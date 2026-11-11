@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <utility>
+#include "movement_settings.h"
 #include "shared_movement.h"
 
 constexpr float DEGREES_TO_RADIANS = 3.14159265358979f / 180.0f;

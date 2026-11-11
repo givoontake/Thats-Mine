@@ -3,6 +3,7 @@
 #include <limits>
 #include "DirectionHintData.h"
 #include "MapRegionData.h"
+#include "world_settings.h"
 
 // 방향 힌트 기준으로 쓰지 않는 영역. Asian Village Cliff는 보물 제외에만 쓰는 영역이고, Daisy Meadow는 보물을 놓지 않는 꽃밭이라 힌트에서도 뺀다.
 static constexpr const char* DIRECTION_EXCLUDED_REGIONS[] = { "Asian Village Cliff", "Daisy Meadow" };

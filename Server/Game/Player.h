@@ -6,7 +6,10 @@
 #include <utility>
 #include <vector>
 #include "types.h"
-#include "settings.h"
+#include "combat_settings.h"
+#include "movement_settings.h"
+#include "server_settings.h"
+#include "stun_settings.h"
 #include "enum_class.h"
 #include "game_packets.h"
 #include "block_pieces.h"

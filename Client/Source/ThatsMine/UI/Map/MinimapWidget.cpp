@@ -7,7 +7,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
 #include "GameFramework/Pawn.h"
-#include "settings.h"
+#include "world_settings.h"
 
 TSharedRef<SWidget> UMinimapWidget::RebuildWidget()
 {

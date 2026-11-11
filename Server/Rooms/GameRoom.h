@@ -15,6 +15,7 @@
 #include "hint_types.h"
 #include "treasure_types.h"
 #include "TickSendBuffer.h"
+#include "lobby_settings.h"
 class Session;
 
 class GameServer;

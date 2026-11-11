@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iterator>
-#include "settings.h"
+#include "world_settings.h"
 
 // 블록 배제 판. 지도 범위(MAP_MIN~MAP_MAX)를 가로·세로 BLOCK_GRID_SIZE칸으로 나눈다.
 // 지도 이미지와 같은 방향으로 행은 위(x가 작은 쪽)부터, 열은 왼쪽(y가 큰 쪽)부터이고, 칸 번호는 행 × BLOCK_GRID_SIZE + 열이다.

@@ -7,9 +7,6 @@ class GameServer;
 
 class DBThreadManager
 {
-public:
-    static constexpr int THREAD_COUNT = 1;
-
 private:
     sql::mysql::MySQL_Driver* driver_ = nullptr;
     LoginDBThread login_thread_;

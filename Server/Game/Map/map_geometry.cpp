@@ -1,6 +1,7 @@
 #include <array>
 #include <vector>
 #include "map_geometry.h"
+#include "movement_settings.h"
 
 using namespace DirectX;
 

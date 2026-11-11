@@ -1,5 +1,6 @@
 #include <iostream>
 #include <mutex>
+#include "server_settings.h"
 #include "Session.h"
 
 Session::Session()

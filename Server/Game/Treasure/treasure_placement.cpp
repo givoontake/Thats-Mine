@@ -2,7 +2,7 @@
 #include "treasure_placement.h"
 #include "MapData.h"
 #include "MapRegionData.h"
-#include "settings.h"
+#include "world_settings.h"
 
 std::optional<float> FindTreasureGround(const MapData& map, const MapRegionData& regions, float x, float y)
 {

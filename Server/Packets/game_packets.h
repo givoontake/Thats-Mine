@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include "common_packets.h"
-#include "settings.h"
 
 // 히트박스 부위. 서버 판정 데이터의 부위 값이다.
 enum class HitboxPart : std::uint8_t { HEAD, TORSO, ARM, HAND, LEG, FOOT, COUNT };

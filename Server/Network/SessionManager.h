@@ -2,7 +2,7 @@
 #include <WinSock2.h>
 #include <array>
 #include <cstdint>
-#include "settings.h"
+#include "server_settings.h"
 #include "types.h"
 #include "ActiveList.h"
 #include "Session.h"

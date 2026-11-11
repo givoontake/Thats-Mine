@@ -1,6 +1,6 @@
 #include "TickSendBuffer.h"
 #include "Session.h"
-#include "settings.h"
+#include "server_settings.h"
 
 void TickSendBuffer::Append(const void* packet, int packet_size)
 {

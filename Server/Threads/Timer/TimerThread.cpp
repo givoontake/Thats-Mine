@@ -3,6 +3,7 @@
 #include "TimerThread.h"
 #include "ServerThreadManager.h"
 #include "GameServer.h"
+#include "server_settings.h"
 
 TimerThread::TimerThread(ServerThreadManager& manager) : manager_(manager)
 {
@@ -56,7 +57,7 @@ void TimerThread::Run()
         // 틱 시각이 되어도 사용 가능한 작업 스레드가 최소 개수 이상 있어야 새 틱을 시작한다.
         // 여기서는 잠들지 않고 완료 여부를 반복 확인한다.
         while (is_running_.load() && manager_.game_server_.IsRunning()) {
-            if (manager_.game_thread_manager_.GetAvailableThreadCount() >= GameThreadManager::MIN_AVAILABLE_THREAD_COUNT) break;
+            if (manager_.game_thread_manager_.GetAvailableThreadCount() >= MIN_AVAILABLE_GAME_THREAD_COUNT) break;
             _mm_pause();
         }
         if (!is_running_.load() || !manager_.game_server_.IsRunning()) break;

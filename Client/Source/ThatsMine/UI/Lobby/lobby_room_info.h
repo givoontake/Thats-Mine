@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "settings.h"
+#include "lobby_settings.h"
 #include "lobby_room_info.generated.h"
 
 USTRUCT(BlueprintType)

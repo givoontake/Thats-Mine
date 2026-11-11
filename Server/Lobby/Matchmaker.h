@@ -1,7 +1,7 @@
 #pragma once
 #include <array>
 #include "ActiveList.h"
-#include "settings.h"
+#include "server_settings.h"
 #include "types.h"
 
 class GameServer;
@@ -13,8 +13,6 @@ struct MatchingTask;
 // 방에 입장 요청을 보낼 때 풀에서 빼고 방 전환 대기(ROOM_PENDING)로 바꾼다. 방이 거절하면 방이 매칭으로 되돌리는 요청을 보낸다.
 class Matchmaker
 {
-	static constexpr long long MATCH_TIMEOUT_MS = 5000;
-
 	GameServer& game_server_;
 	// 매칭 풀: 매칭 스레드가 맡은 세션 번호. 매칭 스레드 하나만 바꾼다.
 	// 풀에 있는 세션은 매칭 스레드만 정리하므로 그동안 다른 연결로 재사용되지 않는다.

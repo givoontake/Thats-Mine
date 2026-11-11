@@ -12,6 +12,7 @@
 #include "HitboxData.h"
 #include "MapData.h"
 #include "MapRegionData.h"
+#include "server_settings.h"
 #include "session_tasks.h"
 #pragma comment(lib, "MSWSock.lib")
 #pragma comment(lib, "Ws2_32.lib")
@@ -24,9 +25,6 @@ struct RoomLifecycleTask;
 
 class GameServer
 {
-	// 동시에 걸어 두는 접속 수락 요청 수. 하나가 처리되는 동안에도 나머지가 접속을 받는다.
-	static constexpr int ACCEPT_COUNT = 10;
-
 	HANDLE iocp_handle_;
 	SOCKET listen_socket_;
 	WSADATA wsa_data_;

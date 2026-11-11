@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Network/game_protocol.h"
-#include "settings.h"
+#include "world_settings.h"
 #include "HintObjectSubsystem.generated.h"
 
 // 힌트 물체 하나의 바닥 위치와 HintObjectKind 값

@@ -6,9 +6,6 @@ class GameServer;
 
 class MatchingThreadManager
 {
-public:
-	static constexpr int THREAD_COUNT = 1;
-
 private:
 	MatchingThread matching_thread_;
 	std::thread thread_;

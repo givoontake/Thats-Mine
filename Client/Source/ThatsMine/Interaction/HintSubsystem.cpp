@@ -13,6 +13,7 @@
 #include "TimerManager.h"
 #include "UI/Hint/HintNoticeWidget.h"
 #include "block_pieces.h"
+#include "world_settings.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHint, Log, All);
 

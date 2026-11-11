@@ -17,6 +17,7 @@
 #include "Player/PlayerCharacter.h"
 #include "TimerManager.h"
 #include "UI/Award/AwardWidget.h"
+#include "match_settings.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAward, Log, All);
 

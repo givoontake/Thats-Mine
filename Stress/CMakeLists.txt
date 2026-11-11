@@ -14,7 +14,7 @@ add_executable(Stress
     TestManager.h
 )
 set_target_properties(Stress PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-target_include_directories(Stress PRIVATE ../Server/Common ../Server/Packets)
+target_include_directories(Stress PRIVATE ../Server/Common ../Server/Packets ../Server/Settings)
 target_compile_definitions(Stress PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(Stress PRIVATE /utf-8 /W4)
 target_link_libraries(Stress PRIVATE ws2_32 mswsock)
