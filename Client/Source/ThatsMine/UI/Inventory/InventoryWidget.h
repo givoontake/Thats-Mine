@@ -29,6 +29,9 @@ class THATSMINE_API UInventoryWidget : public UUserWidget
 public:
 	UInventoryWidget(const FObjectInitializer& object_initializer);
 	FOnInventoryCloseRequested on_close_requested_;
+	// 틀 그림(1200×900 기준)에서 위쪽 나무 띠가 차지하는 세로 영역. 제목은 이 영역의 세로 가운데에 놓는다. 같은 틀을 쓰는 도움말도 쓴다.
+	static constexpr float FRAME_TITLE_BAR_TOP = 27.0f;
+	static constexpr float FRAME_TITLE_BAR_HEIGHT = 83.0f;
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;

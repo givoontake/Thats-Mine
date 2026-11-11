@@ -5,6 +5,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/ScaleBox.h"
 #include "Components/ScaleBoxSlot.h"
 #include "Components/ScrollBox.h"
@@ -15,6 +17,7 @@
 #include "Settings/KeyBindingSubsystem.h"
 #include "Styling/CoreStyle.h"
 #include "UI/game_font.h"
+#include "UI/Inventory/InventoryWidget.h"
 
 UHelpWidget::UHelpWidget(const FObjectInitializer& object_initializer)
 	: Super(object_initializer)
@@ -54,13 +57,16 @@ TSharedRef<SWidget> UHelpWidget::RebuildWidget()
 		frame->SetBrushFromTexture(frame_texture_.LoadSynchronous());
 		frame->SetVisibility(ESlateVisibility::HitTestInvisible);
 		panel->AddChildToCanvas(frame)->SetSize(FVector2D(1200.0, 900.0));
+		// 제목은 인벤토리와 같은 틀의 위쪽 나무 띠 영역에 놓고 세로 가운데로 맞춘다.
+		UOverlay* title_bar = WidgetTree->ConstructWidget<UOverlay>();
+		UCanvasPanelSlot* title_bar_slot = panel->AddChildToCanvas(title_bar);
+		title_bar_slot->SetPosition(FVector2D(100.0, UInventoryWidget::FRAME_TITLE_BAR_TOP));
+		title_bar_slot->SetSize(FVector2D(700.0, UInventoryWidget::FRAME_TITLE_BAR_HEIGHT));
 		UTextBlock* title = WidgetTree->ConstructWidget<UTextBlock>();
 		title->SetText(NSLOCTEXT("Help", "Title", "도움말"));
 		title->SetFont(GetGameFont(38));
 		title->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
-		UCanvasPanelSlot* title_slot = panel->AddChildToCanvas(title);
-		title_slot->SetPosition(FVector2D(100.0, 43.0));
-		title_slot->SetSize(FVector2D(700.0, 56.0));
+		title_bar->AddChildToOverlay(title)->SetVerticalAlignment(VAlign_Center);
 		content_ = WidgetTree->ConstructWidget<UScrollBox>();
 		content_->SetConsumeMouseWheel(EConsumeMouseWheel::Always);
 		content_->SetScrollbarThickness(FVector2D(10.0, 10.0));

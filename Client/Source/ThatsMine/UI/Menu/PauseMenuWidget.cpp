@@ -92,7 +92,7 @@ UButton* UPauseMenuWidget::AddButton(UVerticalBox* list, const FText& text)
 	label->SetText(text);
 	label->SetFont(GetGameFont(24));
 	label->SetColorAndOpacity(FSlateColor::UseForeground());
-	Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
+	Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 2.0f, 4.0f, 2.0f));
 	UVerticalBoxSlot* slot = list->AddChildToVerticalBox(size);
 	slot->SetHorizontalAlignment(HAlign_Center);
 	slot->SetPadding(FMargin(0.0f, 7.0f));

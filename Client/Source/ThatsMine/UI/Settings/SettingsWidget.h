@@ -8,9 +8,9 @@
 
 class UButton;
 class UCycleOptionRow;
-class UEditableText;
+class UPanelWidget;
 class UScrollBox;
-class USlider;
+class USliderOptionRow;
 class UTextBlock;
 class UWidgetSwitcher;
 
@@ -39,6 +39,11 @@ public:
 	// 탭 모양으로 버튼을 칠한다. 고른 버튼은 선택 배경과 눌림 글자색을 쓴다. 그래픽 탭의 단계 버튼도 같이 쓴다.
 	static void ApplyTabStyle(UButton* button, const FButtonStyle& tab_style, const FSlateBrush& selected_brush, bool is_selected);
 
+	// 모든 탭의 항목 줄이 같이 쓰는 모양. 이름 칸 너비, 줄 안 버튼 높이, 줄 높이다. 줄은 탭 맨 위부터 줄 높이 칸에 차례로 쌓는다.
+	static constexpr float OPTION_LABEL_WIDTH = 300.0f;
+	static constexpr float OPTION_BUTTON_HEIGHT = 48.0f;
+	static constexpr float OPTION_ROW_HEIGHT = 60.0f;
+
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
@@ -65,27 +70,18 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UWidgetSwitcher> settings_pages_;
 
+	// 소리·감도 줄. 같은 슬라이더 줄 위젯을 쓰고, 항목 이름은 줄을 놓은 자리에서 정한다.
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> master_volume_;
+	TObjectPtr<USliderOptionRow> master_volume_;
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UEditableText> master_volume_text_;
+	TObjectPtr<USliderOptionRow> music_volume_;
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> music_volume_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UEditableText> music_volume_text_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> effects_volume_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UEditableText> effects_volume_text_;
+	TObjectPtr<USliderOptionRow> effects_volume_;
 
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> mouse_sensitivity_;
+	TObjectPtr<USliderOptionRow> mouse_sensitivity_;
 	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UEditableText> mouse_sensitivity_text_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<USlider> zoom_sensitivity_;
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UEditableText> zoom_sensitivity_text_;
+	TObjectPtr<USliderOptionRow> zoom_sensitivity_;
 
 	// 그래픽 탭 항목 줄을 담는다. 줄은 코드에서 만든다.
 	UPROPERTY(meta = (BindWidget))
@@ -108,14 +104,6 @@ private:
 	UFUNCTION()
 	void SelectGraphicsTab();
 	void SelectTab(UButton* button);
-	UFUNCTION()
-	void UpdateVolumeLabels(float value);
-	UFUNCTION()
-	void CommitVolumeText(const FText& text, ETextCommit::Type commit_type);
-	UFUNCTION()
-	void UpdateSensitivityLabels(float value);
-	UFUNCTION()
-	void CommitSensitivityText(const FText& text, ETextCommit::Type commit_type);
 	// 창에 보이는 감도·그래픽 값을 반영하고 저장한다.
 	UFUNCTION()
 	void ApplySettings();
@@ -126,8 +114,12 @@ private:
 	void UpdateGraphicsRows();
 	// 품질 묶음 10개가 모두 같으면 그 단계, 다르면 사용자 지정으로 전체 품질을 보인다.
 	void UpdateOverallQualityRow();
-	// 조작 탭 감도 칸을 스크롤 상자 맨 위로 옮기고, 그 아래에 동작마다 키 줄을 만든다.
+	// 조작 탭 감도 줄을 스크롤 상자 맨 위에 넣고, 그 아래에 동작마다 키 줄을 만든다.
 	void BuildKeyRows();
+	// 소리 탭 줄을 탭 맨 위부터 차례로 쌓는다.
+	void BuildAudioRows();
+	// 줄을 줄 높이 칸에 담아 탭 목록 끝에 넣는다.
+	void AddRow(UPanelWidget* list, UWidget* row);
 	// 마우스가 올라간 키 버튼의 동작을 바꿀 키를 기다린다.
 	UFUNCTION()
 	void StartKeyCapture();

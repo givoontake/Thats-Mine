@@ -9,14 +9,8 @@
 #include "Components/TextBlock.h"
 #include "SettingsWidget.h"
 
-// 이름 칸과 버튼 크기는 그래픽 탭 단계 버튼 줄과 맞춘다. 값 칸은 단계 버튼 세 개 자리에서 화살표 버튼을 뺀 너비다.
-static constexpr float LABEL_WIDTH = 300.0f;
+// 이름 칸 너비와 버튼 높이는 설정 창 모든 탭의 줄과 같다. 값 칸은 두 화살표 버튼 사이 남은 너비를 채운다.
 static constexpr float ARROW_BUTTON_WIDTH = 70.0f;
-static constexpr float BUTTON_HEIGHT = 48.0f;
-static constexpr float VALUE_WIDTH = 281.0f;
-static constexpr float ROW_PADDING = 6.0f;
-// 화살표 글자를 칸 가운데로 올리는 거리
-static constexpr float ARROW_RAISE = 4.0f;
 
 void UCycleOptionRow::Setup(const FText& label, const TArray<FText>& option_names, const FSlateFontInfo& label_font, const FSlateFontInfo& value_font, const FButtonStyle& button_style, const FSlateBrush& selected_brush)
 {
@@ -56,45 +50,44 @@ TSharedRef<SWidget> UCycleOptionRow::RebuildWidget()
 		UHorizontalBox* root = WidgetTree->ConstructWidget<UHorizontalBox>();
 		WidgetTree->RootWidget = root;
 		USizeBox* label_box = WidgetTree->ConstructWidget<USizeBox>();
-		label_box->SetWidthOverride(LABEL_WIDTH);
+		label_box->SetWidthOverride(USettingsWidget::OPTION_LABEL_WIDTH);
 		UTextBlock* label = WidgetTree->ConstructWidget<UTextBlock>();
 		label->SetFont(label_font_);
 		label->SetText(label_);
 		label_box->AddChild(label);
 		UHorizontalBoxSlot* label_slot = root->AddChildToHorizontalBox(label_box);
 		label_slot->SetVerticalAlignment(VAlign_Center);
-		label_slot->SetPadding(FMargin(0.0f, ROW_PADDING));
+		// 화살표 버튼은 탭 버튼보다 낮아 탭과 같은 위아래 여백이면 글자 칸이 글자 한 줄보다 작아져 글자가 아래로 처지므로, 위아래 여백을 두지 않는다.
+		FButtonStyle arrow_style = button_style_;
+		arrow_style.NormalPadding.Top = arrow_style.NormalPadding.Bottom = 0.0f;
+		arrow_style.PressedPadding.Top = arrow_style.PressedPadding.Bottom = 0.0f;
 		UButton* buttons[2] = {};
 		for (int32 index = 0; index < 2; ++index)
 		{
 			USizeBox* button_box = WidgetTree->ConstructWidget<USizeBox>();
 			button_box->SetWidthOverride(ARROW_BUTTON_WIDTH);
-			button_box->SetHeightOverride(BUTTON_HEIGHT);
+			button_box->SetHeightOverride(USettingsWidget::OPTION_BUTTON_HEIGHT);
 			UButton* button = WidgetTree->ConstructWidget<UButton>();
-			button->SetStyle(button_style_);
+			button->SetStyle(arrow_style);
 			USettingsWidget::ApplyTabStyle(button, button_style_, selected_brush_, false);
 			UTextBlock* text = WidgetTree->ConstructWidget<UTextBlock>();
 			text->SetFont(value_font_);
 			text->SetText(FText::FromString(index == 0 ? TEXT("<") : TEXT(">")));
 			text->SetColorAndOpacity(FSlateColor::UseForeground());
-			// 화살표가 칸 가운데보다 아래에 서므로 조금 올린다.
-			CastChecked<UButtonSlot>(button->AddChild(text))->SetPadding(FMargin(4.0f, 2.0f - ARROW_RAISE, 4.0f, 2.0f + ARROW_RAISE));
+			CastChecked<UButtonSlot>(button->AddChild(text))->SetPadding(FMargin(4.0f, 2.0f, 4.0f, 2.0f));
 			button_box->AddChild(button);
 			buttons[index] = button;
 			if (index == 1)
 			{
-				USizeBox* value_box = WidgetTree->ConstructWidget<USizeBox>();
-				value_box->SetWidthOverride(VALUE_WIDTH);
 				value_text_ = WidgetTree->ConstructWidget<UTextBlock>();
 				value_text_->SetFont(value_font_);
 				value_text_->SetJustification(ETextJustify::Center);
-				value_box->AddChild(value_text_);
-				UHorizontalBoxSlot* value_slot = root->AddChildToHorizontalBox(value_box);
+				UHorizontalBoxSlot* value_slot = root->AddChildToHorizontalBox(value_text_);
+				value_slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 				value_slot->SetVerticalAlignment(VAlign_Center);
 			}
 			UHorizontalBoxSlot* button_slot = root->AddChildToHorizontalBox(button_box);
 			button_slot->SetVerticalAlignment(VAlign_Center);
-			button_slot->SetPadding(FMargin(0.0f, ROW_PADDING));
 		}
 		buttons[0]->OnClicked.AddDynamic(this, &UCycleOptionRow::SelectPrevious);
 		buttons[1]->OnClicked.AddDynamic(this, &UCycleOptionRow::SelectNext);

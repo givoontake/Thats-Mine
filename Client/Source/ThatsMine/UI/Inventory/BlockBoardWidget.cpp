@@ -113,7 +113,7 @@ TSharedRef<SWidget> UBlockBoardWidget::RebuildWidget()
 			label->SetText(button_names[index]);
 			label->SetFont(GetGameFont(24));
 			label->SetColorAndOpacity(FSlateColor::UseForeground());
-			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
+			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 2.0f, 4.0f, 2.0f));
 			UCanvasPanelSlot* button_slot = confirm_panel_->AddChildToCanvas(button);
 			button_slot->SetPosition(FVector2D(15.0 + index * 170.0, 220.0));
 			button_slot->SetSize(FVector2D(150.0, 52.0));

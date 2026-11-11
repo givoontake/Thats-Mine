@@ -11,6 +11,8 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/ScaleBox.h"
 #include "Components/ScaleBoxSlot.h"
 #include "Components/ScrollBox.h"
@@ -106,7 +108,17 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		frame->SetVisibility(ESlateVisibility::HitTestInvisible);
 		UCanvasPanelSlot* frame_slot = panel->AddChildToCanvas(frame);
 		frame_slot->SetSize(FVector2D(1200.0, 900.0));
-		AddText(panel, NSLOCTEXT("Inventory", "Title", "인벤토리"), 38, FVector2D(100.0, 43.0), FVector2D(700.0, 56.0));
+		// 제목은 틀 위쪽 나무 띠 영역에 놓고 세로 가운데로 맞춘다.
+		UOverlay* title_bar = WidgetTree->ConstructWidget<UOverlay>();
+		UCanvasPanelSlot* title_bar_slot = panel->AddChildToCanvas(title_bar);
+		title_bar_slot->SetPosition(FVector2D(100.0, FRAME_TITLE_BAR_TOP));
+		title_bar_slot->SetSize(FVector2D(700.0, FRAME_TITLE_BAR_HEIGHT));
+		UTextBlock* title = WidgetTree->ConstructWidget<UTextBlock>();
+		title->SetText(NSLOCTEXT("Inventory", "Title", "인벤토리"));
+		title->SetFont(GetGameFont(38));
+		title->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
+		title->SetVisibility(ESlateVisibility::HitTestInvisible);
+		title_bar->AddChildToOverlay(title)->SetVerticalAlignment(VAlign_Center);
 
 		// 제목 아래에 탭 버튼을 두고, 그 아래를 탭 화면이 채운다. 탭 화면은 프레임 전체 크기의 캔버스라 좌표는 프레임 기준이다.
 		tab_style_.SetNormal(MakeTabBrush(TEXT("/Game/Thats_Mine/UI/Shared/MI_ButtonWoodPlain.MI_ButtonWoodPlain")));
@@ -124,7 +136,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 			label->SetText(tab_names[tab]);
 			label->SetFont(GetGameFont(24));
 			label->SetColorAndOpacity(FSlateColor::UseForeground());
-			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
+			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(4.0f, 2.0f, 4.0f, 2.0f));
 			UCanvasPanelSlot* button_slot = panel->AddChildToCanvas(button);
 			button_slot->SetPosition(FVector2D(100.0 + tab * 220.0, 118.0));
 			button_slot->SetSize(FVector2D(200.0, 52.0));
@@ -150,9 +162,20 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 		{
 			const double x = 100.0 + index * 252.0;
 			equipment_frames_.Add(AddPanel(equipment_page, FVector2D(x, 200.0), FVector2D(240.0, 184.0)));
-			AddPanel(equipment_page, FVector2D(x + 12.0, 212.0), FVector2D(38.0, 38.0));
-			UTextBlock* key = AddText(equipment_page, FText::AsNumber(index + 1), 23, FVector2D(x + 12.0, 214.0), FVector2D(38.0, 34.0));
-			key->SetJustification(ETextJustify::Center);
+			// 번호 글자 한 줄은 번호 판보다 높아, 판 크기 칸에 넣으면 칸 크기로 줄어든 채 위에서부터 그려진다.
+			// 번호 판과 같은 자리에 캔버스를 두고 그 가운데에 제 크기로 두어 판 가운데에 맞춘다.
+			const UImage* key_panel = AddPanel(equipment_page, FVector2D(x + 12.0, 212.0), FVector2D(38.0, 38.0));
+			UCanvasPanel* key_canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+			key_canvas->SetVisibility(ESlateVisibility::HitTestInvisible);
+			equipment_page->AddChildToCanvas(key_canvas)->SetLayout(CastChecked<UCanvasPanelSlot>(key_panel->Slot)->GetLayout());
+			UTextBlock* key = WidgetTree->ConstructWidget<UTextBlock>();
+			key->SetText(FText::AsNumber(index + 1));
+			key->SetFont(GetGameFont(23));
+			key->SetColorAndOpacity(FLinearColor(0.96f, 0.90f, 0.78f));
+			UCanvasPanelSlot* key_slot = key_canvas->AddChildToCanvas(key);
+			key_slot->SetAnchors(FAnchors(0.5f, 0.5f));
+			key_slot->SetAlignment(FVector2D(0.5, 0.5));
+			key_slot->SetAutoSize(true);
 			equipment_names_.Add(AddText(equipment_page, FText::GetEmpty(), 21, FVector2D(x + 62.0, 216.0), FVector2D(170.0, 36.0)));
 			UImage* icon = WidgetTree->ConstructWidget<UImage>();
 			icon->SetBrushFromTexture(equipment_icons_[index].LoadSynchronous());
@@ -185,7 +208,7 @@ TSharedRef<SWidget> UInventoryWidget::RebuildWidget()
 			label->SetText(filter_names[filter]);
 			label->SetFont(GetGameFont(20));
 			label->SetColorAndOpacity(FSlateColor::UseForeground());
-			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(2.0f, 0.5f, 2.0f, 2.5f));
+			Cast<UButtonSlot>(button->AddChild(label))->SetPadding(FMargin(2.0f, 1.5f, 2.0f, 1.5f));
 			UCanvasPanelSlot* button_slot = hint_page->AddChildToCanvas(button);
 			button_slot->SetPosition(FVector2D(760.0 + filter * 110.0, 198.0));
 			button_slot->SetSize(FVector2D(100.0, 40.0));

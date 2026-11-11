@@ -7,16 +7,16 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
-#include "Components/ScrollBoxSlot.h"
 #include "Components/SizeBox.h"
-#include "Components/EditableText.h"
 #include "Components/ScrollBox.h"
-#include "Components/Slider.h"
 #include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
 #include "Components/WidgetSwitcher.h"
+#include "Components/WidgetSwitcherSlot.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/GameUserSettings.h"
 #include "CycleOptionRow.h"
+#include "SliderOptionRow.h"
 #include "Settings/FoliageShadowSubsystem.h"
 #include "Settings/AudioSettingsSubsystem.h"
 #include "Settings/FrameRateSettingsSubsystem.h"
@@ -64,11 +64,11 @@ static int32 GetLeadingSteps(int32 option)
 	return option == SHADOW_OPTION ? 1 : 0;
 }
 static const TCHAR* DESCRIPTION_HINT = TEXT("항목에 마우스를 올리면 설명이 표시됩니다.");
-// 조작 탭에서 감도 칸이 차지하는 높이와 키 줄 크기
-static constexpr float SENSITIVITY_AREA_HEIGHT = 190.0f;
-static constexpr float KEY_LABEL_WIDTH = 320.0f;
-static constexpr float KEY_BUTTON_WIDTH = 220.0f;
-static constexpr float KEY_BUTTON_HEIGHT = 46.0f;
+// 스크롤 막대가 차지하는 너비. 막대 두께와 막대 좌우 여백이다.
+static float GetScrollbarExtent(const UScrollBox* scroll)
+{
+	return scroll->GetScrollbarThickness().X + scroll->GetScrollbarPadding().Left + scroll->GetScrollbarPadding().Right;
+}
 
 void USettingsWidget::NativeOnInitialized()
 {
@@ -117,32 +117,19 @@ void USettingsWidget::NativeOnInitialized()
 		row->on_option_stepped_.BindUObject(this, &USettingsWidget::StepQuality, option);
 		quality_rows_.Add(row);
 	}
-	for (USlider* slider : {master_volume_.Get(), music_volume_.Get(), effects_volume_.Get()})
+	// 소리는 0~100 정수로, 감도는 소수 첫째 자리까지 보인다.
+	for (USliderOptionRow* row : {master_volume_.Get(), music_volume_.Get(), effects_volume_.Get()})
 	{
-		slider->SetStepSize(VOLUME_STEP);
-		slider->OnValueChanged.AddDynamic(this, &USettingsWidget::UpdateVolumeLabels);
+		row->Setup(VOLUME_STEP, VOLUME_TEXT_SCALE, 0);
 	}
-	for (UEditableText* text : {master_volume_text_.Get(), music_volume_text_.Get(), effects_volume_text_.Get(), mouse_sensitivity_text_.Get(), zoom_sensitivity_text_.Get()})
+	for (USliderOptionRow* row : {mouse_sensitivity_.Get(), zoom_sensitivity_.Get()})
 	{
-		text->SetSelectAllTextWhenFocused(true);
-		text->SetClearKeyboardFocusOnCommit(true);
+		row->SetRange(UControlSettingsSubsystem::MIN_SENSITIVITY, UControlSettingsSubsystem::MAX_SENSITIVITY);
+		row->Setup(SENSITIVITY_STEP, 1.0f, 1);
 	}
-	for (UEditableText* text : {master_volume_text_.Get(), music_volume_text_.Get(), effects_volume_text_.Get()})
-	{
-		text->OnTextCommitted.AddDynamic(this, &USettingsWidget::CommitVolumeText);
-	}
-	for (UEditableText* text : {mouse_sensitivity_text_.Get(), zoom_sensitivity_text_.Get()})
-	{
-		text->OnTextCommitted.AddDynamic(this, &USettingsWidget::CommitSensitivityText);
-	}
-	UpdateVolumeLabels(0.0f);
-	for (USlider* slider : {mouse_sensitivity_.Get(), zoom_sensitivity_.Get()})
-	{
-		slider->SetMinValue(UControlSettingsSubsystem::MIN_SENSITIVITY);
-		slider->SetMaxValue(UControlSettingsSubsystem::MAX_SENSITIVITY);
-		slider->SetStepSize(SENSITIVITY_STEP);
-		slider->OnValueChanged.AddDynamic(this, &USettingsWidget::UpdateSensitivityLabels);
-	}
+	// 그래픽 탭 스크롤 막대는 내용 칸 오른쪽 여백에 두어, 줄이 다른 탭과 같은 오른쪽 끝까지 오게 한다.
+	CastChecked<UWidgetSwitcherSlot>(graphics_options_->Slot)->SetPadding(FMargin(0.0f, 0.0f, -GetScrollbarExtent(graphics_options_), 0.0f));
+	BuildAudioRows();
 	BuildKeyRows();
 	SelectGraphicsTab();
 }
@@ -156,28 +143,26 @@ void USettingsWidget::BuildKeyRows()
 	}
 	UScrollBox* scroll = WidgetTree->ConstructWidget<UScrollBox>();
 	scroll->SetConsumeMouseWheel(EConsumeMouseWheel::Always);
-	scroll->SetScrollbarThickness(FVector2D(8.0, 8.0));
-	UCanvasPanel* sensitivity_area = WidgetTree->ConstructWidget<UCanvasPanel>();
-	USizeBox* sensitivity_size = WidgetTree->ConstructWidget<USizeBox>();
-	sensitivity_size->SetHeightOverride(SENSITIVITY_AREA_HEIGHT);
-	sensitivity_size->AddChild(sensitivity_area);
-	// 감도 줄은 배치를 그대로 지닌 채 스크롤 상자 맨 위 칸으로 옮긴다.
-	for (UWidget* child : page->GetAllChildren())
+	// 스크롤 막대는 그래픽 탭 목록과 같은 모양이고, 내용 칸 오른쪽 여백에 둔다.
+	scroll->SetScrollbarThickness(graphics_options_->GetScrollbarThickness());
+	scroll->SetScrollbarPadding(graphics_options_->GetScrollbarPadding());
+	for (USliderOptionRow* row : { mouse_sensitivity_.Get(), zoom_sensitivity_.Get() })
 	{
-		const FAnchorData layout = CastChecked<UCanvasPanelSlot>(child->Slot)->GetLayout();
-		child->RemoveFromParent();
-		sensitivity_area->AddChildToCanvas(child)->SetLayout(layout);
+		row->RemoveFromParent();
+		AddRow(scroll, row);
 	}
 	UCanvasPanelSlot* scroll_slot = page->AddChildToCanvas(scroll);
 	scroll_slot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
-	scroll_slot->SetOffsets(FMargin(0.0f));
-	scroll->AddChild(sensitivity_size);
+	scroll_slot->SetOffsets(FMargin(0.0f, 0.0f, -GetScrollbarExtent(scroll), 0.0f));
 	// 키 칸은 테두리·배경 없이 글자만 두고, 마우스를 올리면 탭 버튼과 같은 글자색으로 바꾼다.
 	FButtonStyle key_style = tab_button_style_;
 	key_style.Normal.DrawAs = ESlateBrushDrawType::NoDrawType;
 	key_style.Hovered.DrawAs = ESlateBrushDrawType::NoDrawType;
 	key_style.Pressed.DrawAs = ESlateBrushDrawType::NoDrawType;
 	key_style.Disabled.DrawAs = ESlateBrushDrawType::NoDrawType;
+	// 키 버튼은 탭 버튼보다 낮아 탭과 같은 위아래 여백이면 글자 칸이 글자 한 줄보다 작아져 글자가 아래로 처지므로, 위아래 여백을 두지 않는다.
+	key_style.NormalPadding.Top = key_style.NormalPadding.Bottom = 0.0f;
+	key_style.PressedPadding.Top = key_style.PressedPadding.Bottom = 0.0f;
 	for (int32 action = 0; action < static_cast<int32>(EKeyAction::COUNT); ++action)
 	{
 		UHorizontalBox* row = WidgetTree->ConstructWidget<UHorizontalBox>();
@@ -185,7 +170,7 @@ void USettingsWidget::BuildKeyRows()
 		label->SetText(UKeyBindingSubsystem::GetActionName(static_cast<EKeyAction>(action)));
 		label->SetFont(option_label_font_);
 		USizeBox* label_size = WidgetTree->ConstructWidget<USizeBox>();
-		label_size->SetWidthOverride(KEY_LABEL_WIDTH);
+		label_size->SetWidthOverride(OPTION_LABEL_WIDTH);
 		label_size->AddChild(label);
 		row->AddChildToHorizontalBox(label_size)->SetVerticalAlignment(VAlign_Center);
 		UButton* button = WidgetTree->ConstructWidget<UButton>();
@@ -195,16 +180,44 @@ void USettingsWidget::BuildKeyRows()
 		key->SetFont(option_level_font_);
 		key->SetColorAndOpacity(FSlateColor::UseForeground());
 		key->SetJustification(ETextJustify::Center);
-		Cast<UButtonSlot>(button->AddChild(key))->SetPadding(FMargin(4.0f, 0.5f, 4.0f, 3.5f));
+		Cast<UButtonSlot>(button->AddChild(key))->SetPadding(FMargin(4.0f, 2.0f, 4.0f, 2.0f));
+		// 키 칸은 이름 칸 뒤 남은 너비를 채워, 키 글자가 그래픽 탭 값 글자와 같은 가운데에 온다.
 		USizeBox* button_size = WidgetTree->ConstructWidget<USizeBox>();
-		button_size->SetWidthOverride(KEY_BUTTON_WIDTH);
-		button_size->SetHeightOverride(KEY_BUTTON_HEIGHT);
+		button_size->SetHeightOverride(OPTION_BUTTON_HEIGHT);
 		button_size->AddChild(button);
-		row->AddChildToHorizontalBox(button_size)->SetVerticalAlignment(VAlign_Center);
-		Cast<UScrollBoxSlot>(scroll->AddChild(row))->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 4.0f));
+		UHorizontalBoxSlot* button_slot = row->AddChildToHorizontalBox(button_size);
+		button_slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		button_slot->SetVerticalAlignment(VAlign_Center);
+		AddRow(scroll, row);
 		key_buttons_.Add(button);
 		key_texts_.Add(key);
 	}
+}
+
+void USettingsWidget::BuildAudioRows()
+{
+	UCanvasPanel* page = Cast<UCanvasPanel>(master_volume_->GetParent());
+	if (!page)
+	{
+		return;
+	}
+	UVerticalBox* rows = WidgetTree->ConstructWidget<UVerticalBox>();
+	for (USliderOptionRow* row : { master_volume_.Get(), music_volume_.Get(), effects_volume_.Get() })
+	{
+		row->RemoveFromParent();
+		AddRow(rows, row);
+	}
+	UCanvasPanelSlot* rows_slot = page->AddChildToCanvas(rows);
+	rows_slot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f));
+	rows_slot->SetOffsets(FMargin(0.0f));
+}
+
+void USettingsWidget::AddRow(UPanelWidget* list, UWidget* row)
+{
+	USizeBox* row_size = WidgetTree->ConstructWidget<USizeBox>();
+	row_size->SetHeightOverride(OPTION_ROW_HEIGHT);
+	row_size->AddChild(row);
+	list->AddChild(row_size);
 }
 
 void USettingsWidget::StartKeyCapture()
@@ -245,14 +258,12 @@ void USettingsWidget::LoadSavedSettings()
 		mouse_sensitivity_->SetValue(settings->GetMouseSensitivity());
 		zoom_sensitivity_->SetValue(settings->GetZoomSensitivity());
 	}
-	UpdateSensitivityLabels(0.0f);
 	if (const UAudioSettingsSubsystem* audio = GetGameInstance() ? GetGameInstance()->GetSubsystem<UAudioSettingsSubsystem>() : nullptr)
 	{
 		master_volume_->SetValue(audio->GetMasterVolume());
 		music_volume_->SetValue(audio->GetMusicVolume());
 		effects_volume_->SetValue(audio->GetEffectsVolume());
 	}
-	UpdateVolumeLabels(0.0f);
 	UpdateGraphicsRows();
 }
 
@@ -352,62 +363,12 @@ void USettingsWidget::ApplyTabStyle(UButton* button, const FButtonStyle& tab_sty
 	button->SetStyle(style);
 }
 
-void USettingsWidget::UpdateVolumeLabels(float value)
-{
-	master_volume_text_->SetText(FText::AsNumber(FMath::RoundToInt(master_volume_->GetValue() * VOLUME_TEXT_SCALE)));
-	music_volume_text_->SetText(FText::AsNumber(FMath::RoundToInt(music_volume_->GetValue() * VOLUME_TEXT_SCALE)));
-	effects_volume_text_->SetText(FText::AsNumber(FMath::RoundToInt(effects_volume_->GetValue() * VOLUME_TEXT_SCALE)));
-}
-
-// 입력한 숫자를 정수로 반올림해 슬라이더에 넣는다. 숫자가 아니거나 입력을 취소하면 표시만 원래 값으로 되돌린다.
-void USettingsWidget::CommitVolumeText(const FText& text, ETextCommit::Type commit_type)
-{
-	if (commit_type != ETextCommit::OnCleared)
-	{
-		for (const TPair<USlider*, UEditableText*>& volume : {TPair<USlider*, UEditableText*>(master_volume_, master_volume_text_), TPair<USlider*, UEditableText*>(music_volume_, music_volume_text_), TPair<USlider*, UEditableText*>(effects_volume_, effects_volume_text_)})
-		{
-			const FString input = volume.Value->GetText().ToString().TrimStartAndEnd();
-			if (input.IsNumeric())
-			{
-				volume.Key->SetValue(FMath::Clamp(FMath::RoundToFloat(FCString::Atof(*input)), 0.0f, VOLUME_TEXT_SCALE) / VOLUME_TEXT_SCALE);
-			}
-		}
-	}
-	UpdateVolumeLabels(0.0f);
-}
-
-void USettingsWidget::UpdateSensitivityLabels(float value)
-{
-	FNumberFormattingOptions format;
-	format.SetMinimumFractionalDigits(1);
-	format.SetMaximumFractionalDigits(1);
-	mouse_sensitivity_text_->SetText(FText::AsNumber(mouse_sensitivity_->GetValue(), &format));
-	zoom_sensitivity_text_->SetText(FText::AsNumber(zoom_sensitivity_->GetValue(), &format));
-}
-
-// 입력한 숫자를 소수 첫째 자리로 반올림하고 범위 안으로 맞춰 슬라이더에 넣는다.
-void USettingsWidget::CommitSensitivityText(const FText& text, ETextCommit::Type commit_type)
-{
-	if (commit_type != ETextCommit::OnCleared)
-	{
-		for (const TPair<USlider*, UEditableText*>& sensitivity : {TPair<USlider*, UEditableText*>(mouse_sensitivity_, mouse_sensitivity_text_), TPair<USlider*, UEditableText*>(zoom_sensitivity_, zoom_sensitivity_text_)})
-		{
-			const FString input = sensitivity.Value->GetText().ToString().TrimStartAndEnd();
-			if (input.IsNumeric())
-			{
-				sensitivity.Key->SetValue(FMath::Clamp(FMath::RoundToFloat(FCString::Atof(*input) / SENSITIVITY_STEP) * SENSITIVITY_STEP, UControlSettingsSubsystem::MIN_SENSITIVITY, UControlSettingsSubsystem::MAX_SENSITIVITY));
-			}
-		}
-	}
-	UpdateSensitivityLabels(0.0f);
-}
-
 UCycleOptionRow* USettingsWidget::AddOptionRow(const FText& label, const TArray<FText>& option_names, const FText& description)
 {
 	UCycleOptionRow* row = CreateWidget<UCycleOptionRow>(this, UCycleOptionRow::StaticClass());
 	row->Setup(label, option_names, option_label_font_, option_level_font_, tab_button_style_, selected_tab_brush_);
 	row->on_hovered_.BindWeakLambda(this, [this, description]() { option_description_->SetText(description); });
-	graphics_options_->AddChild(row);
+	AddRow(graphics_options_, row);
 	return row;
 }
 
@@ -549,11 +510,10 @@ void USettingsWidget::ResetToDefaults()
 {
 	mouse_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
 	zoom_sensitivity_->SetValue(UControlSettingsSubsystem::DEFAULT_SENSITIVITY);
-	for (USlider* slider : { master_volume_.Get(), music_volume_.Get(), effects_volume_.Get() })
+	for (USliderOptionRow* row : { master_volume_.Get(), music_volume_.Get(), effects_volume_.Get() })
 	{
-		slider->SetValue(UAudioSettingsSubsystem::DEFAULT_VOLUME);
+		row->SetValue(UAudioSettingsSubsystem::DEFAULT_VOLUME);
 	}
-	UpdateVolumeLabels(0.0f);
 	for (int32 action = 0; action < pending_keys_.Num(); ++action)
 	{
 		pending_keys_[action] = UKeyBindingSubsystem::GetDefaultKey(static_cast<EKeyAction>(action));

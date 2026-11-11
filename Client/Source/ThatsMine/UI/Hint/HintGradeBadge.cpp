@@ -3,6 +3,8 @@
 #include "Blueprint/WidgetTree.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "Components/Border.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Materials/MaterialInterface.h"
@@ -47,9 +49,13 @@ TSharedRef<SWidget> UHintGradeBadge::RebuildWidget()
 		{
 			badge->SetBrush(FSlateRoundedBoxBrush(FLinearColor(0.035f, 0.027f, 0.020f), 3.0f, grade_color, 2.5f));
 		}
-		badge->SetHorizontalAlignment(HAlign_Center);
-		badge->SetVerticalAlignment(VAlign_Center);
 		badge_size->AddChild(badge);
+		// 등급 글자 한 줄은 배지 안쪽보다 높아, 배지 칸에 넣으면 칸 크기로 줄어든 채 위에서부터 그려진다.
+		// 배지 안쪽을 채운 캔버스의 가운데에 제 크기로 두어 배지 가운데에 맞춘다.
+		UCanvasPanel* grade_canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
+		badge->SetHorizontalAlignment(HAlign_Fill);
+		badge->SetVerticalAlignment(VAlign_Fill);
+		badge->AddChild(grade_canvas);
 		UTextBlock* grade = WidgetTree->ConstructWidget<UTextBlock>();
 		FSlateFontInfo grade_font = GetGameFont(26);
 		if (is_gradient)
@@ -59,9 +65,10 @@ TSharedRef<SWidget> UHintGradeBadge::RebuildWidget()
 		grade->SetFont(grade_font);
 		grade->SetColorAndOpacity(grade_color);
 		grade->SetText(FText::AsCultureInvariant(grade_ == EHintGrade::S ? TEXT("S") : grade_ == EHintGrade::A ? TEXT("A") : grade_ == EHintGrade::B ? TEXT("B") : TEXT("C")));
-		// 게임 글꼴의 영문 글자는 글자 칸 가운데에 두어도 아래로 치우쳐 보여 칸 가운데로 올린다.
-		grade->SetRenderTranslation(FVector2D(0.0, -GLYPH_RAISE));
-		badge->AddChild(grade);
+		UCanvasPanelSlot* grade_slot = grade_canvas->AddChildToCanvas(grade);
+		grade_slot->SetAnchors(FAnchors(0.5f, 0.5f));
+		grade_slot->SetAlignment(FVector2D(0.5, 0.5));
+		grade_slot->SetAutoSize(true);
 	}
 	return Super::RebuildWidget();
 }

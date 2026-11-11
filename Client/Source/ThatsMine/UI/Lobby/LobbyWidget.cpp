@@ -271,8 +271,8 @@ void ULobbyWidget::SetMatching(bool is_matching, bool is_canceling)
 	password_section_->SetVisibility(ESlateVisibility::Collapsed);
 	confirm_button_->SetVisibility(ESlateVisibility::Collapsed);
 	cancel_button_->SetIsEnabled(!is_canceling);
-	// 제목 줄이 대화상자 가로 가운데에 놓여 있으므로, 취소 버튼을 제목 줄 가운데에 맞춘다.
-	const UCanvasPanelSlot* title_slot = CastChecked<UCanvasPanelSlot>(dialog_title_->Slot);
+	// 제목 글자는 제목 판과 함께 묶여 있고 제목 판이 대화상자 가로 가운데에 놓여 있으므로, 취소 버튼을 제목 판 가운데에 맞춘다.
+	const UCanvasPanelSlot* title_slot = CastChecked<UCanvasPanelSlot>(dialog_title_->GetParent()->Slot);
 	UCanvasPanelSlot* cancel_slot = CastChecked<UCanvasPanelSlot>(cancel_button_->Slot);
 	cancel_slot->SetPosition(FVector2D(title_slot->GetPosition().X + (title_slot->GetSize().X - cancel_slot->GetSize().X) * 0.5f, cancel_button_position_.Y));
 	main_panel_->SetIsEnabled(false);
