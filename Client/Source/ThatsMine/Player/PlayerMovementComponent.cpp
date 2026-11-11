@@ -48,7 +48,7 @@ static MoveFloor ToMoveFloor(const FFindFloorResult& floor, const FVector& origi
 // 바닥 끝에서 떨어질 수 없으면(다른 플레이어 캐릭터) 가장자리를 따라 가 보고 갈 곳이 없으면 멈추며, 떨어질 수 있으면 떨어지기 시작한다.
 void UPlayerMovementComponent::PhysWalking(float delta_time, int32 iterations)
 {
-	if (delta_time < MIN_TICK_TIME)
+	if (delta_time < MOVE_MIN_TICK_TIME)
 	{
 		return;
 	}
@@ -71,7 +71,7 @@ void UPlayerMovementComponent::PhysWalking(float delta_time, int32 iterations)
 	const MoveWalkParams params{ GetMaxSpeed(), GroundFriction, GetMaxBrakingDeceleration() };
 	const float max_acceleration = GetMaxAcceleration();
 	const MoveVector input = max_acceleration > 0.0f ? Horizontal(ToMove(Acceleration / max_acceleration)) : MoveVector{};
-	while (remaining >= MIN_TICK_TIME && iterations < MaxSimulationIterations && CharacterOwner && (CharacterOwner->GetController() || bRunPhysicsWithNoController || CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy))
+	while (remaining >= MOVE_MIN_TICK_TIME && iterations < MOVE_MAX_SIMULATION_ITERATIONS && CharacterOwner && (CharacterOwner->GetController() || bRunPhysicsWithNoController || CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy))
 	{
 		++iterations;
 		bJustTeleported = false;
@@ -185,12 +185,12 @@ void UPlayerMovementComponent::PhysWalking(float delta_time, int32 iterations)
 // 서버 MoveSimulation::PhysFalling과 같은 순서다. 단계마다 공용 계산으로 중력 이동을 정하고, 막히면 내려설 수 있는지 보고 아니면 면을 따라 미끄러진다.
 void UPlayerMovementComponent::PhysFalling(float delta_time, int32 iterations)
 {
-	if (delta_time < MIN_TICK_TIME)
+	if (delta_time < MOVE_MIN_TICK_TIME)
 	{
 		return;
 	}
 	float remaining = delta_time;
-	while (remaining >= MIN_TICK_TIME && iterations < MaxSimulationIterations)
+	while (remaining >= MOVE_MIN_TICK_TIME && iterations < MOVE_MAX_SIMULATION_ITERATIONS)
 	{
 		++iterations;
 		float tick = ::GetSimulationTimeStep(remaining, iterations);
@@ -200,7 +200,7 @@ void UPlayerMovementComponent::PhysFalling(float delta_time, int32 iterations)
 		const MoveVector old_velocity = ToMove(Velocity);
 		MoveStep step = CalcFallStep(old_velocity, tick);
 		// 점프 정점을 지나면 정점까지만 가고 남은 시간은 다음 단계로 넘긴다.
-		if (old_velocity.z > 0.0f && step.velocity.z <= 0.0f && NumJumpApexAttempts < MaxJumpApexAttemptsPerSimulation)
+		if (old_velocity.z > 0.0f && step.velocity.z <= 0.0f && NumJumpApexAttempts < MOVE_MAX_JUMP_APEX_ATTEMPTS)
 		{
 			const float apex_time = old_velocity.z / GRAVITY;
 			if (apex_time >= MOVE_JUMP_APEX_MIN_TIME && apex_time < tick)

@@ -211,6 +211,8 @@ void APlayerCharacter::BeginPlay()
 	Super::BeginPlay();
 	// 서버 높이 검증과 같은 점프 속도를 쓴다. 블루프린트 값이 덮어쓰지 못하게 시작할 때 넣는다.
 	GetCharacterMovement()->JumpZVelocity = JUMP_Z_VELOCITY;
+	// 걷기와 떨어지기를 오갈 때 엔진도 단계 수 상한을 보므로, 공용 이동 계산과 같은 값을 넣는다.
+	GetCharacterMovement()->MaxSimulationIterations = MOVE_MAX_SIMULATION_ITERATIONS;
 	UpdateWeaponVisuals();
 	SetAiming(false);
 }

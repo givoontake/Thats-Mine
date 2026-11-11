@@ -97,6 +97,9 @@ constexpr float CHARACTER_CAPSULE_HALF_HEIGHT = 90.0f; // 중심에서 위·아�
 constexpr float MOVE_MIN_FLOOR_DISTANCE = 1.9f;
 constexpr float MOVE_MAX_FLOOR_DISTANCE = 2.4f;
 // 한 번 부를 때 이동을 이 시간(초) 이하 단계로 나누고, 단계는 이 횟수까지만 진행한다.
+// 한 단계는 캡슐을 직선으로 한 번 쓸고 바닥을 한 번 찾으므로, 긴 시간을 한 단계로 가면 점프 궤적과 가장자리·경사 변화를 놓친다.
+// 값은 언리얼 캐릭터 이동 기본값이다. 서버는 틱 간격이 이 시간보다 짧아 평소에는 나누지 않고, 틱이 밀렸거나
+// 받은 상태 시각이 서버보다 앞서 한 번에 이 시간보다 길게 진행할 때 서버 위치가 거칠게 계산되지 않도록 나눈다.
 constexpr float MOVE_MAX_SIMULATION_TIME_STEP = 0.05f;
 constexpr int MOVE_MAX_SIMULATION_ITERATIONS = 8;
 // 이보다 짧은 시간(초)은 진행하지 않는다.
