@@ -9,7 +9,7 @@ class Session;
 struct MatchingTask;
 
 // 빠른 매칭 처리. 매칭 스레드가 소유하고, 매칭 단계마다 매칭 작업을 처리한 뒤 RunCycle을 실행한다.
-// 매칭 중인 세션(MATCHING)은 매칭 스레드가 맡는다.
+// 매칭 중인 세션(MATCHING)은 매칭 스레드가 맡으며, 그동안 받은 패킷은 매칭 취소만 처리하고 나머지는 버린다.
 // 방에 입장 요청을 보낼 때 풀에서 빼고 방 전환 대기(ROOM_PENDING)로 바꾼다. 방이 거절하면 방이 매칭으로 되돌리는 요청을 보낸다.
 class Matchmaker
 {
@@ -27,6 +27,7 @@ class Matchmaker
 	std::array<int, MAX_ROOM_COUNT> joining_counts_{};
 
 	void ConfirmEnter(Session& session, int session_index);
+	void ProcessPacket(const MatchingTask& task);
 	int TryAssignRoom(Session& session, int session_index, int start_room_index, int room_index_end);
 
 public:

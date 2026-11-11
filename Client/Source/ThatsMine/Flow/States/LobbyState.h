@@ -17,6 +17,8 @@ private:
 	UFUNCTION()
 	void HandleQuickJoin();
 	UFUNCTION()
+	void HandleCancelMatching();
+	UFUNCTION()
 	void HandleLobbyRefresh();
 
 	UFUNCTION()

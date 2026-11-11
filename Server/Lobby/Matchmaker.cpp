@@ -8,6 +8,8 @@
 #include "GameRoom.h"
 #include "Session.h"
 #include "matching_task.h"
+#include "packet_types.h"
+#include "common_packets.h"
 
 Matchmaker::Matchmaker(GameServer& game_server)
 	: game_server_(game_server)
@@ -18,6 +20,10 @@ Matchmaker::Matchmaker(GameServer& game_server)
 // 이 작업을 처리할 때까지 매칭 스레드가 세션의 주체이므로, 찾은 세션이 처리하는 동안 바뀌지 않는다.
 void Matchmaker::ProcessTask(const MatchingTask& task, long long tick_time_ms)
 {
+	if (task.task_type == MatchingTaskType::PACKET) {
+		ProcessPacket(task);
+		return;
+	}
 	auto* session = game_server_.GetSessionManager().FindSession(task.session_key);
 	if (!session) return;
 	const int session_index = task.session_key.session_index;
@@ -38,6 +44,23 @@ void Matchmaker::ProcessTask(const MatchingTask& task, long long tick_time_ms)
 	default:
 		break;
 	}
+}
+
+// 매칭 소속일 때 받은 패킷을 처리한다. 매칭 취소만 처리하고 나머지는 버린다.
+// 취소는 매칭 스레드가 맡은 세션(활성이고 소속이 MATCHING)일 때만 한다. 그런 세션은 언제나 풀에 있고, 매칭 스레드만 정리하므로 처리하는 동안 바뀌지 않는다.
+// 아직 등록을 확정하기 전이거나 이미 방에 보냈으면 취소할 것이 없어 버리고, 클라이언트는 매칭 결과(방 입장, 기한 초과)를 받는다.
+// 풀에서 먼저 빼고 로비로 옮기는 요청을 보낸다. 취소 완료는 로비가 확정한 뒤 알린다.
+// 연결 종료가 예약돼 바꾸지 못하면 소속이 MATCHING으로 남아 정리 통보로 정리한다.
+void Matchmaker::ProcessPacket(const MatchingTask& task)
+{
+	if (reinterpret_cast<const PACKET_HEADER*>(task.packet.data())->type != C2S_CANCEL_MATCHING) return;
+	auto* session = game_server_.GetSessionManager().FindSession(task.session_key);
+	if (!session) return;
+	const SessionState state = session->GetState();
+	if (state.life != LifeState::ACTIVE || state.mode != ModeState::MATCHING) return;
+	match_list_.Sync(task.session_key.session_index, []() { return false; });
+	if (session->TryChangeMode(ModeState::MATCHING, ModeState::LOBBY_PENDING))
+		game_server_.GetThreadManager().GetLobbyThreadManager().EnqueueTask({ LobbyTaskType::MATCHING_CANCEL, task.session_key });
 }
 
 // 매칭으로 옮기는 요청을 받는 쪽으로서 확정한다. 매칭 풀에 먼저 넣고 마지막에 소속을 바꾼다.

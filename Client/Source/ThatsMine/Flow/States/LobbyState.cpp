@@ -10,6 +10,7 @@ void ULobbyState::OnEnter()
 	controller_->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &ULobbyState::RefreshOnline);
 	ULobbyWidget* lobby_widget = CastChecked<ULobbyWidget>(screen_);
 	lobby_widget->on_quick_join_requested_.AddDynamic(this, &ULobbyState::HandleQuickJoin);
+	lobby_widget->on_cancel_matching_requested_.AddDynamic(this, &ULobbyState::HandleCancelMatching);
 	lobby_widget->on_refresh_requested_.AddDynamic(this, &ULobbyState::HandleLobbyRefresh);
 	lobby_widget->on_create_requested_.AddDynamic(this, &ULobbyState::HandleLobbyCreate);
 	lobby_widget->on_join_requested_.AddDynamic(this, &ULobbyState::HandleLobbyJoin);
@@ -21,6 +22,7 @@ void ULobbyState::OnExit()
 	controller_->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.RemoveAll(this);
 	CastChecked<ULobbyWidget>(screen_)->on_quick_join_requested_.RemoveAll(this);
 	ULobbyWidget* lobby_widget = CastChecked<ULobbyWidget>(screen_);
+	lobby_widget->on_cancel_matching_requested_.RemoveAll(this);
 	lobby_widget->on_refresh_requested_.RemoveAll(this);
 	lobby_widget->on_create_requested_.RemoveAll(this);
 	lobby_widget->on_join_requested_.RemoveAll(this);
@@ -47,6 +49,11 @@ void ULobbyState::HandleQuickJoin()
 	controller_->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->QuickJoin();
 }
 
+void ULobbyState::HandleCancelMatching()
+{
+	controller_->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->CancelMatching();
+}
+
 void ULobbyState::RefreshOnline()
 {
 	if (!screen_) return;
@@ -55,4 +62,5 @@ void ULobbyState::RefreshOnline()
 	widget->SetRooms(online->GetRooms());
 	widget->ShowStatus(online->GetStatus());
 	widget->SetPending(online->IsPending());
+	widget->SetMatching(online->GetPendingRequest() == OnlineRequest::MATCHING || online->GetPendingRequest() == OnlineRequest::CANCEL_MATCHING, online->GetPendingRequest() == OnlineRequest::CANCEL_MATCHING);
 }

@@ -1,6 +1,7 @@
 #include "LobbyWidget.h"
 
 #include "Components/Button.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/CheckBox.h"
 #include "Components/EditableTextBox.h"
 #include "Components/ListView.h"
@@ -32,7 +33,7 @@ void ULobbyWidget::NativeOnInitialized()
 	create_button_->OnClicked.AddDynamic(this, &ULobbyWidget::OpenCreateDialog);
 	join_button_->OnClicked.AddDynamic(this, &ULobbyWidget::JoinSelectedRoom);
 	confirm_button_->OnClicked.AddDynamic(this, &ULobbyWidget::ConfirmDialog);
-	cancel_button_->OnClicked.AddDynamic(this, &ULobbyWidget::CloseDialog);
+	cancel_button_->OnClicked.AddDynamic(this, &ULobbyWidget::HandleDialogCancel);
 	private_checkbox_->OnCheckStateChanged.AddDynamic(this, &ULobbyWidget::HandlePrivateChanged);
 	room_list_->OnItemSelectionChanged().AddUObject(this, &ULobbyWidget::HandleSelectionChanged);
 	quick_join_button_->OnClicked.AddDynamic(this, &ULobbyWidget::QuickJoin);
@@ -42,6 +43,7 @@ void ULobbyWidget::NativeOnInitialized()
 	private_button_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectPrivate);
 	exit_confirm_button_->OnClicked.AddDynamic(this, &ULobbyWidget::ConfirmExit);
 	exit_cancel_button_->OnClicked.AddDynamic(this, &ULobbyWidget::SelectQuickStart);
+	cancel_button_position_ = CastChecked<UCanvasPanelSlot>(cancel_button_->Slot)->GetPosition();
 	SelectQuickStart();
 	password_input_->SetIsPassword(true);
 	dialog_overlay_->SetVisibility(ESlateVisibility::Collapsed);
@@ -236,6 +238,45 @@ void ULobbyWidget::ConfirmDialog()
 	{
 		ShowStatus(LOCTEXT("JoinUnavailable", "방 입장 서비스를 준비 중입니다."));
 	}
+}
+
+void ULobbyWidget::HandleDialogCancel()
+{
+	if (is_matching_dialog_) on_cancel_matching_requested_.Broadcast();
+	else CloseDialog();
+}
+
+// 빠른 매칭 결과를 기다리는 동안 대화상자를 안내창으로 띄운다. 취소를 보낸 뒤에는 문구를 바꾸고 취소 버튼을 끈다.
+// 결과(취소 완료, 못 찾음, 방 입장)가 와서 기다림이 끝나면 닫는다.
+void ULobbyWidget::SetMatching(bool is_matching, bool is_canceling)
+{
+	if (!is_matching) {
+		if (!is_matching_dialog_) return;
+		is_matching_dialog_ = false;
+		matching_text_->SetVisibility(ESlateVisibility::Collapsed);
+		confirm_button_->SetVisibility(ESlateVisibility::Visible);
+		cancel_button_->SetIsEnabled(true);
+		CastChecked<UCanvasPanelSlot>(cancel_button_->Slot)->SetPosition(cancel_button_position_);
+		SelectQuickStart();
+		return;
+	}
+	is_matching_dialog_ = true;
+	menu_pages_->SetActiveWidgetIndex(2);
+	dialog_title_->SetText(LOCTEXT("QuickStart", "빠른 시작"));
+	matching_text_->SetText(is_canceling ? LOCTEXT("CancelingMatch", "취소하는 중...") : LOCTEXT("FindingRoom", "방을 찾고 있습니다..."));
+	matching_text_->SetVisibility(ESlateVisibility::HitTestInvisible);
+	dialog_status_->SetText(FText::GetEmpty());
+	name_section_->SetVisibility(ESlateVisibility::Collapsed);
+	private_section_->SetVisibility(ESlateVisibility::Collapsed);
+	password_section_->SetVisibility(ESlateVisibility::Collapsed);
+	confirm_button_->SetVisibility(ESlateVisibility::Collapsed);
+	cancel_button_->SetIsEnabled(!is_canceling);
+	// 제목 줄이 대화상자 가로 가운데에 놓여 있으므로, 취소 버튼을 제목 줄 가운데에 맞춘다.
+	const UCanvasPanelSlot* title_slot = CastChecked<UCanvasPanelSlot>(dialog_title_->Slot);
+	UCanvasPanelSlot* cancel_slot = CastChecked<UCanvasPanelSlot>(cancel_button_->Slot);
+	cancel_slot->SetPosition(FVector2D(title_slot->GetPosition().X + (title_slot->GetSize().X - cancel_slot->GetSize().X) * 0.5f, cancel_button_position_.Y));
+	main_panel_->SetIsEnabled(false);
+	dialog_overlay_->SetVisibility(ESlateVisibility::Visible);
 }
 
 void ULobbyWidget::CloseDialog()

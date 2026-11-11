@@ -109,4 +109,14 @@ struct C2S_FAST_MATCHING_PACKET {
 	PACKET_HEADER header;
 };
 
+// 빠른 매칭 취소 요청. 매칭 중인 세션이면 매칭을 풀고 로비로 돌아간다. 이미 방에 보내졌거나 매칭이 끝났으면 버린다.
+struct C2S_CANCEL_MATCHING_PACKET {
+	PACKET_HEADER header;
+};
+
+// 빠른 매칭 취소 완료. 로비가 로비 소속으로 확정한 뒤 보낸다.
+struct S2C_CANCEL_MATCHING_PACKET {
+	PACKET_HEADER header;
+};
+
 #pragma pack(pop)

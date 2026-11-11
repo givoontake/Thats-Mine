@@ -24,6 +24,7 @@ public:
 	void CreateRoom(const FString& room_name, bool is_private, const FString& password);
 	void JoinRoom(int64 room_key, const FString& password);
 	void QuickJoin();
+	void CancelMatching();
 	void LeaveRoom();
 	void SetReady(bool is_ready);
 	void StartGame();
@@ -34,6 +35,7 @@ public:
 	int64 GetPlayerKey() const { return player_key_; }
 	const FText& GetStatus() const { return status_; }
 	bool IsPending() const { return pending_request_ != OnlineRequest::NONE; }
+	OnlineRequest GetPendingRequest() const { return pending_request_; }
 	bool CanStart() const;
 	bool IsLoggedIn() const { return player_key_ > 0; }
 	FOnOnlineSessionChanged on_changed_;
@@ -45,6 +47,7 @@ private:
 	UFUNCTION()
 	void HandleClientStateChanged(EClientState state);
 	bool CanRequest(EClientState state) const;
+	bool IsWaitingRoomEntry() const;
 	void BeginRequest(OnlineRequest request);
 	void FinishRequest();
 	void HandleTimeout();

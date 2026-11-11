@@ -12,7 +12,7 @@
 #include "game_protocol.h"
 
 #define LOCTEXT_NAMESPACE "OnlineSession"
-constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_RETURN_TO_ROOM, S2C_KICK};
+constexpr uint8 PACKET_TYPES[] = {S2C_LOGIN, S2C_ERROR, S2C_ADD_PUBLIC_ROOM, S2C_ADD_PRIVATE_ROOM, S2C_ROOM_INFO, S2C_ADD_PLAYER, S2C_REMOVE_PLAYER, S2C_READY, S2C_UPDATE_HOST, S2C_MULTI_START, S2C_RETURN_TO_ROOM, S2C_KICK, S2C_CANCEL_MATCHING};
 
 template<typename T>
 static TOptional<T> ReadPacket(const TArray<uint8>& payload)
@@ -101,6 +101,12 @@ bool UOnlineSessionSubsystem::CanRequest(EClientState state) const
 {
 	const auto* flow = GetGameInstance()->GetSubsystem<UClientStateSubsystem>();
 	return !flow->IsLocalMode() && flow->GetState() == state && !IsPending() && (state == EClientState::LOGIN || IsLoggedIn());
+}
+
+// 방 입장 결과를 기다리는 중이다. 빠른 매칭은 취소를 보낸 뒤에도 방에 들어갈 수 있으므로 함께 기다린다.
+bool UOnlineSessionSubsystem::IsWaitingRoomEntry() const
+{
+	return pending_request_ == OnlineRequest::ENTER_ROOM || pending_request_ == OnlineRequest::MATCHING || pending_request_ == OnlineRequest::CANCEL_MATCHING;
 }
 
 void UOnlineSessionSubsystem::BeginRequest(OnlineRequest request)
@@ -203,8 +209,21 @@ void UOnlineSessionSubsystem::QuickJoin()
 {
 	if (!CanRequest(EClientState::LOBBY)) return;
 	C2S_FAST_MATCHING_PACKET packet{};
-	if (SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_FAST_MATCHING, packet)) BeginRequest(OnlineRequest::ENTER_ROOM);
+	if (SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_FAST_MATCHING, packet)) BeginRequest(OnlineRequest::MATCHING);
 	else ShowStatus(LOCTEXT("SendFailed", "요청을 전송하지 못했습니다."));
+}
+
+// 빠른 매칭 취소를 보낸다. 서버가 이미 방에 보냈거나 매칭을 끝냈으면 취소되지 않으므로,
+// 취소 완료, 못 찾음, 방 입장 중 하나가 올 때까지 요청을 계속 기다린다.
+void UOnlineSessionSubsystem::CancelMatching()
+{
+	if (pending_request_ != OnlineRequest::MATCHING) return;
+	if (!SendPacket(GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_CANCEL_MATCHING, C2S_CANCEL_MATCHING_PACKET{})) {
+		ShowStatus(LOCTEXT("SendFailed", "요청을 전송하지 못했습니다."));
+		return;
+	}
+	pending_request_ = OnlineRequest::CANCEL_MATCHING;
+	NotifyChanged();
 }
 
 // 방 화면과 게임 중에 방을 나간다. 서버가 방에서 내보내면 로비로 돌아간다.
@@ -306,7 +325,7 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 	case S2C_ADD_PUBLIC_ROOM: {
 		const auto packet = ReadPacket<S2C_ADD_PUBLIC_ROOM_PACKET>(payload);
 		if (!packet) { valid = false; break; }
-		if (state != EClientState::LOBBY || pending_request_ != OnlineRequest::ENTER_ROOM) return;
+		if (state != EClientState::LOBBY || !IsWaitingRoomEntry()) return;
 		FLobbyRoomInfo room;
 		room.room_name = DecodeText(packet->room_name);
 		EnterRoom(room);
@@ -315,7 +334,7 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 	case S2C_ADD_PRIVATE_ROOM: {
 		const auto packet = ReadPacket<S2C_ADD_PRIVATE_ROOM_PACKET>(payload);
 		if (!packet) { valid = false; break; }
-		if (state != EClientState::LOBBY || pending_request_ != OnlineRequest::ENTER_ROOM) return;
+		if (state != EClientState::LOBBY || !IsWaitingRoomEntry()) return;
 		FLobbyRoomInfo room;
 		room.room_name = DecodeText(packet->room_name);
 		room.is_private = true;
@@ -389,6 +408,12 @@ void UOnlineSessionSubsystem::HandlePacket(const TArray<uint8>& payload, uint8 t
 		for (auto& member : members_) member.is_ready = false;
 		flow->ChangeState(EClientState::ROOM);
 		UGameplayStatics::OpenLevel(this, TEXT("/Game/Thats_Mine/Levels/Lvl_Lobby"));
+		break;
+	}
+	case S2C_CANCEL_MATCHING: {
+		if (!ReadPacket<S2C_CANCEL_MATCHING_PACKET>(payload)) { valid = false; break; }
+		if (state != EClientState::LOBBY || pending_request_ != OnlineRequest::CANCEL_MATCHING) return;
+		FinishRequest();
 		break;
 	}
 	case S2C_KICK: {

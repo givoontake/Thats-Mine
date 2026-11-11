@@ -29,13 +29,13 @@ enum class RoomTaskType { NONE, JOIN, READY, KICK, START, DISCONNECT };
 // DISCONNECT: 연결 종료 정리 통보
 enum class DBSessionTaskType { NEW_SESSION, PACKET, DISCONNECT };
 
-// 로비 작업. LOGIN: 로그인 성공 입장 확정, ROOM_EXIT: 방 퇴장·강퇴 입장 확정,
+// 로비 작업. LOGIN: 로그인 성공 입장 확정, ROOM_EXIT: 방 퇴장·강퇴 입장 확정, MATCHING_CANCEL: 빠른 매칭 취소 입장 확정,
 // ENTER: 다른 곳으로 가지 못하고 돌아온 입장 확정, DISCONNECT: 연결 종료 정리 통보
-enum class LobbyTaskType { LOGIN, ROOM_EXIT, ENTER, DISCONNECT };
+enum class LobbyTaskType { LOGIN, ROOM_EXIT, MATCHING_CANCEL, ENTER, DISCONNECT };
 
-// 매칭 작업. ENTER: 로비에서 온 매칭 등록 확정, RETURN: 방 입장에 실패해 돌아온 매칭 확정,
+// 매칭 작업. ENTER: 로비에서 온 매칭 등록 확정, RETURN: 방 입장에 실패해 돌아온 매칭 확정, PACKET: 매칭 소속일 때 받은 패킷,
 // DISCONNECT: 연결 종료 정리 통보
-enum class MatchingTaskType { ENTER, RETURN, DISCONNECT };
+enum class MatchingTaskType { ENTER, RETURN, PACKET, DISCONNECT };
 
 // 세션 상태는 연결 상태와 담당 상태를 원자 변수 하나에 함께 저장하므로 1바이트로 고정한다.
 // DISCONNECT_PENDING: 연결 종료가 예약되어 소속된 곳의 정리를 기다리는 중. 송수신은 더 하지 않고, 소속은 바뀌지 않는다.

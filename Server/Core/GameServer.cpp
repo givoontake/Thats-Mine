@@ -179,9 +179,10 @@ bool GameServer::RoutePacket(Session& session, std::unique_ptr<SessionPacketTask
 	case ModeState::LOBBY:
 		thread_manager_->GetLobbyThreadManager().EnqueueRequest(std::move(task));
 		break;
-	// 매칭 전환 대기와 매칭 중에는 처리할 요청이 없으므로 버린다.
+	// 매칭 전환 대기는 받을 곳이 매칭으로 정해져 있으므로 매칭이 받는다. 처리할지는 매칭 스레드가 정한다.
 	case ModeState::MATCHING_PENDING:
 	case ModeState::MATCHING:
+		thread_manager_->GetMatchingThreadManager().GetMatchingThread().EnqueueTask({ MatchingTaskType::PACKET, task->session_key, std::move(task->packet) });
 		break;
 	// 방 전환 대기는 요청을 보낸 쪽이 적은 목적지 방이 받는다. 방 번호가 없으면 방 생성 요청이므로 생성 처리가 받는다.
 	case ModeState::ROOM_PENDING:

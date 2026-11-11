@@ -31,7 +31,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Lobby")
 	void ShowStatus(const FText& message);
 	void SetPending(bool is_pending);
+	void SetMatching(bool is_matching, bool is_canceling);
 	FOnLobbyRefreshRequested on_quick_join_requested_;
+	FOnLobbyRefreshRequested on_cancel_matching_requested_;
 
 	UPROPERTY(BlueprintAssignable, Category = "Lobby")
 	FOnLobbyRefreshRequested on_refresh_requested_;
@@ -72,6 +74,9 @@ protected:
 	TObjectPtr<UTextBlock> dialog_title_;
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> dialog_status_;
+	// 빠른 매칭 안내창일 때 판 가운데에 보이는 안내 문구
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UTextBlock> matching_text_;
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UWidget> name_section_;
 	UPROPERTY(meta = (BindWidget))
@@ -161,11 +166,17 @@ private:
 	UFUNCTION()
 	void CloseDialog();
 	UFUNCTION()
+	void HandleDialogCancel();
+	UFUNCTION()
 	void HandlePrivateChanged(bool is_private);
 	UFUNCTION()
 	void HandleConnectionChanged(ENetworkConnectionState state, const FString& message);
 	void HandleSelectionChanged(UObject* item);
 
 	bool is_create_dialog_ = false;
+	// 대화상자를 빠른 매칭 안내창으로 쓰는 중인지. 이때 취소 버튼은 빠른 매칭 취소 요청이다.
+	bool is_matching_dialog_ = false;
+	// 취소 버튼의 원래 자리. 안내창에서는 버튼이 하나라 가운데로 옮겼다가 닫을 때 되돌린다.
+	FVector2D cancel_button_position_;
 	int64 dialog_room_key_ = 0;
 };

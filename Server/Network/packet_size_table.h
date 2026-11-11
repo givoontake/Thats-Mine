@@ -31,6 +31,7 @@ inline constexpr std::array<PacketSizeRange, 256> CLIENT_PACKET_SIZE_TABLE = [] 
 	table[C2S_KICK] = { sizeof(C2S_KICK_PACKET), sizeof(C2S_KICK_PACKET) };
 	table[C2S_REQUEST_ROOM_LIST] = { sizeof(C2S_REQUEST_ROOM_LIST_PACKET), sizeof(C2S_REQUEST_ROOM_LIST_PACKET) };
 	table[C2S_FAST_MATCHING] = { sizeof(C2S_FAST_MATCHING_PACKET), sizeof(C2S_FAST_MATCHING_PACKET) };
+	table[C2S_CANCEL_MATCHING] = { sizeof(C2S_CANCEL_MATCHING_PACKET), sizeof(C2S_CANCEL_MATCHING_PACKET) };
 	table[C2S_MOVE] = { sizeof(C2S_MOVE_PACKET), sizeof(C2S_MOVE_PACKET) };
 	table[C2S_MOVE_INPUT] = { sizeof(C2S_MOVE_INPUT_PACKET), sizeof(C2S_MOVE_INPUT_PACKET) };
 	table[C2S_AIM] = { sizeof(C2S_AIM_PACKET), sizeof(C2S_AIM_PACKET) };

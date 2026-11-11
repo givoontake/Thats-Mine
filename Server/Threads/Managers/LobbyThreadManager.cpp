@@ -97,6 +97,12 @@ void LobbyThreadManager::ConfirmEnter(Session& session, const LobbyTask& task)
 		session.SendPacket(reinterpret_cast<const char*>(&remove_p), sizeof(remove_p));
 		break;
 	}
+	case LobbyTaskType::MATCHING_CANCEL: {
+		S2C_CANCEL_MATCHING_PACKET cancel_p;
+		cancel_p.header = { static_cast<std::uint16_t>(sizeof(cancel_p)), S2C_CANCEL_MATCHING };
+		session.SendPacket(reinterpret_cast<const char*>(&cancel_p), sizeof(cancel_p));
+		break;
+	}
 	default:
 		if (task.error_code != ErrorCode::SUCCESS) game_server_.SendError(session, task.error_code);
 		break;
@@ -168,7 +174,7 @@ bool LobbyThreadManager::IsLobbyRequest(std::uint8_t packet_type)
 // 같은 틱에는 세션마다 요청 하나만 처리한다. 로비 스레드 여럿이 같은 세션의 요청을 동시에 처리하지 않게 하려는 것으로,
 // 처리하기 전에 마지막 처리 틱을 이번 틱 번호로 바꾸고, 이전 값이 이번 틱이면 다른 스레드가 이미 처리했으므로 버린다.
 // 세션 키와 로비 소속을 먼저 확인하므로, 바꾸는 칸은 언제나 요청을 보낸 그 세션의 칸이다.
-// 로비 요청이 아닌 패킷(방을 나오기 전에 보낸 패킷 등)은 틱을 차지하지 않고 버린다.
+// 로비 요청이 아닌 패킷(방을 나오기 전에 보낸 패킷, 로비에 있을 때 도착한 매칭 취소 등)은 틱을 차지하지 않고 버린다.
 // 틱을 차지하면 같은 틱에 온 그 세션의 로비 요청이 버려지기 때문이다.
 void LobbyThreadManager::ProcessRequest(std::unique_ptr<SessionPacketTask> task, std::uint64_t tick_number)
 {

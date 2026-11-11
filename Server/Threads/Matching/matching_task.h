@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include "enum_class.h"
 #include "types.h"
 
@@ -7,4 +8,5 @@ struct MatchingTask
 {
 	MatchingTaskType task_type;
 	SessionKey session_key;
+	std::vector<char> packet; // PACKET: 입출력 스레드가 받은 패킷
 };
