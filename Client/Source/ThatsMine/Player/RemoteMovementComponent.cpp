@@ -108,6 +108,24 @@ void URemoteMovementComponent::ApplyMoveStop(const FVector& location)
 	SetMoveInput(FVector2D::ZeroVector);
 }
 
+void URemoteMovementComponent::ApplyRollback(const FRemoteMoveState& state)
+{
+	APlayerCharacter* character = CastChecked<APlayerCharacter>(GetOwner());
+	UCharacterMovementComponent* movement = character->GetCharacterMovement();
+	if (is_controlled_stop_)
+	{
+		FinishControlledStop();
+	}
+	character->SetActorLocationAndRotation(state.location, FRotator(0.0f, state.yaw, 0.0f), false, nullptr, ETeleportType::TeleportPhysics);
+	movement->SetMovementMode(state.air_phase != AirPhase::GROUND ? MOVE_Falling : MOVE_Walking);
+	movement->Velocity = state.velocity;
+	view_pitch_ = state.view_pitch;
+	correction_ = FVector::ZeroVector;
+	correction_remaining_ = 0.0f;
+	state_ = state;
+	has_state_ = true;
+}
+
 // 멈출 자리까지 남은 거리를 이번 프레임 평균 속도로 바꿔 넣는다. 제동 시작 위치까지 가는 중이면 지금 속도를 유지한다.
 void URemoteMovementComponent::UpdateControlledStop(float delta_seconds)
 {

@@ -45,7 +45,7 @@ class Player
 	// 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
 	long long aim_change_ms_ = 0;
 	long long fall_change_ms_ = 0;
-	// 이동 상태를 인정했거나 되돌려 간격을 기다리지 않고 다음 틱에 중계할지
+	// 이동 상태를 인정해 간격을 기다리지 않고 이번 틱에 중계할지
 	bool has_new_move_state_ = false;
 	// 클라이언트 시각이 서버가 받은 시각보다 앞선 누적(ms). 기준이 없으면(스폰·되돌림 직후) has_client_time_이 거짓이다.
 	long long clock_drift_ms_ = 0;
@@ -65,8 +65,8 @@ class Player
 	// 기절을 알린 뒤 아직 기절 해제를 알리지 않았는지
 	bool has_pending_stun_release_ = false;
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
-	std::uint32_t move_correction_id_ = 0;
-	bool is_awaiting_move_correction_ = false;
+	std::uint32_t move_rollback_id_ = 0;
+	bool is_awaiting_move_rollback_ = false;
 	// 손에 든 장비, 동작을 받을지 판단하는 상태, 탄약, 곡괭이 사용 횟수
 	PlayerActionState action_state_;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
@@ -123,7 +123,7 @@ public:
 	int GetStunProtectionMs() const;
 	// 알린 기절이 time_ms에 끝났으면 한 번만 참을 돌려준다. 방이 기절 해제를 보낼 때 쓴다.
 	bool TakeStunRelease(long long time_ms);
-	bool IsAwaitingMoveCorrection() const { return is_awaiting_move_correction_; }
+	bool IsAwaitingMoveRollback() const { return is_awaiting_move_rollback_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
@@ -165,11 +165,11 @@ public:
 	// 가진 힌트 중 하나를 무작위로 골라 빼고 돌려준다. 가진 힌트가 없으면 비어 있다.
 	std::optional<std::uint32_t> TakeRandomHint();
 	void ResetHints() { hint_indices_.clear(); }
-	// time_ms에 클라이언트를 서버 이동 상태로 맞추기 시작하고 새 되돌리기 번호를 돌려준다. 서버 이동 상태는 그대로 이어 가고 다음 틱에 중계한다.
+	// time_ms에 클라이언트를 서버 이동 상태로 롤백하기 시작하고 새 롤백 번호를 돌려준다. 서버 이동 상태는 그대로 이어 가고, 롤백 패킷이 이번 틱 이동 상태 중계를 대신한다.
 	// 확인을 받을 때까지 이동 상태를 받지 않는다.
-	std::uint32_t StartMoveCorrection(long long time_ms);
+	std::uint32_t StartMoveRollback(long long time_ms);
 	// 기다리던 번호의 확인이면 다시 이동 상태를 받는다.
-	void CompleteMoveCorrection(std::uint32_t correction_id);
+	void CompleteMoveRollback(std::uint32_t rollback_id);
 	// 아이템을 가진다. 지금보다 높은 등급일 때만 바꾼다.
 	void AddItem(ItemKind kind, std::uint8_t grade);
 	// 아이템을 모두 잃는다.

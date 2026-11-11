@@ -47,7 +47,7 @@ private:
 	void HandlePickaxeChargesPacket(const TArray<uint8>& payload);
 	void HandleStunApplyPacket(const TArray<uint8>& payload);
 	void HandleStunReleasePacket(const TArray<uint8>& payload);
-	void HandleMoveCorrectionPacket(const TArray<uint8>& payload);
+	void HandleMoveRollbackPacket(const TArray<uint8>& payload);
 	void HandleMovePacket(const TArray<uint8>& payload);
 	void HandleMoveInputPacket(const TArray<uint8>& payload);
 	void HandleMoveStopPacket(const TArray<uint8>& payload);

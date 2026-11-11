@@ -45,7 +45,9 @@ static MOVE_STATE ToMoveState(const FRemoteMoveState& state)
 	return move_state;
 }
 
-static FRemoteMoveState ToRemoteMoveState(const S2C_MOVE_PACKET& packet)
+// 이동 상태 칸이 같은 패킷(이동 중계, 롤백)에서 이동 상태를 꺼낸다.
+template<typename T>
+static FRemoteMoveState ToRemoteMoveState(const T& packet)
 {
 	FRemoteMoveState state;
 	state.location = FVector(packet.location[0], packet.location[1], packet.location[2]);
@@ -108,7 +110,7 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_PICKAXE_CHARGES, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandlePickaxeChargesPacket));
 	network->RegisterPacketHandler(S2C_STUN_APPLY, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunApplyPacket));
 	network->RegisterPacketHandler(S2C_STUN_RELEASE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunReleasePacket));
-	network->RegisterPacketHandler(S2C_MOVE_CORRECTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveCorrectionPacket));
+	network->RegisterPacketHandler(S2C_MOVE_ROLLBACK, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveRollbackPacket));
 	game_instance->GetSubsystem<UOnlineSessionSubsystem>()->on_changed_.AddUObject(this, &UMovementSyncSubsystem::RemoveLeftPlayers);
 }
 
@@ -136,7 +138,7 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_PICKAXE_CHARGES);
 			network->UnregisterPacketHandler(S2C_STUN_APPLY);
 			network->UnregisterPacketHandler(S2C_STUN_RELEASE);
-			network->UnregisterPacketHandler(S2C_MOVE_CORRECTION);
+			network->UnregisterPacketHandler(S2C_MOVE_ROLLBACK);
 		}
 		if (UOnlineSessionSubsystem* online = game_instance ? game_instance->GetSubsystem<UOnlineSessionSubsystem>() : nullptr)
 		{
@@ -466,17 +468,26 @@ void UMovementSyncSubsystem::HandleStunReleasePacket(const TArray<uint8>& payloa
 	}
 }
 
-// 서버가 내 이동을 인정하지 않았다. 받은 서버 이동 상태의 위치·속도·공중 단계로 바로 바꾼다.
-// 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다.
-void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& payload)
+// 서버가 그 플레이어의 이동을 인정하지 않고 서버 이동 상태로 롤백했다. 다른 플레이어면 그 캐릭터를 보간 없이 바로 옮긴다.
+// 내 것이면 위치·속도·공중 단계로 바로 바꾸고, 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다. 몸 방향은 내 조작을 따른다.
+void UMovementSyncSubsystem::HandleMoveRollbackPacket(const TArray<uint8>& payload)
 {
-	if (payload.Num() != sizeof(S2C_MOVE_CORRECTION_PACKET) - sizeof(PACKET_HEADER))
+	if (payload.Num() != sizeof(S2C_MOVE_ROLLBACK_PACKET) - sizeof(PACKET_HEADER))
 	{
 		HandleInvalidPacket();
 		return;
 	}
-	S2C_MOVE_CORRECTION_PACKET packet{};
+	S2C_MOVE_ROLLBACK_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (packet.player_id != GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
+	{
+		const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
+		if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
+		{
+			remote_movement->ApplyRollback(ToRemoteMoveState(packet));
+		}
+		return;
+	}
 	if (APlayerCharacter* character = local_character_.Get())
 	{
 		character->SetActorLocation(FVector(packet.location[0], packet.location[1], packet.location[2]), false, nullptr, ETeleportType::TeleportPhysics);
@@ -484,11 +495,11 @@ void UMovementSyncSubsystem::HandleMoveCorrectionPacket(const TArray<uint8>& pay
 		movement->SetMovementMode(packet.air_phase != AirPhase::GROUND ? MOVE_Falling : MOVE_Walking);
 		movement->Velocity = FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]);
 	}
-	C2S_MOVE_CORRECTION_ACK_PACKET ack{};
-	ack.correction_id = packet.correction_id;
+	C2S_MOVE_ROLLBACK_ACK_PACKET ack{};
+	ack.rollback_id = packet.rollback_id;
 	TArray<uint8> ack_payload;
 	ack_payload.Append(reinterpret_cast<const uint8*>(&ack) + sizeof(PACKET_HEADER), sizeof(ack) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_MOVE_CORRECTION_ACK, ack_payload);
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_MOVE_ROLLBACK_ACK, ack_payload);
 	has_sent_state_ = false;
 }
 

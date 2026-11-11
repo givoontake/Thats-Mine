@@ -327,20 +327,21 @@ bool Player::TakeStunRelease(long long time_ms)
 	return true;
 }
 
-std::uint32_t Player::StartMoveCorrection(long long time_ms)
+std::uint32_t Player::StartMoveRollback(long long time_ms)
 {
 	move_time_ms_ = time_ms;
 	// 맞춘 뒤에는 클라이언트 시각 기준을 다시 잡는다.
 	has_client_time_ = false;
 	clock_drift_ms_ = 0;
-	has_new_move_state_ = true;
-	is_awaiting_move_correction_ = true;
-	return ++move_correction_id_;
+	// 롤백 패킷이 이 틱의 이동 상태 중계를 대신한다.
+	MarkMoveStateRelayed(time_ms);
+	is_awaiting_move_rollback_ = true;
+	return ++move_rollback_id_;
 }
 
-void Player::CompleteMoveCorrection(std::uint32_t correction_id)
+void Player::CompleteMoveRollback(std::uint32_t rollback_id)
 {
-	if (correction_id == move_correction_id_) is_awaiting_move_correction_ = false;
+	if (rollback_id == move_rollback_id_) is_awaiting_move_rollback_ = false;
 }
 
 void Player::ClearMoveState()
@@ -359,7 +360,7 @@ void Player::ClearMoveState()
 	is_aiming_ = false;
 	is_move_stopped_ = false;
 	action_state_.ResetWeapon();
-	is_awaiting_move_correction_ = false;
+	is_awaiting_move_rollback_ = false;
 	history_start_ = 0;
 	history_count_ = 0;
 }

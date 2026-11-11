@@ -392,9 +392,11 @@ void TestManager::HandlePacket(char* packet, int session_index)
 		if (send_time_ms >= 0) latency_recorder_.Record(LatencyKind::FIRE, GetCurrentTimeMs() - send_time_ms);
 		break;
 	}
-	case S2C_MOVE_CORRECTION: {
-		C2S_MOVE_CORRECTION_ACK_PACKET ack_packet = MakePacket<C2S_MOVE_CORRECTION_ACK_PACKET>(C2S_MOVE_CORRECTION_ACK);
-		ack_packet.correction_id = reinterpret_cast<S2C_MOVE_CORRECTION_PACKET*>(packet)->correction_id;
+	case S2C_MOVE_ROLLBACK: {
+		const auto* rollback_packet = reinterpret_cast<S2C_MOVE_ROLLBACK_PACKET*>(packet);
+		if (rollback_packet->player_id != session.GetPlayerID()) break;
+		C2S_MOVE_ROLLBACK_ACK_PACKET ack_packet = MakePacket<C2S_MOVE_ROLLBACK_ACK_PACKET>(C2S_MOVE_ROLLBACK_ACK);
+		ack_packet.rollback_id = rollback_packet->rollback_id;
 		session.SendPacket(&ack_packet, sizeof(ack_packet));
 		break;
 	}

@@ -284,12 +284,12 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (room_state_.load() != RoomState::PLAY || match_phase_ == MatchPhase::LOADING) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		// 되돌리기 확인을 기다리는 동안 받은 이동 상태는 버린다.
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingMoveCorrection()) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingMoveRollback()) break;
 		// 기절 중에도 위치와 공중 단계는 중력과 관성으로 움직인 결과라 평소처럼 검사한다.
 		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
 		// 이동 시각은 받은 순간의 서버 시각으로 잡는다. 처리한 틱 시각을 쓰면 같은 간격으로 온 패킷도 틱 하나만큼 간격이 흔들린다.
 		if (CheckMove(*room_player, move_state, receive_time_ms) != MoveCheckResult::ACCEPTED) {
-			CorrectMove(*room_player);
+			RollbackMove(*room_player);
 			break;
 		}
 		const bool was_move_stopped = room_player->IsMoveStopped();
@@ -335,10 +335,10 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		}
 		break;
 	}
-	case C2S_MOVE_CORRECTION_ACK: {
+	case C2S_MOVE_ROLLBACK_ACK: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (room_player) room_player->CompleteMoveCorrection(reinterpret_cast<C2S_MOVE_CORRECTION_ACK_PACKET*>(packet)->correction_id);
+		if (room_player) room_player->CompleteMoveRollback(reinterpret_cast<C2S_MOVE_ROLLBACK_ACK_PACKET*>(packet)->rollback_id);
 		break;
 	}
 	case C2S_ACTION:
@@ -881,9 +881,9 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 	}
 	// 공중에서 이동 상태가 MOVE_AIR_DELAY_SECONDS 넘게 오지 않으면 그 클라이언트를 서버 이동 상태(공중 궤적)로 맞춘다.
 	for (auto& room_player : room_players_) {
-		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingMoveCorrection()) continue;
+		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingMoveRollback()) continue;
 		if (room_player.IsMoveWalking() || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
-		if (FindSession(room_player)) CorrectMove(room_player);
+		if (FindSession(room_player)) RollbackMove(room_player);
 	}
 	// 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 서버 이동 상태 자리에 세우고 방 전체에 알린다.
 	for (auto& room_player : room_players_) {
@@ -912,7 +912,7 @@ void GameRoom::ProcessGameTick(long long tick_time_ms)
 		send_data_size += packet_size;
 	};
 
-	// 인정했거나 맞춘 이동 상태는 바로, 이동 상태가 오지 않는 동안은 클라이언트 전송 간격마다 서버 이동 상태를 보낸다. 멈춘 뒤에는 보내지 않는다.
+	// 인정한 이동 상태는 바로, 이동 상태가 오지 않는 동안은 클라이언트 전송 간격마다 서버 이동 상태를 보낸다. 멈춘 뒤에는 보내지 않는다. 롤백한 틱에는 롤백 패킷이 대신한다.
 	for (auto& room_player : room_players_) {
 		const bool is_relay_due = room_player.GetRoomPlayerState() == RoomPlayerState::PLAY && room_player.HasMoveState() && !room_player.IsMoveStopped() && room_player.IsMoveRelayDue(tick_time_ms);
 		if (!room_player.HasSession() || (!room_player.CanRelayMoveState() && !is_relay_due)) continue;
@@ -1124,7 +1124,7 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	const HitboxData& data = server_->GetHitboxData();
 	PlayerActionState& action_state = shooter.GetActionState();
 	const std::uint8_t weapon = action_state.GetWeapon();
-	if (!data.IsLoaded() || !IsGunWeapon(static_cast<WeaponType>(weapon)) || !shooter.HasMoveState() || shooter.IsAwaitingMoveCorrection()) return;
+	if (!data.IsLoaded() || !IsGunWeapon(static_cast<WeaponType>(weapon)) || !shooter.HasMoveState() || shooter.IsAwaitingMoveRollback()) return;
 	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
 	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
 	if (!std::isfinite(aim_length) || aim_length < 0.5f) return;
@@ -1653,18 +1653,21 @@ bool GameRoom::IsOnGround(const float location[3]) const
 	return floor.hit.is_start_penetrating || (floor.is_blocking && floor.floor_distance <= GROUND_CHECK_DEPTH);
 }
 
-// 이동을 인정하지 않고 클라이언트를 지금 서버 이동 상태(위치·속도·공중 단계)로 맞춘다. 공중이면 서버가 계산한 궤적 위의 위치다.
-// 서버 이동 상태는 그대로 이어 가고, 다른 플레이어에게는 다음 틱에 중계한다.
-void GameRoom::CorrectMove(Player& player)
+// 이동을 인정하지 않고 지금 서버 이동 상태(위치·속도·방향·공중 단계)로 롤백한다. 공중이면 서버가 계산한 궤적 위의 위치다.
+// 서버 이동 상태는 그대로 이어 가고, 롤백 패킷은 본인과 다른 플레이어 모두에게 이번 틱 묶음으로 보낸다.
+void GameRoom::RollbackMove(Player& player)
 {
 	const MOVE_STATE state = player.PredictMoveState(tick_time_ms_);
-	S2C_MOVE_CORRECTION_PACKET correction_p;
-	correction_p.header = { static_cast<std::uint16_t>(sizeof(correction_p)), S2C_MOVE_CORRECTION };
-	correction_p.correction_id = player.StartMoveCorrection(tick_time_ms_);
-	std::memcpy(correction_p.location, state.location, sizeof(correction_p.location));
-	std::memcpy(correction_p.velocity, state.velocity, sizeof(correction_p.velocity));
-	correction_p.air_phase = state.air_phase;
-	GetTickSendBuffer(player).Append(&correction_p, correction_p.header.size);
+	S2C_MOVE_ROLLBACK_PACKET rollback_p;
+	rollback_p.header = { static_cast<std::uint16_t>(sizeof(rollback_p)), S2C_MOVE_ROLLBACK };
+	rollback_p.player_id = player.GetSessionKey().player_id;
+	rollback_p.rollback_id = player.StartMoveRollback(tick_time_ms_);
+	std::memcpy(rollback_p.location, state.location, sizeof(rollback_p.location));
+	std::memcpy(rollback_p.velocity, state.velocity, sizeof(rollback_p.velocity));
+	rollback_p.yaw = state.yaw;
+	rollback_p.view_pitch = state.view_pitch;
+	rollback_p.air_phase = state.air_phase;
+	SendToPlaying(reinterpret_cast<const char*>(&rollback_p), sizeof(rollback_p));
 }
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.

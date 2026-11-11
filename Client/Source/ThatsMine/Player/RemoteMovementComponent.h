@@ -22,6 +22,8 @@ public:
 	void ApplyMoveInput(const FVector2D& move_input, const FVector& location, const FVector2D& sent_velocity);
 	// 서버가 멈춘 것으로 판단한 위치로 옮기고 이동 키 입력을 없는 것으로 두어 수평으로 바로 세운다. 공중이면 떨어지는 것은 이어 간다.
 	void ApplyMoveStop(const FVector& location);
+	// 서버가 롤백한 이동 상태로 보간 없이 바로 바꾼다. 이동 키 입력은 그대로 이어 간다.
+	void ApplyRollback(const FRemoteMoveState& state);
 	void SetAiming(bool is_aiming);
 	void SetWeapon(EWeaponType weapon);
 	float GetViewPitch() const { return view_pitch_; }

@@ -229,20 +229,24 @@ struct S2C_STUN_RELEASE_PACKET {
 	std::uint32_t protection_ms;
 };
 
-// 서버가 이동을 인정하지 않아 서버 이동 상태로 맞춘다. 받은 클라이언트는 그 위치(캡슐 중심, cm)와 속도(cm/s)로 바로 바꾸고 같은 번호로 확인을 보낸다.
+// 서버가 이동을 인정하지 않아 서버 이동 상태로 롤백한다. 방 안 플레이어 모두에게 보낸다.
+// 받은 클라이언트는 그 캐릭터를 보간 없이 위치(캡슐 중심, cm)·속도(cm/s)·방향으로 바로 바꾸고, 롤백된 본인이면 같은 번호로 확인을 보낸다.
 // 공중이면 서버가 계산한 궤적 위의 위치와 속도로 이어 떨어진다.
-struct S2C_MOVE_CORRECTION_PACKET {
+struct S2C_MOVE_ROLLBACK_PACKET {
 	PACKET_HEADER header;
-	std::uint32_t correction_id;
+	int player_id;
+	std::uint32_t rollback_id;
 	float location[3];
 	float velocity[3];
+	float yaw;
+	float view_pitch;
 	AirPhase air_phase;
 };
 
-// 되돌리기를 적용했다는 확인. 서버는 이 확인을 받을 때까지 그 플레이어의 이동 상태를 받지 않는다.
-struct C2S_MOVE_CORRECTION_ACK_PACKET {
+// 롤백을 적용했다는 확인. 서버는 이 확인을 받을 때까지 그 플레이어의 이동 상태를 받지 않는다.
+struct C2S_MOVE_ROLLBACK_ACK_PACKET {
 	PACKET_HEADER header;
-	std::uint32_t correction_id;
+	std::uint32_t rollback_id;
 };
 
 // 상자 하나. 종류는 BoxKind 값이고, 위치는 cm, 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.

@@ -172,7 +172,7 @@ private:
 	void SendAreaRemovalTime(const Player& player);
 	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms) const;
 	bool IsOnGround(const float location[3]) const;
-	void CorrectMove(Player& player);
+	void RollbackMove(Player& player);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
 	void GenerateHints();
