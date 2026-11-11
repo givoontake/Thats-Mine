@@ -119,8 +119,8 @@ public:
 	// time_ms 시각의 서버 이동 상태. 지금 상태보다 뒤면 지금 이동 키 입력으로 진행하고, 앞이면 틱마다 남긴 기록 사이를 잇는다.
 	MOVE_STATE PredictMoveState(long long time_ms) const;
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
-	// 기절해 이동 입력이 없는 것으로 보는지. 기절 시작 뒤 STUN_INPUT_GRACE_MS가 지나야 참이다.
-	bool IsInputLocked(long long time_ms) const { return IsStunned(time_ms) && time_ms >= stun_end_ms_ - STUN_DURATION_MS + STUN_INPUT_GRACE_MS; }
+	// 기절해 이동 입력이 없는 것으로 보는지. 기절 시작부터 끝까지 참이다.
+	bool IsInputLocked(long long time_ms) const { return IsStunned(time_ms) && time_ms >= stun_end_ms_ - STUN_DURATION_MS; }
 	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
 	bool IsStunProtected(long long time_ms) const { return stun_end_ms_ != 0 && time_ms < stun_end_ms_ + GetStunProtectionMs(); }
 	int GetStunProtectionMs() const;
