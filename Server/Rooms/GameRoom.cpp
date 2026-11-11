@@ -549,10 +549,6 @@ void GameRoom::TryPostRoomDelete()
 void GameRoom::ClearGame()
 {
 	if (!TryChangeRoomState(RoomState::PLAY, RoomState::WAIT)) return;
-	match_phase_ = MatchPhase::LOADING;
-	game_start_ms_ = 0;
-	game_end_ms_ = 0;
-	award_end_ms_ = 0;
 	S2C_RETURN_TO_ROOM_PACKET return_p;
 	return_p.header = { static_cast<std::uint16_t>(sizeof(return_p)), S2C_RETURN_TO_ROOM };
 	for (auto& room_player : room_players_) {
@@ -713,24 +709,32 @@ void GameRoom::StartGame(int requester_id)
 	int player_count = 0;
 	for (auto& room_player : room_players) {
 		if (!FindSession(room_player)) continue;
+		room_player.ResetGameData();
 		room_player.SetRoomPlayerState(RoomPlayerState::LOADING);
 		room_player.GetActionState().Reset(server_->GetHitboxData().GetWeaponCount());
-		room_player.ResetHints();
-		room_player.ResetItems();
 		++player_count;
 	}
+	ResetGameState();
 	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
-	game_start_ms_ = 0;
-	match_phase_ = MatchPhase::LOADING;
-	last_pose_tick_ms_ = 0;
 	// 보물을 놓고 그 위치로 힌트를 만든 뒤, 힌트 수에 맞춰 상자를 놓는다.
 	PlaceTreasure();
 	shot_seed_ = static_cast<std::uint64_t>(CreateRandomSeed()) << 32 | CreateRandomSeed();
 	GenerateHints();
 	PlaceBoxes(player_count);
+}
+
+// 게임마다 새로 시작하는 방의 진행 값을 비운다. 게임을 시작할 때 이곳 한 곳에서만 비우므로, 지난 게임이 어떻게 끝났든(시상 도중 방 삭제 포함) 남지 않는다.
+// 보물·힌트·상자는 시작할 때 새로 놓으면서 바뀐다.
+void GameRoom::ResetGameState()
+{
+	match_phase_ = MatchPhase::LOADING;
+	loading_deadline_ms_ = 0;
+	game_start_ms_ = 0;
+	last_pose_tick_ms_ = 0;
 	removed_cells_ = 0;
 	next_area_removal_ms_ = 0;
 	game_end_ms_ = 0;
+	award_end_ms_ = 0;
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·꽃밭) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,

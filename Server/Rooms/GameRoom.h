@@ -129,6 +129,7 @@ private:
 	int AddPlayer(Session& new_session, SessionKey session_key, const char* room_password);
 	void ProcessSpecificRoomTask(const RoomTask& task);
 	void ProcessGameTick(long long tick_time_ms);
+	void ResetGameState();
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
 	// 손에 든 weapon으로 한 동작이나 재장전을 인정하는지 본다. time_ms는 서버가 요청을 받은 시각, action_time_ms는 요청의 동작 시각이다.

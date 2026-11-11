@@ -35,16 +35,7 @@ bool Player::MatchesSessionKey(SessionKey session_key) const
 void Player::ClearPlayer()
 {
 	session_key_ = {};
-	room_player_state_.store(RoomPlayerState::WAIT);
-
-	ClearMoveState();
-	ClearStun();
-	action_state_.Clear();
-	ResetHints();
-	ResetItems();
-	ResetBlocks();
-	award_counts_.fill(0);
-	award_reach_ms_.fill(0);
+	ResetGameData();
 }
 
 void Player::ResetGameData()
