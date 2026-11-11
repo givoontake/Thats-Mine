@@ -14,7 +14,6 @@ class CollisionObjectData
 	std::vector<TerrainSource> sources_;
 	// 맵 배치. 원본 순서로 줄 세워 같은 메시 배치가 이어지게 두고, 원본마다 자기 구간(시작 번호·개수)을 갖는다.
 	std::vector<TerrainObject> objects_;
-	std::vector<TerrainWorldCapsule> object_capsules_;
 	// 배치물 공간 격자. 칸마다 겹치는 배치 번호를 cell_objects_에 이어 담고, 칸 c의 목록은 cell_starts_[c]부터 cell_starts_[c + 1] 전까지다.
 	// 격자보다 큰 배치물은 칸에 넣지 않고 large_objects_에 두어 매번 본다.
 	float grid_min_x_ = 0.0f;

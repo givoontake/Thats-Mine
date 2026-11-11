@@ -15,7 +15,7 @@ struct TerrainBox {
 	DirectX::XMFLOAT3 half_size;
 };
 
-// 메시 기준 구·캡슐. 배치의 크기 배율은 언리얼 규칙으로 따로 적용하므로, 배치마다 월드 캡슐로 바꿔 둔다.
+// 메시 기준 구·캡슐. 배치의 크기 배율은 세 축이 같다고 보고, 끝점은 배치 변환으로 옮기고 반지름에는 배율 하나를 곱한다.
 struct TerrainSphere {
 	DirectX::XMFLOAT3 center;
 	float radius;
@@ -59,7 +59,7 @@ struct TerrainSource {
 	std::vector<DirectX::XMFLOAT3> vertices;
 	std::vector<std::uint32_t> triangles; // 삼각형마다 꼭짓점 번호 3개. 상자 나무의 끝 노드 순서로 정렬해 둔다.
 	std::vector<TerrainBvhNode> nodes;
-	DirectX::XMFLOAT3 local_min; // 상자·볼록 도형·삼각형을 감싸는 메시 기준 상자
+	DirectX::XMFLOAT3 local_min; // 모든 충돌 모양을 감싸는 메시 기준 상자
 	DirectX::XMFLOAT3 local_max;
 	bool has_local_shapes = false;
 	// 양면이 아니면 삼각형은 꼭짓점 순서(a→b→c)의 법선 방향으로 들어오는 선분만 막는다. 언리얼 삼각형 충돌과 같다.
@@ -69,22 +69,13 @@ struct TerrainSource {
 	std::uint32_t object_count = 0;
 };
 
-// 월드 좌표 캡슐. 구는 양 끝이 같은 캡슐로 둔다.
-struct TerrainWorldCapsule {
-	DirectX::XMFLOAT3 start;
-	DirectX::XMFLOAT3 end;
-	float radius;
-};
-
-// 배치 하나. 메시 기준 ↔ 월드 변환과 월드 경계 상자를 미리 계산해 둔다.
+// 배치 하나. 메시 기준 ↔ 월드 변환과 월드 경계 상자를 미리 계산해 둔다. 충돌 모양은 원본에만 있고, 계산할 때 이 변환으로 월드에 옮긴다.
 struct TerrainObject {
 	DirectX::XMFLOAT4X4 local_to_world;
 	DirectX::XMFLOAT4X4 world_to_local;
 	DirectX::XMFLOAT3 world_min;
 	DirectX::XMFLOAT3 world_max;
 	std::uint32_t source;
-	std::uint32_t first_capsule;
-	std::uint32_t capsule_count;
 	std::uint8_t flags;
 };
 

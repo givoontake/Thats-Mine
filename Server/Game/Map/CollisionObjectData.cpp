@@ -24,17 +24,15 @@ constexpr int BVH_STACK_SIZE = 64;
 static thread_local std::vector<std::uint32_t> visited_objects;
 static thread_local std::uint32_t visit_query = 0;
 
-// 선분이 볼록 도형을 지나는지 본다. 면마다 선분을 안쪽 부분만 남기도록 잘라, 남는 구간이 있으면 지난다.
-static bool SegmentHitsConvex(const XMFLOAT3& start, const XMFLOAT3& end, const TerrainConvex& convex)
+// 선분 from + delta·t(t는 0~1)가 볼록 도형을 지나는지 본다. 면(xyz는 바깥쪽 법선, w는 원점에서 면까지 거리)마다
+// 선분을 안쪽 부분만 남기도록 잘라, 남는 구간이 있으면 지난다.
+static bool SegmentHitsConvex(FXMVECTOR from, FXMVECTOR delta, std::span<const XMVECTOR> planes)
 {
-	const XMVECTOR from = XMLoadFloat3(&start);
-	const XMVECTOR delta = XMVectorSubtract(XMLoadFloat3(&end), from);
 	float enter = 0.0f;
 	float exit = 1.0f;
-	for (const TerrainPlane& plane : convex.planes) {
-		const XMVECTOR normal = XMLoadFloat3(&plane.normal);
-		const float approach = XMVectorGetX(XMVector3Dot(normal, delta));
-		const float outside = XMVectorGetX(XMVector3Dot(normal, from)) - plane.distance;
+	for (const XMVECTOR& plane : planes) {
+		const float approach = XMVectorGetX(XMVector3Dot(plane, delta));
+		const float outside = XMVectorGetX(XMVector3Dot(plane, from)) - XMVectorGetW(plane);
 		if (std::fabs(approach) < PARALLEL_EPSILON) {
 			if (outside > 0.0f) return false;
 			continue;
@@ -44,7 +42,84 @@ static bool SegmentHitsConvex(const XMFLOAT3& start, const XMFLOAT3& end, const 
 		else exit = std::min(exit, t);
 		if (enter > exit) return false;
 	}
-	return !convex.planes.empty();
+	return !planes.empty();
+}
+
+// 점 세 개를 지나는 면(xyz는 법선, w는 원점에서 면까지 거리). 법선은 inside 반대쪽을 보게 맞춘다.
+static XMVECTOR MakeOutwardPlane(FXMVECTOR a, FXMVECTOR b, FXMVECTOR c, GXMVECTOR inside)
+{
+	XMVECTOR normal = XMVector3Normalize(XMVector3Cross(XMVectorSubtract(b, a), XMVectorSubtract(c, a)));
+	if (XMVectorGetX(XMVector3Dot(normal, XMVectorSubtract(inside, a))) > 0.0f) normal = XMVectorNegate(normal);
+	return XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, a)));
+}
+
+// 원본 상자의 월드 꼭짓점 8개. 꼭짓점 번호의 비트 0·1·2가 x·y·z 쪽(0이면 −, 1이면 +)이다.
+static std::array<XMVECTOR, 8> GetWorldBoxCorners(const TerrainBox& box, FXMMATRIX local_to_world)
+{
+	std::array<XMVECTOR, 8> corners;
+	for (int corner = 0; corner < 8; ++corner) {
+		const XMVECTOR local = XMVectorSet((corner & 1) ? box.half_size.x : -box.half_size.x, (corner & 2) ? box.half_size.y : -box.half_size.y, (corner & 4) ? box.half_size.z : -box.half_size.z, 0.0f);
+		corners[corner] = XMVector3TransformCoord(XMVectorAdd(XMLoadFloat3(&box.center), XMVector3Rotate(local, XMLoadFloat4(&box.rotation))), local_to_world);
+	}
+	return corners;
+}
+
+// 월드 상자 꼭짓점으로 만든 면 6개. 축마다 그 축 비트가 같은 꼭짓점 넷이 한 면이고, 나머지 두 비트가 다른 세 꼭짓점으로 면을 만든다.
+static std::array<XMVECTOR, 6> GetWorldBoxPlanes(const std::array<XMVECTOR, 8>& corners)
+{
+	XMVECTOR center = XMVectorZero();
+	for (const XMVECTOR& corner : corners) center = XMVectorAdd(center, XMVectorScale(corner, 0.125f));
+	std::array<XMVECTOR, 6> planes;
+	for (int axis = 0; axis < 3; ++axis) {
+		const int first_bit = 1 << ((axis + 1) % 3);
+		const int second_bit = 1 << ((axis + 2) % 3);
+		for (int side = 0; side < 2; ++side) {
+			const int base = side ? (1 << axis) : 0;
+			planes[axis * 2 + side] = MakeOutwardPlane(corners[base], corners[base | first_bit], corners[base | second_bit], center);
+		}
+	}
+	return planes;
+}
+
+// 원본 볼록 도형의 면을 월드로 옮겨 planes에 담는다. 검사마다 할당하지 않도록 호출하는 쪽의 스레드별 버퍼를 다시 쓴다.
+// 면 법선은 위치 변환 행렬의 역행렬을 뒤집은 행렬(normal_to_world)로 옮긴다.
+static void GetWorldConvexPlanes(const TerrainConvex& convex, FXMMATRIX local_to_world, CXMMATRIX normal_to_world, std::vector<XMVECTOR>& planes)
+{
+	planes.clear();
+	for (const TerrainPlane& plane : convex.planes) {
+		const XMVECTOR local_normal = XMLoadFloat3(&plane.normal);
+		const XMVECTOR normal = XMVector3Normalize(XMVector3TransformNormal(local_normal, normal_to_world));
+		const XMVECTOR point = XMVector3TransformCoord(XMVectorScale(local_normal, plane.distance), local_to_world);
+		planes.push_back(XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, point))));
+	}
+}
+
+// 월드 캡슐. 구는 양 끝이 같은 캡슐이다. 원본 구·캡슐을 계산할 때마다 배치 변환으로 옮겨 만든다.
+struct WorldCapsule {
+	XMVECTOR ends[2];
+	float radius;
+};
+
+// 원본 구·캡슐을 월드 캡슐로 옮긴다. 배치 배율은 세 축이 같다고 보고, 변환 행렬 x축 길이를 반지름·길이에 곱한다.
+// 캡슐의 반 길이·반지름·원기둥 하한은 언리얼 캡슐 배율 적용과 같다. 옮긴 캡슐을 차례로 visit에 넘기고, visit이 true를 돌려주면 멈추고 true를 돌려준다.
+template <typename Visit>
+static bool VisitWorldCapsules(const TerrainSource& source, FXMMATRIX local_to_world, Visit visit)
+{
+	const float scale = XMVectorGetX(XMVector3Length(local_to_world.r[0]));
+	for (const TerrainSphere& sphere : source.spheres) {
+		const XMVECTOR center = XMVector3TransformCoord(XMLoadFloat3(&sphere.center), local_to_world);
+		if (visit(WorldCapsule{ { center, center }, sphere.radius * scale })) return true;
+	}
+	for (const TerrainCapsule& capsule : source.capsules) {
+		const float half_length = std::max((capsule.length + capsule.radius * 2.0f) * scale * 0.5f, 0.1f);
+		const float radius = std::clamp(capsule.radius * scale, 0.1f, half_length);
+		const float cylinder_half = std::max(half_length - radius, 0.05f);
+		const XMVECTOR center = XMVector3TransformCoord(XMLoadFloat3(&capsule.center), local_to_world);
+		const XMVECTOR local_axis = XMVector3Rotate(XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), XMLoadFloat4(&capsule.rotation));
+		const XMVECTOR axis = XMVectorScale(XMVector3Normalize(XMVector3TransformNormal(local_axis, local_to_world)), cylinder_half);
+		if (visit(WorldCapsule{ { XMVectorSubtract(center, axis), XMVectorAdd(center, axis) }, radius })) return true;
+	}
+	return false;
 }
 
 // 점 목록이 이루는 볼록 도형에서 direction 쪽으로 가장 먼 점
@@ -274,8 +349,21 @@ bool CollisionObjectData::Load(const std::vector<MapMeshFile>& meshes)
 		source.is_double_sided = is_double_sided != 0;
 		source.local_min = { INF, INF, INF };
 		source.local_max = { -INF, -INF, -INF };
+		// 구·캡슐은 양 끝점 둘레를 반지름만큼 넓혀 메시 기준 상자에 넣는다.
+		const auto expand_round = [&](FXMVECTOR start, FXMVECTOR end, float radius)
+		{
+			for (const XMVECTOR& point : { start, end }) {
+				XMFLOAT3 center;
+				XMStoreFloat3(&center, point);
+				ExpandBounds(source.local_min, source.local_max, { center.x - radius, center.y - radius, center.z - radius });
+				ExpandBounds(source.local_min, source.local_max, { center.x + radius, center.y + radius, center.z + radius });
+			}
+		};
 		source.spheres.resize(reader.ReadCount());
-		for (TerrainSphere& sphere : source.spheres) reader.ReadValue(sphere);
+		for (TerrainSphere& sphere : source.spheres) {
+			reader.ReadValue(sphere);
+			expand_round(XMLoadFloat3(&sphere.center), XMLoadFloat3(&sphere.center), sphere.radius);
+		}
 		source.boxes.resize(reader.ReadCount());
 		for (TerrainBox& box : source.boxes) {
 			reader.ReadValue(box);
@@ -287,7 +375,12 @@ bool CollisionObjectData::Load(const std::vector<MapMeshFile>& meshes)
 			}
 		}
 		source.capsules.resize(reader.ReadCount());
-		for (TerrainCapsule& capsule : source.capsules) reader.ReadValue(capsule);
+		for (TerrainCapsule& capsule : source.capsules) {
+			reader.ReadValue(capsule);
+			const XMVECTOR center = XMLoadFloat3(&capsule.center);
+			const XMVECTOR half_axis = XMVectorScale(XMVector3Rotate(XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), XMLoadFloat4(&capsule.rotation)), capsule.length * 0.5f);
+			expand_round(XMVectorSubtract(center, half_axis), XMVectorAdd(center, half_axis), capsule.radius);
+		}
 		const std::uint32_t convex_count = reader.ReadCount();
 		for (std::uint32_t convex = 0; convex < convex_count && reader.IsValid(); ++convex) {
 			std::vector<XMFLOAT3> vertices(reader.ReadCount());
@@ -312,12 +405,12 @@ bool CollisionObjectData::Load(const std::vector<MapMeshFile>& meshes)
 		}
 		if (!reader.IsValid() || !reader.IsAtEnd() || source.name != meshes[mesh].name) return false;
 		source.triangles.resize(source.triangles.size() / 3 * 3);
-		source.has_local_shapes = !source.boxes.empty() || !source.convexes.empty() || !source.triangles.empty();
+		source.has_local_shapes = !source.spheres.empty() || !source.boxes.empty() || !source.capsules.empty() || !source.convexes.empty() || !source.triangles.empty();
 		BuildBvh(source);
 	}
 
-	// 배치 하나의 변환·경계 상자·월드 캡슐을 채운다. 구·캡슐은 언리얼의 크기 배율 규칙대로 월드 캡슐로 바꿔 둔다.
-	const auto build_object = [&](TerrainObject& object, FXMMATRIX world, const XMFLOAT4& rotation, const XMFLOAT3& scale)
+	// 배치 하나의 변환과 월드 경계 상자를 채운다. 충돌 모양은 원본에만 두고, 계산할 때 이 변환으로 월드에 옮긴다.
+	const auto build_object = [&](TerrainObject& object, FXMMATRIX world)
 	{
 		XMStoreFloat4x4(&object.local_to_world, world);
 		XMStoreFloat4x4(&object.world_to_local, XMMatrixInverse(nullptr, world));
@@ -329,44 +422,10 @@ bool CollisionObjectData::Load(const std::vector<MapMeshFile>& meshes)
 			object.world_min = world_min;
 			object.world_max = world_max;
 		}
-		const XMVECTOR object_rotation = XMLoadFloat4(&rotation);
-		const float scale_x = std::fabs(scale.x);
-		const float scale_y = std::fabs(scale.y);
-		const float scale_z = std::fabs(scale.z);
-		object.first_capsule = static_cast<std::uint32_t>(object_capsules_.size());
-		for (const TerrainSphere& sphere : source.spheres) {
-			TerrainWorldCapsule capsule;
-			XMStoreFloat3(&capsule.start, XMVector3TransformCoord(XMLoadFloat3(&sphere.center), world));
-			capsule.end = capsule.start;
-			capsule.radius = sphere.radius * std::min({ scale_x, scale_y, scale_z });
-			object_capsules_.push_back(capsule);
-		}
-		for (const TerrainCapsule& element : source.capsules) {
-			// 언리얼 캡슐 배율: 반지름은 x·y 배율 중 큰 값, 전체 길이는 z 배율을 따른다.
-			const float half_length = std::max((element.length + element.radius * 2.0f) * scale_z * 0.5f, 0.1f);
-			const float radius = std::clamp(element.radius * std::max(scale_x, scale_y), 0.1f, half_length);
-			const float cylinder_half = std::max(half_length - radius, 0.05f);
-			const XMVECTOR center = XMVector3TransformCoord(XMLoadFloat3(&element.center), world);
-			const XMVECTOR axis = XMVector3Rotate(XMVector3Rotate(XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), XMLoadFloat4(&element.rotation)), object_rotation);
-			TerrainWorldCapsule capsule;
-			XMStoreFloat3(&capsule.start, XMVectorSubtract(center, XMVectorScale(axis, cylinder_half)));
-			XMStoreFloat3(&capsule.end, XMVectorAdd(center, XMVectorScale(axis, cylinder_half)));
-			capsule.radius = radius;
-			object_capsules_.push_back(capsule);
-		}
-		object.capsule_count = static_cast<std::uint32_t>(object_capsules_.size()) - object.first_capsule;
-		for (std::uint32_t i = object.first_capsule; i < object_capsules_.size(); ++i) {
-			const TerrainWorldCapsule& capsule = object_capsules_[i];
-			for (const XMFLOAT3& end : { capsule.start, capsule.end }) {
-				ExpandBounds(object.world_min, object.world_max, { end.x - capsule.radius, end.y - capsule.radius, end.z - capsule.radius });
-				ExpandBounds(object.world_min, object.world_max, { end.x + capsule.radius, end.y + capsule.radius, end.z + capsule.radius });
-			}
-		}
 	};
 
 	// 배치. 배치 파일 앞부분의 충돌 배치를 그 항목의 충돌 모양 원본에 붙인다. 뒷부분의 충돌 없는 물체는 DecorObjectData가 읽는다.
 	objects_.clear();
-	object_capsules_.clear();
 	for (std::size_t mesh = 0; mesh < meshes.size(); ++mesh) {
 		if (meshes[mesh].placements.empty()) continue;
 		MapFileReader reader(meshes[mesh].placements);
@@ -379,7 +438,7 @@ bool CollisionObjectData::Load(const std::vector<MapMeshFile>& meshes)
 			reader.ReadValue(object.flags);
 			const MapTransform transform = reader.ReadTransform();
 			if (!reader.IsValid()) return false;
-			build_object(object, transform.ToMatrix(), transform.rotation, transform.scale);
+			build_object(object, transform.ToMatrix());
 		}
 	}
 	// 배치를 원본 순서로 줄 세우고(같은 원본 안은 파일 순서), 원본마다 자기 배치의 시작 번호와 개수를 둔다.
@@ -465,42 +524,36 @@ void CollisionObjectData::BuildGrid()
 	}
 }
 
-// 배치 하나의 실제 모양과 선분을 검사한다. 구·캡슐은 월드 좌표로, 나머지는 선분을 메시 기준 좌표로 옮겨 검사한다.
+// 배치 하나의 실제 모양과 선분을 검사한다. 원본 모양을 배치 변환으로 월드에 옮겨 검사한다.
+// 삼각형은 선분을 메시 기준 좌표로 옮겨 상자 나무에서 후보만 고르고, 고른 삼각형을 월드로 옮겨 검사한다.
 bool CollisionObjectData::IsSegmentBlockedByObject(const TerrainObject& object, const XMFLOAT3& start, const XMFLOAT3& end) const
 {
+	const TerrainSource& source = sources_[object.source];
+	const XMMATRIX local_to_world = XMLoadFloat4x4(&object.local_to_world);
 	const XMVECTOR world_start = XMLoadFloat3(&start);
 	const XMVECTOR world_end = XMLoadFloat3(&end);
-	for (std::uint32_t i = object.first_capsule; i < object.first_capsule + object.capsule_count; ++i) {
-		const TerrainWorldCapsule& capsule = object_capsules_[i];
-		if (GetSegmentDistanceSquared(world_start, world_end, XMLoadFloat3(&capsule.start), XMLoadFloat3(&capsule.end)) <= capsule.radius * capsule.radius) return true;
-	}
-	const TerrainSource& source = sources_[object.source];
-	if (!source.has_local_shapes) return false;
-	const XMMATRIX world_to_local = XMLoadFloat4x4(&object.world_to_local);
-	const XMVECTOR local_start = XMVector3TransformCoord(world_start, world_to_local);
-	const XMVECTOR local_end = XMVector3TransformCoord(world_end, world_to_local);
-	XMFLOAT3 local_from;
-	XMFLOAT3 local_to;
-	XMStoreFloat3(&local_from, local_start);
-	XMStoreFloat3(&local_to, local_end);
-
+	const XMVECTOR world_segment = XMVectorSubtract(world_end, world_start);
+	if (VisitWorldCapsules(source, local_to_world, [&](const WorldCapsule& capsule) { return GetSegmentDistanceSquared(world_start, world_end, capsule.ends[0], capsule.ends[1]) <= capsule.radius * capsule.radius; })) return true;
 	for (const TerrainBox& box : source.boxes) {
-		// 상자 기준 좌표로 옮기면 축 정렬 상자 검사가 된다.
-		const XMVECTOR center = XMLoadFloat3(&box.center);
-		const XMVECTOR rotation = XMLoadFloat4(&box.rotation);
-		XMFLOAT3 box_from;
-		XMFLOAT3 box_to;
-		XMStoreFloat3(&box_from, XMVector3InverseRotate(XMVectorSubtract(local_start, center), rotation));
-		XMStoreFloat3(&box_to, XMVector3InverseRotate(XMVectorSubtract(local_end, center), rotation));
-		if (SegmentHitsBox(box_from, box_to, { -box.half_size.x, -box.half_size.y, -box.half_size.z }, box.half_size)) return true;
+		if (SegmentHitsConvex(world_start, world_segment, GetWorldBoxPlanes(GetWorldBoxCorners(box, local_to_world)))) return true;
 	}
+	thread_local std::vector<XMVECTOR> planes;
+	const XMMATRIX world_to_local = XMLoadFloat4x4(&object.world_to_local);
+	const XMMATRIX normal_to_world = XMMatrixTranspose(world_to_local);
 	for (const TerrainConvex& convex : source.convexes) {
-		if (SegmentHitsConvex(local_from, local_to, convex)) return true;
+		GetWorldConvexPlanes(convex, local_to_world, normal_to_world, planes);
+		if (SegmentHitsConvex(world_start, world_segment, planes)) return true;
 	}
 	if (source.nodes.empty()) return false;
 
 	// 상자 나무를 위에서부터 선분이 지나는 상자로만 내려가 끝 노드의 삼각형을 검사한다.
-	const XMVECTOR segment = XMVectorSubtract(local_end, local_start);
+	const XMVECTOR local_start = XMVector3TransformCoord(world_start, world_to_local);
+	const XMVECTOR local_end = XMVector3TransformCoord(world_end, world_to_local);
+	const XMVECTOR local_segment = XMVectorSubtract(local_end, local_start);
+	XMFLOAT3 local_from;
+	XMFLOAT3 local_to;
+	XMStoreFloat3(&local_from, local_start);
+	XMStoreFloat3(&local_to, local_end);
 	std::uint32_t stack[BVH_STACK_SIZE];
 	int stack_size = 0;
 	stack[stack_size++] = 0;
@@ -510,12 +563,14 @@ bool CollisionObjectData::IsSegmentBlockedByObject(const TerrainObject& object, 
 		if (!SegmentHitsBox(local_from, local_to, node.min, node.max)) continue;
 		if (node.count > 0) {
 			for (std::uint32_t triangle = node.first; triangle < node.first + node.count; ++triangle) {
-				const XMVECTOR a = XMLoadFloat3(&source.vertices[source.triangles[triangle * 3]]);
-				const XMVECTOR b = XMLoadFloat3(&source.vertices[source.triangles[triangle * 3 + 1]]);
-				const XMVECTOR c = XMLoadFloat3(&source.vertices[source.triangles[triangle * 3 + 2]]);
-				// 한쪽 면만 막는 삼각형은 법선과 같은 방향으로 들어오는 선분만 검사한다.
-				if (!source.is_double_sided && XMVectorGetX(XMVector3Dot(XMVector3Cross(XMVectorSubtract(b, a), XMVectorSubtract(c, a)), segment)) <= 0.0f) continue;
-				if (SegmentHitsTriangle(local_start, segment, a, b, c)) return true;
+				const XMVECTOR local[3] = {
+					XMLoadFloat3(&source.vertices[source.triangles[triangle * 3]]),
+					XMLoadFloat3(&source.vertices[source.triangles[triangle * 3 + 1]]),
+					XMLoadFloat3(&source.vertices[source.triangles[triangle * 3 + 2]]),
+				};
+				// 한쪽 면만 막는 삼각형은 법선과 같은 방향으로 들어오는 선분만 검사한다. 막는 방향은 메시 기준 좌표에서 본다.
+				if (!source.is_double_sided && XMVectorGetX(XMVector3Dot(XMVector3Cross(XMVectorSubtract(local[1], local[0]), XMVectorSubtract(local[2], local[0])), local_segment)) <= 0.0f) continue;
+				if (SegmentHitsTriangle(world_start, world_segment, XMVector3TransformCoord(local[0], local_to_world), XMVector3TransformCoord(local[1], local_to_world), XMVector3TransformCoord(local[2], local_to_world))) return true;
 			}
 			continue;
 		}
@@ -562,26 +617,20 @@ bool CollisionObjectData::IsSegmentBlockedByObjects(const XMFLOAT3& start, const
 	});
 }
 
-// 배치 하나와 세로 캡슐(축 bottom→top, 반지름 radius)이 겹치는지 본다. 구·캡슐은 두 축 사이 거리로,
-// 상자·볼록 도형·삼각형은 꼭짓점을 월드 좌표로 옮겨 GJK로 본다. min, max는 캡슐의 월드 경계 상자로, 삼각형 상자 나무를 내려갈 때 쓴다.
+// 배치 하나와 세로 캡슐(축 bottom→top, 반지름 radius)이 겹치는지 본다. 원본 모양을 배치 변환으로 월드에 옮겨, 구·캡슐은 두 축 사이 거리로,
+// 상자·볼록 도형·삼각형은 GJK로 본다. min, max는 캡슐의 월드 경계 상자로, 삼각형 상자 나무를 내려갈 때 쓴다.
 bool CollisionObjectData::IsCapsuleOverlappingObject(const TerrainObject& object, FXMVECTOR bottom, FXMVECTOR top, float radius, const XMFLOAT3& min, const XMFLOAT3& max) const
 {
-	for (std::uint32_t i = object.first_capsule; i < object.first_capsule + object.capsule_count; ++i) {
-		const TerrainWorldCapsule& capsule = object_capsules_[i];
-		const float reach = radius + capsule.radius;
-		if (GetSegmentDistanceSquared(bottom, top, XMLoadFloat3(&capsule.start), XMLoadFloat3(&capsule.end)) <= reach * reach) return true;
-	}
 	const TerrainSource& source = sources_[object.source];
-	if (!source.has_local_shapes) return false;
 	const XMMATRIX local_to_world = XMLoadFloat4x4(&object.local_to_world);
+	if (VisitWorldCapsules(source, local_to_world, [&](const WorldCapsule& capsule)
+	{
+		const float reach = radius + capsule.radius;
+		return GetSegmentDistanceSquared(bottom, top, capsule.ends[0], capsule.ends[1]) <= reach * reach;
+	})) return true;
 	const XMVECTOR axis[2] = { bottom, top };
 	for (const TerrainBox& box : source.boxes) {
-		XMVECTOR corners[8];
-		for (int corner = 0; corner < 8; ++corner) {
-			const XMVECTOR local = XMVectorSet((corner & 1) ? box.half_size.x : -box.half_size.x, (corner & 2) ? box.half_size.y : -box.half_size.y, (corner & 4) ? box.half_size.z : -box.half_size.z, 0.0f);
-			corners[corner] = XMVector3TransformCoord(XMVectorAdd(XMLoadFloat3(&box.center), XMVector3Rotate(local, XMLoadFloat4(&box.rotation))), local_to_world);
-		}
-		if (IsConvexWithinDistance(axis, corners, radius)) return true;
+		if (IsConvexWithinDistance(axis, GetWorldBoxCorners(box, local_to_world), radius)) return true;
 	}
 	thread_local std::vector<XMVECTOR> points;
 	for (const TerrainConvex& convex : source.convexes) {
@@ -656,15 +705,7 @@ bool CollisionObjectData::IsCapsuleOverlappingObjects(const XMFLOAT3& center, fl
 	return false;
 }
 
-// 점 세 개를 지나는 면(xyz는 법선, w는 원점에서 면까지 거리). 법선은 inside 반대쪽을 보게 맞춘다.
-static XMVECTOR MakeOutwardPlane(FXMVECTOR a, FXMVECTOR b, FXMVECTOR c, GXMVECTOR inside)
-{
-	XMVECTOR normal = XMVector3Normalize(XMVector3Cross(XMVectorSubtract(b, a), XMVectorSubtract(c, a)));
-	if (XMVectorGetX(XMVector3Dot(normal, XMVectorSubtract(inside, a))) > 0.0f) normal = XMVectorNegate(normal);
-	return XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, a)));
-}
-
-// 배치 하나에 캡슐 쓸기를 한다. 구·캡슐은 월드 캡슐로, 상자·볼록 도형·삼각형은 꼭짓점과 면을 월드 좌표로 옮겨 쓴다.
+// 배치 하나에 캡슐 쓸기를 한다. 원본 모양을 배치 변환으로 월드에 옮겨, 구·캡슐은 월드 캡슐로, 상자·볼록 도형·삼각형은 꼭짓점과 면으로 쓴다.
 // 한쪽 면 삼각형의 막는 방향은 메시 기준 좌표에서 본다. 배치가 뒤집혀(음수 배율) 있어도 메시의 바깥쪽 면이 그대로 막는다.
 MoveHit CollisionObjectData::SweepCapsuleObject(const TerrainObject& object, const CapsuleSweep& sweep) const
 {
@@ -672,50 +713,26 @@ MoveHit CollisionObjectData::SweepCapsuleObject(const TerrainObject& object, con
 	MoveHit best;
 	best.trace_start = sweep.start;
 	best.trace_end = sweep.end;
-	for (std::uint32_t i = object.first_capsule; i < object.first_capsule + object.capsule_count; ++i) {
-		const TerrainWorldCapsule& capsule = object_capsules_[i];
-		const XMVECTOR ends[2] = { XMLoadFloat3(&capsule.start), XMLoadFloat3(&capsule.end) };
-		best = GetFirstBlockingHit(best, SweepConvex(sweep, ends, capsule.radius, {}, false), delta);
-	}
 	const TerrainSource& source = sources_[object.source];
-	if (!source.has_local_shapes) return best;
 	const XMMATRIX local_to_world = XMLoadFloat4x4(&object.local_to_world);
 	const XMMATRIX world_to_local = XMLoadFloat4x4(&object.world_to_local);
+	VisitWorldCapsules(source, local_to_world, [&](const WorldCapsule& capsule)
+	{
+		best = GetFirstBlockingHit(best, SweepConvex(sweep, capsule.ends, capsule.radius, {}, false), delta);
+		return false;
+	});
 	for (const TerrainBox& box : source.boxes) {
-		XMVECTOR corners[8];
-		XMVECTOR center = XMVectorZero();
-		for (int corner = 0; corner < 8; ++corner) {
-			const XMVECTOR local = XMVectorSet((corner & 1) ? box.half_size.x : -box.half_size.x, (corner & 2) ? box.half_size.y : -box.half_size.y, (corner & 4) ? box.half_size.z : -box.half_size.z, 0.0f);
-			corners[corner] = XMVector3TransformCoord(XMVectorAdd(XMLoadFloat3(&box.center), XMVector3Rotate(local, XMLoadFloat4(&box.rotation))), local_to_world);
-			center = XMVectorAdd(center, XMVectorScale(corners[corner], 0.125f));
-		}
-		// 축마다 그 축 비트가 같은 꼭짓점 넷이 한 면이다. 나머지 두 비트가 다른 세 꼭짓점으로 면을 만든다.
-		XMVECTOR planes[6];
-		for (int axis = 0; axis < 3; ++axis) {
-			const int first_bit = 1 << ((axis + 1) % 3);
-			const int second_bit = 1 << ((axis + 2) % 3);
-			for (int side = 0; side < 2; ++side) {
-				const int base = side ? (1 << axis) : 0;
-				planes[axis * 2 + side] = MakeOutwardPlane(corners[base], corners[base | first_bit], corners[base | second_bit], center);
-			}
-		}
-		best = GetFirstBlockingHit(best, SweepConvex(sweep, corners, 0.0f, planes, false), delta);
+		const std::array<XMVECTOR, 8> corners = GetWorldBoxCorners(box, local_to_world);
+		best = GetFirstBlockingHit(best, SweepConvex(sweep, corners, 0.0f, GetWorldBoxPlanes(corners), false), delta);
 	}
 	thread_local std::vector<XMVECTOR> points;
 	thread_local std::vector<XMVECTOR> planes;
-	// 면 법선은 위치 변환 행렬의 역행렬을 뒤집은 행렬로 옮긴다.
 	const XMMATRIX normal_to_world = XMMatrixTranspose(world_to_local);
 	for (const TerrainConvex& convex : source.convexes) {
 		if (convex.vertices.empty()) continue;
 		points.clear();
 		for (const XMFLOAT3& vertex : convex.vertices) points.push_back(XMVector3TransformCoord(XMLoadFloat3(&vertex), local_to_world));
-		planes.clear();
-		for (const TerrainPlane& plane : convex.planes) {
-			const XMVECTOR local_normal = XMLoadFloat3(&plane.normal);
-			const XMVECTOR normal = XMVector3Normalize(XMVector3TransformNormal(local_normal, normal_to_world));
-			const XMVECTOR point = XMVector3TransformCoord(XMVectorScale(local_normal, plane.distance), local_to_world);
-			planes.push_back(XMVectorSetW(normal, XMVectorGetX(XMVector3Dot(normal, point))));
-		}
+		GetWorldConvexPlanes(convex, local_to_world, normal_to_world, planes);
 		best = GetFirstBlockingHit(best, SweepConvex(sweep, points, 0.0f, planes, false), delta);
 	}
 	if (source.nodes.empty()) return best;
