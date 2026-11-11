@@ -57,7 +57,6 @@ private:
 	int CreatePrivateRoom(char* packet, Session& session, SessionKey session_key);
 	RoomKey GenerateRoomKey();
 	void DeleteRoom(int room_index, RoomKey room_key);
-	GameRoom* FindRoomByKey(RoomKey room_key) const;
 
 public:
     GameThreadManager(GameServer& game_server, TickWaitPolicy tick_policy);
@@ -66,7 +65,7 @@ public:
     void Start();
 	bool StartGamePhase(long long tick_time_ms);
 	void Enqueue(std::unique_ptr<RoomLifecycleTask> task);
-	int TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password);
+	GameRoom* FindRoomByKey(RoomKey room_key) const;
 	GameRoom* GetRoomByIndex(int room_index) const;
 	int GetRoomIndexEnd() const { return room_index_end_.load(); }
     void Close();

@@ -19,6 +19,8 @@ void TimerThread::Run()
     // 마지막으로 연결 종료 정리와 접속 수락 재시도를 맡긴 틱 시각
     long long disconnect_cleanup_time_ms = 0;
     long long accept_retry_time_ms = 0;
+    // 틱마다 1씩 올리는 틱 번호. 로비가 같은 틱에 같은 세션의 요청을 하나만 처리하는 데 쓴다.
+    std::uint64_t tick_number = 0;
     // 0x00000002는 고해상도 타이머 생성 옵션이다. 타이머는 한 번 만들고 매 틱 재설정하여 사용한다.
     constexpr DWORD HIGH_RESOLUTION_WAITABLE_TIMER_FLAG = 0x00000002;
     HANDLE high_resolution_timer = CreateWaitableTimerExW(nullptr, nullptr, HIGH_RESOLUTION_WAITABLE_TIMER_FLAG, TIMER_MODIFY_STATE | SYNCHRONIZE);
@@ -68,7 +70,9 @@ void TimerThread::Run()
 
         // 새 틱이 생겼으니 GameThread들을 깨운다.
         // 사용 가능한 스레드를 확보하고 같은 틱의 처리 정보를 전달한다. 이전 틱의 전체 완료는 기다리지 않는다.
-		manager_.lobby_thread_manager_.StartLobbyPhase(tick_time_ms);
+		++tick_number;
+		manager_.lobby_thread_manager_.StartLobbyPhase(tick_time_ms, tick_number);
+		manager_.matching_thread_manager_.GetMatchingThread().StartMatchingPhase(tick_time_ms);
         manager_.game_thread_manager_.StartGamePhase(tick_time_ms);
         // 정리 주기마다 연결 종료 정리를 입출력 스레드에 맡긴다.
         if (tick_time_ms - disconnect_cleanup_time_ms >= DISCONNECT_CLEANUP_INTERVAL_MS) {

@@ -25,7 +25,6 @@ GameServer::GameServer()
 
 GameServer::~GameServer()
 {
-	session_manager_->GetActivePlayerManager().Clear();
 	closesocket(listen_socket_);
 	for (auto& accept_over : accept_overs_) {
 		if (accept_over.accept_socket != INVALID_SOCKET) closesocket(accept_over.accept_socket);
@@ -61,12 +60,15 @@ void GameServer::StartServer()
 }
 
 // 완료된 수락 요청의 소켓을 세션에 넘기고, 같은 자리에서 다음 수락 요청을 건다.
+// 새 세션은 로그인 대기로 시작한다. 중복 로그인 확인 범위는 로그인 DB 스레드만 바꾸므로 새 세션 작업으로 넣게 하고, 그 뒤에 수신을 건다.
+// 받은 패킷과 연결 끊김은 수신·송신을 건 뒤에만 생기므로, 로그인 패킷과 정리 통보는 항상 새 세션 작업 뒤에 같은 큐로 들어간다.
 void GameServer::CompleteAccept(AcceptOverlapped& accept_over)
 {
 	const SOCKET accept_socket = accept_over.accept_socket;
 	auto* new_session = session_manager_->AcquireSession(accept_socket, iocp_handle_);
 	if (new_session) {
 		CreateIoCompletionPort(reinterpret_cast<HANDLE>(accept_socket), iocp_handle_, SESSION_IO_COMPLETION, 0);
+		thread_manager_->GetDBThreadManager().GetLoginThread().Enqueue({ DBSessionTaskType::NEW_SESSION, new_session->GetSessionKey() });
 		new_session->RecvPacket();
 	}
 	else {
@@ -163,18 +165,37 @@ bool GameServer::RoutePacket(Session& session, std::unique_ptr<SessionPacketTask
 	const SessionState state = session.GetState();
 	if (state.life != LifeState::ACTIVE) return false;
 	switch (state.mode) {
-	case ModeState::LOGIN:
-		thread_manager_->GetDBThreadManager().GetLoginThread().EnqueueLoginPacket(task->session_key, task->packet.data(), task->receive_time_ms);
+	case ModeState::LOGIN: {
+		DBSessionTask login_task;
+		login_task.task_type = DBSessionTaskType::PACKET;
+		login_task.session_key = task->session_key;
+		login_task.request_time_ms = task->receive_time_ms;
+		login_task.packet = std::move(task->packet);
+		thread_manager_->GetDBThreadManager().GetLoginThread().Enqueue(std::move(login_task));
 		break;
-	// 방 전환 대기 중인 세션도 아직 로비 소속이므로 로비가 받는다. 상태를 바꾸는 요청은 로비 상태가 아니라 거절된다.
+	}
+	// 로비 전환 대기는 받을 곳이 로비로 정해져 있으므로 로비가 받는다. 처리할지는 로비가 정한다.
+	case ModeState::LOBBY_PENDING:
 	case ModeState::LOBBY:
-	case ModeState::MATCHING:
-	case ModeState::ROOM_PENDING:
 		thread_manager_->GetLobbyThreadManager().EnqueueRequest(std::move(task));
 		break;
+	// 매칭 전환 대기와 매칭 중에는 처리할 요청이 없으므로 버린다.
+	case ModeState::MATCHING_PENDING:
+	case ModeState::MATCHING:
+		break;
+	// 방 전환 대기는 요청을 보낸 쪽이 적은 목적지 방이 받는다. 방 번호가 없으면 방 생성 요청이므로 생성 처리가 받는다.
+	case ModeState::ROOM_PENDING:
 	case ModeState::ROOM: {
 		auto* room = thread_manager_->GetGameThreadManager().GetRoomByIndex(session.GetRoomIndex());
-		if (room) room->AddPacketTask(std::move(task));
+		task->room_key = session.GetRoomKey();
+		if (room) {
+			room->AddPacketTask(std::move(task));
+			break;
+		}
+		if (state.mode != ModeState::ROOM_PENDING) break;
+		auto lifecycle_task = std::make_unique<RoomLifecycleTask>(RoomLifecycleTaskType::PACKET, task->session_key);
+		lifecycle_task->packet = std::move(task->packet);
+		EnqueueRoomLifecycleTask(std::move(lifecycle_task));
 		break;
 	}
 	default:
@@ -183,20 +204,38 @@ bool GameServer::RoutePacket(Session& session, std::unique_ptr<SessionPacketTask
 	return true;
 }
 
-// 연결 종료를 예약한다. 방에 있던 세션이면 그 방에 바로 연결 끊김 작업을 넣어 다음 틱에 자리가 빠지게 한다.
-// 종료가 예약된 세션의 방 소속은 방이 자리를 뺄 때까지 바뀌지 않고, 예약 뒤에 방 소속이 되는 일도 없으므로 이 한 번으로 충분하다.
+// 연결 종료를 예약하고, 예약한 순간의 소속에 정리를 통보한다. 예약 뒤에는 소속이 바뀌지 않으므로 통보를 받은 곳이 최종 소속이고,
+// 그곳이 자기 목록에서 빼고 정리 가능으로 바꿀 때까지 세션은 해제되지 않는다. 처음 예약한 한 번만 통보한다.
+// 다른 곳으로 옮기는 중이었으면 통보하지 않는다. 옮기는 요청을 받은 곳이 확정하려다 예약을 보고 정리한다.
 void GameServer::RequestDisconnect(SessionKey session_key)
 {
-	if (!session_manager_->RequestDisconnect(session_key)) return;
-	auto* session = session_manager_->FindSession(session_key);
-	if (!session || session->GetModeState() != ModeState::ROOM) return;
-	auto* room = thread_manager_->GetGameThreadManager().GetRoomByIndex(session->GetRoomIndex());
-	if (!room) return;
-	RoomTask task;
-	task.task_type = RoomTaskType::DISCONNECT;
-	task.session_key = session_key;
-	task.room_key = room->GetRoomKey();
-	room->AddRoomTask(std::move(task));
+	const ModeState mode = session_manager_->RequestDisconnect(session_key);
+	auto& thread_manager = *thread_manager_;
+	switch (mode) {
+	case ModeState::LOGIN:
+		thread_manager.GetDBThreadManager().GetLoginThread().Enqueue({ DBSessionTaskType::DISCONNECT, session_key });
+		break;
+	case ModeState::LOBBY:
+		thread_manager.GetLobbyThreadManager().EnqueueTask({ LobbyTaskType::DISCONNECT, session_key });
+		break;
+	case ModeState::MATCHING:
+		thread_manager.GetMatchingThreadManager().GetMatchingThread().EnqueueTask({ MatchingTaskType::DISCONNECT, session_key });
+		break;
+	case ModeState::ROOM: {
+		// 방 번호와 방 키는 방이 입장을 확정하기 전에 적고, 방이 정리하기 전에는 바뀌지 않는다.
+		auto* session = session_manager_->FindSession(session_key);
+		auto* room = session ? thread_manager.GetGameThreadManager().GetRoomByIndex(session->GetRoomIndex()) : nullptr;
+		if (!room) break;
+		RoomTask task;
+		task.task_type = RoomTaskType::DISCONNECT;
+		task.session_key = session_key;
+		task.room_key = session->GetRoomKey();
+		room->AddRoomTask(std::move(task));
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 // 타이머가 정리 주기마다 호출한다. 앞선 정리가 끝나지 않았으면 넣지 않는다.
@@ -206,33 +245,15 @@ void GameServer::PostDisconnectCleanup()
 	PostQueuedCompletionStatus(iocp_handle_, 0, DISCONNECT_CLEANUP_COMPLETION, &disconnect_cleanup_over_.over);
 }
 
-// 연결 종료 후보를 훑어 정리한다. 타이머가 넣은 완료를 받은 입출력 스레드 하나가 실행한다.
-// 소속 목록(로그인 대기, 로비, 매칭)의 정리와 소켓 닫기, 세션 해제는 모두 여기서만 한다. 방의 플레이어 자리만 방이 직접 뺀다.
-// 소속이 없음이 될 때까지는 정리하지 않고, 없음이 되면 목록에서 뺀 뒤 소켓을 닫고 해제한다.
+// 연결 종료 후보를 훑어 정리 가능인 세션의 소켓을 닫고 해제한다. 타이머가 넣은 완료를 받은 입출력 스레드 하나가 실행한다.
+// 세션 상태는 바꾸지 않는다. 소속 목록 정리는 각 소속이 하고, 끝나면 정리 가능으로 바꾼다.
 void GameServer::ProcessDisconnects()
 {
 	auto& disconnect_list = session_manager_->GetDisconnectList();
 	for (int list_index = 0; list_index < disconnect_list.GetEnd(); ++list_index) {
 		const std::int32_t session_index = disconnect_list.GetValue(list_index);
 		auto* session = session_manager_->FindSessionByIndex(session_index);
-		if (!session) continue;
-		const SessionState state = session->GetState();
-		if (state.life != LifeState::DISCONNECTING) continue;
-		switch (state.mode) {
-		// 전환을 시도하는 쪽이 없는 로그인·로비 세션은 정리 단계가 직접 소속을 놓는다.
-		case ModeState::LOGIN:
-		case ModeState::LOBBY:
-		case ModeState::MATCHING:
-			session->ReleaseMode(state.mode);
-			break;
-		// 방 소속은 종료를 예약할 때 넣은 연결 끊김 작업으로 방이 자리를 빼고 소속을 놓는다.
-		// 방 전환 대기는 요청을 받은 방이 결과를 확정하려다 종료 예약을 보고 소속을 놓는다.
-		default:
-			break;
-		}
-		if (session->GetModeState() != ModeState::NONE) continue;
-
-		thread_manager_->GetLobbyThreadManager().GetMatchmaker().Remove(session_index);
+		if (!session || session->GetLifeState() != LifeState::DISCONNECT_READY) continue;
 		session->CloseSocket();
 		session_manager_->TryReleaseSession(*session);
 	}

@@ -3,7 +3,8 @@
 #include <vector>
 #include "types.h"
 
-enum class RoomLifecycleTaskType { CREATE_PUBLIC, CREATE_PRIVATE, DELETE_ROOM };
+// PACKET: 방 생성 요청을 보내고 방 전환 대기 중인 세션이 보낸 패킷. 생성 처리가 받는 쪽이다.
+enum class RoomLifecycleTaskType { CREATE_PUBLIC, CREATE_PRIVATE, DELETE_ROOM, PACKET };
 
 struct RoomLifecycleTask
 {

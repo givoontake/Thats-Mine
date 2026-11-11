@@ -7,7 +7,6 @@ enum ErrorCode
 	INVALID_REQUEST = 2,
 	LOGIN_FAILED = 3,
 	DUPLICATE_LOGIN_ID = 4,
-	LOGIN_UNAVAILABLE = 5, // 로그인 DB 스레드가 멈춰 요청을 받지 못함
 	LOGIN_TIMEOUT = 6, // DB 연결이 끊긴 사이 요청이 너무 오래 기다림
 	LOGIN_QUERY_FAILED = 7, // 계정 조회 쿼리가 실패함
 
@@ -26,6 +25,4 @@ enum ErrorCode
 	ROOM_INVALID_PASSWORD = 22,
 
 	PLAYER_NOT_FOUND = 30,
-
-	NOT_IN_LOBBY = 40, // 로비에 있을 때만 할 수 있는 요청을 다른 상태에서 보냄(방 생성·입장·빠른 매칭)
 };

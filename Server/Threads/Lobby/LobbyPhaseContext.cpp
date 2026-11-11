@@ -1,6 +1,6 @@
 #include "LobbyPhaseContext.h"
 
-LobbyPhaseContext::LobbyPhaseContext(std::size_t request_count, int thread_count, long long tick_time_ms, bool should_refresh_room_list)
-	: request_count(request_count), thread_count(thread_count), tick_time_ms(tick_time_ms), should_refresh_room_list(should_refresh_room_list)
+LobbyPhaseContext::LobbyPhaseContext(std::size_t lobby_task_count, std::size_t request_count, std::uint64_t tick_number, bool should_refresh_room_list)
+	: lobby_task_count(lobby_task_count), request_count(request_count), tick_number(tick_number), should_refresh_room_list(should_refresh_room_list)
 {
 }

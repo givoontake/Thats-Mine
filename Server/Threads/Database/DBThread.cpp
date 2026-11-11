@@ -103,12 +103,12 @@ bool DBThread::LoadDBConfigFromFile(const std::string& file_path)
 }
 
 // ---- DB 스레드 루프 ----
-bool DBThread::Enqueue(DBLoginTask task)
+bool DBThread::Enqueue(DBSessionTask task)
 {
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex_);
 		if (!is_running_.load()) return false;
-		task_queue_.push(std::move(task));
+		session_task_queue_.push(std::move(task));
 	}
 	cv_.notify_one();
 	return true;
@@ -117,12 +117,15 @@ bool DBThread::Enqueue(DBLoginTask task)
 // 연결이 없으면 성공할 때까지 간격을 두고 다시 연결한다. 그사이 요청은 큐에 그대로 두되, 너무 오래 기다린 요청은 시간 초과로 응답하고 버린다.
 // 조회 중 연결이 끊기면 그 요청을 들고 있다가 다시 연결한 뒤 큐보다 먼저 처리해 순서를 지킨다.
 // 연결 끊김이 아닌 오류는 다시 해도 같은 결과이므로 그 요청만 실패로 응답한다.
+// DB를 쓰지 않는 세션 작업은 조회 요청보다 먼저, 연결이 없을 때도 처리한다. 조회 요청은 세션 작업(받은 로그인 패킷)에서 생기므로,
+// 같은 세션의 새 세션 작업은 언제나 그 조회 전에 처리된다.
 void DBThread::Run()
 {
 	LoadDBConfigFromFile("db_config.txt");
 	driver_->threadInit();
 	std::optional<DBLoginTask> retry_task;
 	while (is_running_.load()) {
+		ProcessSessionTasks();
 		if (!connection_) {
 			// 연결 시도는 정해진 시간까지 막힐 수 있으므로, 너무 오래 기다린 요청을 먼저 정리해 응답이 늦어지지 않게 한다.
 			if (retry_task && IsExpired(*retry_task)) {
@@ -131,8 +134,7 @@ void DBThread::Run()
 			}
 			DiscardExpiredTasks();
 			if (Connect()) continue;
-			std::unique_lock<std::mutex> lock(wait_mutex_);
-			cv_.wait_for(lock, std::chrono::milliseconds(DB_RECONNECT_INTERVAL_MS), [this]() { return !is_running_.load(); });
+			WaitReconnect();
 			continue;
 		}
 
@@ -141,12 +143,15 @@ void DBThread::Run()
 			task = std::move(*retry_task);
 			retry_task.reset();
 		}
-		else {
-			std::unique_lock<std::mutex> lock(wait_mutex_);
-			cv_.wait(lock, [this]() { return !is_running_.load() || !task_queue_.empty(); });
-			if (!is_running_.load()) break;
+		else if (!task_queue_.empty()) {
 			task = std::move(task_queue_.front());
 			task_queue_.pop();
+		}
+		else {
+			// 조회 요청은 세션 작업에서만 생기므로, 세션 작업이 들어올 때까지 기다린다.
+			std::unique_lock<std::mutex> lock(wait_mutex_);
+			cv_.wait(lock, [this]() { return !is_running_.load() || !session_task_queue_.empty(); });
+			continue;
 		}
 		if (IsExpired(task)) {
 			HandleResult(task.session_key, { ErrorCode::LOGIN_TIMEOUT });
@@ -175,10 +180,38 @@ void DBThread::Run()
 	}
 	{
 		std::lock_guard<std::mutex> lock(wait_mutex_);
-		while (!task_queue_.empty()) task_queue_.pop();
+		while (!session_task_queue_.empty()) session_task_queue_.pop();
 	}
+	while (!task_queue_.empty()) task_queue_.pop();
 	Disconnect();
 	driver_->threadEnd();
+}
+
+// 쌓인 세션 작업을 모두 꺼내 들어온 순서대로 처리한다. 처리는 잠금 밖에서 한다.
+void DBThread::ProcessSessionTasks()
+{
+	std::queue<DBSessionTask> session_tasks;
+	{
+		std::lock_guard<std::mutex> lock(wait_mutex_);
+		session_tasks.swap(session_task_queue_);
+	}
+	while (!session_tasks.empty()) {
+		ProcessSessionTask(session_tasks.front());
+		session_tasks.pop();
+	}
+}
+
+// 다음 연결 시도까지 기다린다. 기다리는 동안 들어온 세션 작업은 바로 처리한다.
+void DBThread::WaitReconnect()
+{
+	const auto retry_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(DB_RECONNECT_INTERVAL_MS);
+	while (is_running_.load()) {
+		{
+			std::unique_lock<std::mutex> lock(wait_mutex_);
+			if (!cv_.wait_until(lock, retry_time, [this]() { return !is_running_.load() || !session_task_queue_.empty(); })) return;
+		}
+		ProcessSessionTasks();
+	}
 }
 
 bool DBThread::IsConnectionAlive()
@@ -197,18 +230,13 @@ bool DBThread::IsExpired(const DBLoginTask& task)
 	return now_ms - task.request_time_ms > DB_REQUEST_TIMEOUT_MS;
 }
 
-// 큐 앞쪽부터 너무 오래 기다린 요청을 꺼내 시간 초과로 응답한다. 응답은 잠금 밖에서 보낸다.
+// 큐 앞쪽부터 너무 오래 기다린 요청을 꺼내 시간 초과로 응답한다.
 void DBThread::DiscardExpiredTasks()
 {
-	std::vector<SessionKey> expired_keys;
-	{
-		std::lock_guard<std::mutex> lock(wait_mutex_);
-		while (!task_queue_.empty() && IsExpired(task_queue_.front())) {
-			expired_keys.push_back(task_queue_.front().session_key);
-			task_queue_.pop();
-		}
+	while (!task_queue_.empty() && IsExpired(task_queue_.front())) {
+		HandleResult(task_queue_.front().session_key, { ErrorCode::LOGIN_TIMEOUT });
+		task_queue_.pop();
 	}
-	for (const SessionKey& session_key : expired_keys) HandleResult(session_key, { ErrorCode::LOGIN_TIMEOUT });
 }
 
 bool DBThread::Connect()

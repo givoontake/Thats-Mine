@@ -2,6 +2,7 @@
 #include <string>
 #include "types.h"
 
+// 계정 조회 요청. 로그인 DB 스레드가 로그인 대기 소속일 때 받은 로그인 패킷으로 만들어 자기 조회 큐에 넣는다.
 struct DBLoginTask
 {
 	SessionKey session_key;

@@ -118,7 +118,7 @@ private:
 	TickSendBuffer& GetTickSendBuffer(const Player& player);
 	Player* FindPlayer(SessionKey session_key);
 	void LeaveToLobby(SessionKey session_key, RoomExitType exit_type);
-	void CompletePlayerRemoval(SessionKey session_key, RoomExitType exit_type);
+	void CompletePlayerRemoval(SessionKey session_key);
 	bool IsOwnedPlayer(const Session& session, SessionKey session_key);
 	void BeginRoomDelete();
 	void TryPostRoomDelete();

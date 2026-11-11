@@ -86,29 +86,7 @@ void GameThreadManager::Enqueue(std::unique_ptr<RoomLifecycleTask> task)
 	lifecycle_tasks_.Enqueue(std::move(task));
 }
 
-// 로비가 담당자로서 호출한다. 전환 대기로 먼저 바꾼 뒤 방에 입장 요청을 넣는다.
-// 요청을 넣지 못하면(방이 삭제 중) 로비 상태로 되돌리고 실패를 반환한다. 로비가 실패를 알린다.
-// room_password는 패킷의 고정 길이 비밀번호 배열이며, 공개방 입장이면 nullptr이다.
-int GameThreadManager::TryJoinRoom(SessionKey session_key, RoomKey room_key, const char* room_password)
-{
-	auto* session = game_server_.GetSessionManager().FindSession(session_key);
-	if (!session || session->GetModeState() != ModeState::LOBBY) return ErrorCode::NOT_IN_LOBBY;
-	auto* room = FindRoomByKey(room_key);
-	if (!room) return ErrorCode::ROOM_NOT_FOUND;
-	if (!session->TryChangeMode(ModeState::LOBBY, ModeState::ROOM_PENDING)) return ErrorCode::NOT_IN_LOBBY;
-	RoomTask task;
-	task.task_type = RoomTaskType::JOIN;
-	task.session_key = session_key;
-	task.room_key = room_key;
-	CopyCharBuf(task.room_password, sizeof(task.room_password), room_password, MAX_ROOM_PASSWORD_SIZE);
-	if (!room->AddRoomTask(std::move(task))) {
-		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY);
-		return ErrorCode::ROOM_NOT_FOUND;
-	}
-	return SUCCESS;
-}
-
-// 방 생성 요청의 받는 쪽이다. 성공하면 ROOM, 실패하면 로비로 돌려보내며 모든 분기가 결과로 끝난다.
+// 방 생성 요청의 받는 쪽이다. 성공하면 ROOM, 실패하면 로비로 옮기는 요청을 보내며 모든 분기가 결과로 끝난다.
 void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 {
 	if (!task) return;
@@ -116,7 +94,10 @@ void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 		DeleteRoom(task->room_index, task->room_key);
 		return;
 	}
+	// 방 생성을 기다리는 동안 받은 패킷은 처리할 것이 없어 버린다.
+	if (task->task_type == RoomLifecycleTaskType::PACKET) return;
 	// 한 세션에 걸린 전환 요청은 하나뿐이므로, 전환 대기가 아니면 이 요청의 대상이 아니다.
+	// 이 요청을 처리할 때까지 받는 쪽이 세션의 주체이므로, 찾은 세션이 처리하는 동안 바뀌지 않는다.
 	auto* session = game_server_.GetSessionManager().FindSession(task->session_key);
 	if (!session || session->GetModeState() != ModeState::ROOM_PENDING) return;
 
@@ -135,8 +116,8 @@ void GameThreadManager::ProcessTask(std::unique_ptr<RoomLifecycleTask> task)
 	}
 	if (result == SUCCESS) return;
 
-	// 로비는 거절하지 않으므로 로비 상태로 바로 되돌리고 실패를 알린다.
-	if (session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY)) game_server_.SendError(*session, result);
+	// 로비로 옮기는 요청을 보내고, 실패는 로비가 확정한 뒤 알린다. 연결 종료가 예약됐으면 받는 쪽으로서 정리한다.
+	game_server_.GetThreadManager().GetLobbyThreadManager().ReturnToLobby(*session, ModeState::ROOM_PENDING, result);
 }
 
 // 가장 앞의 빈 방 자리를 차지해 방을 만들고 방장을 추가한 뒤 입장을 확정한다. 실패하면 자리를 되돌린다.
@@ -160,8 +141,8 @@ int GameThreadManager::PublishRoom(const RoomInitData& data, Session& session, S
 			new_room->Reset();
 			return ErrorCode::ROOM_CREATE_FAILED;
 		}
-		// 확정된 뒤부터 입출력 스레드가 이 방으로 패킷을 보내므로 방 번호를 먼저 적는다.
-		session.SetRoomIndex(room_index);
+		// 확정된 뒤부터 입출력 스레드가 이 방으로 패킷을 보내므로 방 번호와 방 키를 먼저 적는다.
+		session.SetRoom(room_index, data.room_key);
 		if (!new_room->AddHostSession(session_key) || !session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) {
 			room_index_registry_.Unregister(data.room_key, room_index);
 			new_room->Reset();

@@ -14,21 +14,21 @@ bool Session::InitSession(int session_index, std::uint64_t session_id, SOCKET ne
 	if (!state_.compare_exchange_strong(expected_state, { LifeState::INITIALIZING, ModeState::NONE })) return false;
 
 	std::unique_lock<std::shared_mutex> socket_lock(socket_mutex_);
-	std::lock_guard<std::mutex> session_lock(session_mutex_);
 	socket_ = new_socket;
 	iocp_handle_ = iocp_handle;
 	io_pending_count_ = 0;
 	remaining_data_size_ = 0;
 	room_index_.store(-1);
-	session_key_.session_index = session_index;
-	session_key_.player_id = -1;
+	room_key_.store(0);
+	session_index_.store(session_index);
+	player_id_.store(-1);
 	nickname_.clear();
-	session_key_.session_id = session_id;
+	session_id_.store(session_id);
 	ZeroMemory(&recv_over_.ex_over.over, sizeof(recv_over_.ex_over.over));
 	ZeroMemory(recv_over_.packet_buffer, sizeof(recv_over_.packet_buffer));
 	recv_over_.wsabuf.len = BUF_SIZE;
 	recv_over_.wsabuf.buf = recv_over_.packet_buffer;
-	recv_over_.ex_over.session_key = session_key_;
+	recv_over_.ex_over.session_key = { session_index, -1, session_id };
 	state_.store({ LifeState::ACTIVE, ModeState::LOGIN });
 	return true;
 }
@@ -54,10 +54,8 @@ bool Session::SendPacket(const char* packet, int packet_size)
 
 	send_buffer->ex_over.session_key = GetSessionKey();
 	++io_pending_count_;
-	std::unique_lock<std::mutex> send_lock(send_mutex_);
 	const int result = WSASend(socket_, &send_buffer->wsabuf, 1, 0, 0, &send_buffer->ex_over.over, 0);
 	const int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-	send_lock.unlock();
 	if (result == SOCKET_ERROR && error != WSA_IO_PENDING) {
 		PostQueuedCompletionStatus(iocp_handle_, 0, SESSION_IO_COMPLETION, &send_buffer->ex_over.over);
 		std::cerr << "Session::SendPacket() WSASend error\n";
@@ -79,10 +77,8 @@ bool Session::SendLargePacket(const char* packet, int packet_size)
 
 	send_buffer->ex_over.session_key = GetSessionKey();
 	++io_pending_count_;
-	std::unique_lock<std::mutex> send_lock(send_mutex_);
 	const int result = WSASend(socket_, &send_buffer->wsabuf, 1, 0, 0, &send_buffer->ex_over.over, 0);
 	const int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
-	send_lock.unlock();
 	if (result == SOCKET_ERROR && error != WSA_IO_PENDING) {
 		PostQueuedCompletionStatus(iocp_handle_, 0, SESSION_IO_COMPLETION, &send_buffer->ex_over.over);
 		std::cerr << "Session::SendLargePacket() WSASend error\n";
@@ -112,31 +108,31 @@ bool Session::RecvPacket()
 	return true;
 }
 
+// 같은 연결인지 비교한다. 세션 번호는 바뀌지 않으므로 세션 아이디 하나만 읽어 비교해도 다른 연결과 섞이지 않는다.
 bool Session::MatchesSessionKey(SessionKey session_key) const
 {
 	const LifeState life_state = GetLifeState();
 	if (life_state == LifeState::NONE || life_state == LifeState::INITIALIZING) return false;
-	std::lock_guard<std::mutex> lock(session_mutex_);
-	return session_key_.IsSameSession(session_key);
+	return session_index_.load() == session_key.session_index && session_id_.load() == session_key.session_id;
 }
 
 void Session::AdjustRemainingDataSize(int data_size_delta)
 {
-	std::lock_guard<std::mutex> lock(session_mutex_);
 	remaining_data_size_ += data_size_delta;
 }
 
-// 소속은 유지한 채 연결 상태만 종료 예약으로 바꾼다. 소켓은 정리가 끝난 뒤 정리 단계가 닫는다.
-// 이미 예약됐거나 다른 연결로 재사용된 세션이면 false를 반환한다.
-bool Session::BeginDisconnect(SessionKey session_key)
+// 소속은 유지한 채 연결 상태만 종료 예약으로 바꾸고, 바꾼 순간의 소속을 반환한다. 예약한 쪽은 그 소속에 정리를 통보한다.
+// 예약 뒤에는 소속이 바뀌지 않으므로 통보를 받은 곳이 그대로 최종 소속이다. 소켓은 정리가 끝난 뒤 정리 단계가 닫는다.
+// 이미 예약됐거나 다른 연결로 재사용된 세션이면 NONE을 반환한다.
+// 키를 비교한 뒤 상태를 바꾸기 전에 세션이 해제·재사용되는 일은 없다. 호출하는 입출력 완료가 남은 입출력 수를 쥐고 있어 그동안 해제되지 않는다.
+ModeState Session::BeginDisconnect(SessionKey session_key)
 {
-	std::lock_guard<std::mutex> session_lock(session_mutex_);
-	if (!session_key_.IsSameSession(session_key)) return false;
+	if (!MatchesSessionKey(session_key)) return ModeState::NONE;
 	SessionState current_state = state_.load();
 	while (current_state.life == LifeState::ACTIVE) {
-		if (state_.compare_exchange_weak(current_state, { LifeState::DISCONNECTING, current_state.mode })) return true;
+		if (state_.compare_exchange_weak(current_state, { LifeState::DISCONNECT_PENDING, current_state.mode })) return current_state.mode;
 	}
-	return false;
+	return ModeState::NONE;
 }
 
 // 입출력 하나가 끝났음을 센다. 세션 해제는 정리 단계가 남은 입출력이 0인 것을 보고 한다.
@@ -146,11 +142,11 @@ void Session::CompleteIO(SessionKey session_key)
 	--io_pending_count_;
 }
 
-// 종료 예약된 세션의 소속을 기대한 값에서 없음으로 바꾼다. 소속된 곳이 자기 목록 정리를 마쳤다는 표시다.
-bool Session::ReleaseMode(ModeState expected_mode)
+// 종료 예약된 세션을 정리 가능으로 바꾸고 소속을 없음으로 만든다. 최종 소속이 자기 목록 정리를 마친 뒤 세션에 마지막으로 하는 일이다.
+bool Session::SetDisconnectReady(ModeState expected_mode)
 {
-	SessionState expected_state{ LifeState::DISCONNECTING, expected_mode };
-	return state_.compare_exchange_strong(expected_state, { LifeState::DISCONNECTING, ModeState::NONE });
+	SessionState expected_state{ LifeState::DISCONNECT_PENDING, expected_mode };
+	return state_.compare_exchange_strong(expected_state, { LifeState::DISCONNECT_READY, ModeState::NONE });
 }
 
 // 송수신 등록과 겹치지 않도록 단독 잠금으로 닫는다. 닫으면 걸려 있던 입출력이 실패로 완료되어 남은 입출력 수가 줄어든다.
@@ -162,19 +158,19 @@ void Session::CloseSocket()
 	if (socket != INVALID_SOCKET) closesocket(socket);
 }
 
-// 소속된 곳이 정리를 마쳤고(소속 없음), 소켓을 닫았고, 남은 입출력이 없을 때 세션 자리를 비운다.
-// 정리 단계 하나만 호출하므로 해제를 두고 경쟁하는 쪽이 없다. 해제 전까지 연결 상태가 종료 예약이라 새 접속도 이 자리를 차지하지 못한다.
+// 소속된 곳이 정리를 마쳤고(정리 가능), 소켓을 닫았고, 남은 입출력이 없을 때 세션 자리를 비운다.
+// 정리 단계 하나만 호출하므로 해제를 두고 경쟁하는 쪽이 없다. 해제 전까지 연결 상태가 종료 상태라 새 접속도 이 자리를 차지하지 못한다.
 bool Session::TryRelease()
 {
 	std::unique_lock<std::shared_mutex> socket_lock(socket_mutex_);
-	std::lock_guard<std::mutex> session_lock(session_mutex_);
 	const SessionState state = state_.load();
-	if (state.life != LifeState::DISCONNECTING || state.mode != ModeState::NONE) return false;
+	if (state.life != LifeState::DISCONNECT_READY) return false;
 	if (socket_ != INVALID_SOCKET || io_pending_count_.load() != 0) return false;
 	remaining_data_size_ = 0;
 	room_index_.store(-1);
-	session_key_.player_id = -1;
-	session_key_.session_id = 0;
+	room_key_.store(0);
+	player_id_.store(-1);
+	session_id_.store(0);
 	nickname_.clear();
 	ZeroMemory(&recv_over_.ex_over.over, sizeof(recv_over_.ex_over.over));
 	ZeroMemory(recv_over_.packet_buffer, sizeof(recv_over_.packet_buffer));
@@ -187,54 +183,25 @@ bool Session::TryRelease()
 
 SessionKey Session::GetSessionKey() const
 {
-	std::lock_guard<std::mutex> lock(session_mutex_);
-	return session_key_;
+	return { session_index_.load(), player_id_.load(), session_id_.load() };
 }
 
-int Session::GetRemainingDataSize() const
-{
-	std::lock_guard<std::mutex> lock(session_mutex_);
-	return remaining_data_size_;
-}
-
-// 소속이 기대한 값일 때만 바꾼다. 연결 상태는 소속된 곳이 아닌 쪽에서 바뀔 수 있으므로 다시 읽어 판단한다.
-// 연결 종료가 예약된 세션이면 바꾸려던 쪽이 원래 전환 대신 소속을 없음으로 만들고 false를 반환한다. 목록 정리는 정리 단계가 한다.
-// 방 소속은 방이 플레이어 자리를 직접 빼야 하므로 바꾸지 않고 false만 반환하며, 방이 자리를 뺀 뒤 ReleaseMode로 놓는다.
+// 활성 세션의 소속이 기대한 값일 때만 바꾼다. 소속된 곳(또는 전환 요청을 받은 곳)만 호출한다.
+// 연결 종료가 예약된 세션이면 바꾸지 않고 false를 반환한다. 소속은 그대로 두고, 그 소속이 정리 통보나 확정 때 정리한다.
 bool Session::TryChangeMode(ModeState expected_mode, ModeState desired_mode)
 {
-	SessionState current_state = state_.load();
-	while (current_state.mode == expected_mode) {
-		if (current_state.life == LifeState::ACTIVE) {
-			if (state_.compare_exchange_weak(current_state, { LifeState::ACTIVE, desired_mode })) return true;
-			continue;
-		}
-		if (current_state.life != LifeState::DISCONNECTING || expected_mode == ModeState::ROOM) return false;
-		if (state_.compare_exchange_weak(current_state, { LifeState::DISCONNECTING, ModeState::NONE })) return false;
-	}
-	return false;
+	SessionState expected_state{ LifeState::ACTIVE, expected_mode };
+	return state_.compare_exchange_strong(expected_state, { LifeState::ACTIVE, desired_mode });
 }
 
-// 세션 키가 같을 때만 모드를 바꾼다. 세션을 처리하지 않는 스레드가 키로 찾은 세션을 바꿀 때 쓴다.
-// 세션을 비우거나 새 접속에 배정하는 쪽도 같은 잠금 안에서 키를 바꾸므로, 찾은 뒤 다른 연결로 재사용된 세션은 바꾸지 않는다.
-bool Session::TryChangeMode(SessionKey session_key, ModeState expected_mode, ModeState desired_mode)
+// 로그인 조회에 성공한 세션에 플레이어 정보를 기록한다. 세션을 맡은 로그인 DB 스레드만 호출한다.
+void Session::SetPlayerInfo(const DBLoginResult& result)
 {
-	std::lock_guard<std::mutex> lock(session_mutex_);
-	if (!session_key_.IsSameSession(session_key)) return false;
-	return TryChangeMode(expected_mode, desired_mode);
-}
-
-// 로그인 조회에 성공한 세션(LOGIN)에 플레이어 정보를 기록하고 로비 상태로 바꾼다.
-bool Session::ApplyLoginResult(const DBLoginResult& result)
-{
-	std::lock_guard<std::mutex> lock(session_mutex_);
-	if (GetLifeState() != LifeState::ACTIVE || GetModeState() != ModeState::LOGIN) return false;
-	session_key_.player_id = result.player_id;
 	nickname_ = result.nickname;
-	return TryChangeMode(ModeState::LOGIN, ModeState::LOBBY);
+	player_id_.store(result.player_id);
 }
 
 std::string Session::GetNickname() const
 {
-	std::lock_guard<std::mutex> lock(session_mutex_);
 	return nickname_;
 }

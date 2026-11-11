@@ -43,7 +43,6 @@ add_executable(GameServer
     SharedMovement/shared_movement.cpp
     Lobby/LoginManager.cpp
     Lobby/Matchmaker.cpp
-    Managers/ActivePlayerManager.cpp
     Network/Session.cpp
     Network/SendBuffer.cpp
     Network/SessionManager.cpp
@@ -58,12 +57,14 @@ add_executable(GameServer
     Threads/IO/IOThread.cpp
     Threads/Lobby/LobbyThread.cpp
     Threads/Lobby/LobbyPhaseContext.cpp
+    Threads/Matching/MatchingThread.cpp
     Threads/Timer/TimerThread.cpp
     Threads/Managers/ServerThreadManager.cpp
     Threads/Managers/DBThreadManager.cpp
     Threads/Managers/GameThreadManager.cpp
     Threads/Managers/IOThreadManager.cpp
     Threads/Managers/LobbyThreadManager.cpp
+    Threads/Managers/MatchingThreadManager.cpp
     Threads/Managers/TimerThreadManager.cpp
     Common/ActiveList.h
     Common/block_pieces.h
@@ -82,6 +83,7 @@ add_executable(GameServer
     Core/GameServer.h
     Database/db_login_result.h
     Database/db_login_task.h
+    Database/db_session_task.h
     Game/Player.h
     Game/PlayerActionState.h
     Game/weapon_ammo.h
@@ -111,7 +113,6 @@ add_executable(GameServer
     Game/Treasure/treasure_types.h
     Lobby/LoginManager.h
     Lobby/Matchmaker.h
-    Managers/ActivePlayerManager.h
     Network/ExOverlapped.h
     Network/SendBuffer.h
     Network/session_tasks.h
@@ -133,12 +134,16 @@ add_executable(GameServer
     Threads/Game/GameThread.h
     Threads/IO/IOThread.h
     Threads/Lobby/lobby_state.h
+    Threads/Lobby/lobby_task.h
     Threads/Lobby/LobbyPhaseContext.h
     Threads/Lobby/LobbyThread.h
+    Threads/Matching/matching_task.h
+    Threads/Matching/MatchingThread.h
     Threads/Managers/DBThreadManager.h
     Threads/Managers/GameThreadManager.h
     Threads/Managers/IOThreadManager.h
     Threads/Managers/LobbyThreadManager.h
+    Threads/Managers/MatchingThreadManager.h
     Threads/Managers/ServerThreadManager.h
     Threads/Managers/TimerThreadManager.h
     Threads/ServerThread.h
@@ -149,8 +154,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Managers Network Packets Rooms SharedMovement Threads
-    Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Timer Threads/Managers
+    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Network Packets Rooms SharedMovement Threads
+    Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Matching Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)
 if(MSVC)

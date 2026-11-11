@@ -12,6 +12,7 @@
 #include "GameServer.h"
 #include "char_buffer.h"
 #include "SessionManager.h"
+#include "ServerThreadManager.h"
 #include "packet_types.h"
 #include "common_packets.h"
 #include "room_packets.h"
@@ -92,7 +93,12 @@ void GameRoom::Reset()
 	for (auto& room_player : room_players_) room_player.ClearPlayer();
 	host_id_ = -1;
 	current_player_count_.store(0);
+	// 빈 방으로 바꾼 뒤에는 방 작업을 받지 않으므로, 같은 잠금 안에서 남은 방 작업을 버리면 다음에 이 자리에 만들어지는 방으로 넘어가지 않는다.
+	// 남은 패킷은 메모리를 비우려고 함께 버린다. 그 뒤에 들어온 패킷은 다음에 이 자리에 만들어지는 방이 방 키로 버린다.
+	std::lock_guard<std::mutex> lock(room_mutex_);
 	room_state_.store(RoomState::EMPTY);
+	room_tasks_.DiscardTasks();
+	packet_tasks_.DiscardTasks();
 }
 
 // 방 정보를 복사한다. 읽는 도중 방이 초기화·재사용됐으면 방 키가 달라지므로 false를 반환하고, 복사한 값은 버린다.
@@ -140,8 +146,9 @@ bool GameRoom::IsOwnedPlayer(const Session& session, SessionKey session_key)
 	return session.GetModeState() == ModeState::ROOM && FindPlayer(session_key) != nullptr;
 }
 
-// 방에 소속된 세션을 로비로 넘긴다. 로비는 거절하지 않으므로 방이 로비 상태로 바로 확정하고 결과를 알린다.
-// 연결 종료가 예약된 세션이면 로비로 보내지 않고 자리를 뺀 뒤 소속을 놓는다. 나머지 정리는 연결 종료 정리 단계가 한다.
+// 방에 소속된 세션을 로비로 넘긴다. 방이 주체인 동안 이번 틱에 그 사람 자리에 모인 패킷(강퇴면 강퇴 알림까지)을 먼저 보내고,
+// 로비 전환 대기로 바꾼 뒤 자리를 빼고 로비로 옮기는 요청을 보낸다. 퇴장 완료는 로비가 확정한 뒤 본인에게 알린다.
+// 연결 종료가 예약돼 바꾸지 못하면 자리를 그대로 두고, 연결 끊김 작업이 자리를 빼고 정리한다.
 void GameRoom::LeaveToLobby(SessionKey session_key, RoomExitType exit_type)
 {
 	auto* room_player = FindPlayer(session_key);
@@ -149,21 +156,15 @@ void GameRoom::LeaveToLobby(SessionKey session_key, RoomExitType exit_type)
 	auto* session = server_->GetSessionManager().FindSession(session_key);
 	if (!session) return;
 	TickSendBuffer& tick_send_buffer = GetTickSendBuffer(*room_player);
-	if (!session->TryChangeMode(ModeState::ROOM, ModeState::LOBBY)) {
-		if (session->GetLifeState() != LifeState::DISCONNECTING) return;
-		CompletePlayerRemoval(session_key, exit_type);
-		tick_send_buffer.Clear();
-		session->ReleaseMode(ModeState::ROOM);
-		return;
+	if (exit_type == RoomExitType::KICK) {
+		S2C_KICK_PACKET kick_p;
+		kick_p.header = { static_cast<std::uint16_t>(sizeof(kick_p)), S2C_KICK };
+		tick_send_buffer.Append(&kick_p, kick_p.header.size);
 	}
-	CompletePlayerRemoval(session_key, exit_type);
-	// 방 퇴장·강퇴 완료를 본인에게 알린다. 이번 틱에 그 사람 자리에 모인 패킷 뒤에 붙여 함께 보낸다.
-	S2C_REMOVE_PLAYER_PACKET remove_p;
-	remove_p.header.size = static_cast<std::uint16_t>(sizeof(remove_p));
-	remove_p.header.type = S2C_REMOVE_PLAYER;
-	remove_p.player_id = session_key.player_id;
-	tick_send_buffer.Append(&remove_p, remove_p.header.size);
 	tick_send_buffer.Send(*session);
+	if (!session->TryChangeMode(ModeState::ROOM, ModeState::LOBBY_PENDING)) return;
+	CompletePlayerRemoval(session_key);
+	server_->GetThreadManager().GetLobbyThreadManager().EnqueueTask({ LobbyTaskType::ROOM_EXIT, session_key });
 }
 
 bool GameRoom::AddHostSession(SessionKey session_key)
@@ -193,11 +194,16 @@ int GameRoom::AddPlayer(Session& new_session, SessionKey session_key, const char
 	}
 	if (added_slot < 0) return ErrorCode::ROOM_FULL;
 
-	// 방이 받는 쪽으로서 입장을 확정한다. 확정된 뒤부터 입출력 스레드가 이 방으로 패킷을 보내므로 방 번호를 먼저 적는다.
-	new_session.SetRoomIndex(room_index_);
-	if (!new_session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) return ErrorCode::INVALID_REQUEST;
+	// 방이 받는 쪽으로서 입장을 확정한다. 자리에 먼저 넣고 마지막에 바꾼다.
+	// 방 번호와 방 키는 요청을 보낸 쪽이 전환 대기로 바꾸기 전에 이미 적었다.
+	// 연결 종료가 예약돼 바꾸지 못하면 자리를 되돌린다. 세션 정리는 실패를 받은 호출한 쪽이 한다.
 	room_players[added_slot].InitPlayer(session_key);
 	++current_player_count_;
+	if (!new_session.TryChangeMode(ModeState::ROOM_PENDING, ModeState::ROOM)) {
+		room_players[added_slot].ClearPlayer();
+		--current_player_count_;
+		return ErrorCode::INVALID_REQUEST;
+	}
 
 	char room_name_buffer[std::max(sizeof(S2C_ADD_PUBLIC_ROOM_PACKET), sizeof(S2C_ADD_PRIVATE_ROOM_PACKET))];
 	TickSendBuffer& new_send_buffer = GetTickSendBuffer(room_players[added_slot]);
@@ -438,32 +444,35 @@ bool GameRoom::AddRoomTask(RoomTask task)
 	return true;
 }
 
-// 입출력 스레드가 받은 패킷은 받을 때의 세션 상태로 이 방에 왔으므로, 지금도 이 방의 플레이어인 세션의 패킷만 처리한다.
+// 입출력 스레드가 받을 때의 세션 상태로 이 방에 보낸 패킷을 넣는다. 넣을 때는 판단하지 않고,
+// 방이 꺼낼 때 방 키와 지금도 이 방의 플레이어인지로 처리할지 정한다.
 // 받은 순서대로 처리하므로 같은 틱 안에서도 플레이어 사이의 처리 순서가 도착 순서가 된다.
 void GameRoom::AddPacketTask(std::unique_ptr<SessionPacketTask> task)
 {
-	// 방장은 방을 여는 사이에 생성 응답을 받고 패킷을 보낼 수 있으므로 생성 중인 방도 받는다.
-	const RoomState state = room_state_.load();
-	if (state != RoomState::INITIALIZING && state != RoomState::WAIT && state != RoomState::PLAY) return;
 	packet_tasks_.Enqueue(std::move(task));
 }
 
+// 패킷에 담긴 방 키가 이 방의 키와 다르면 같은 자리에 예전에 있던 방의 패킷이므로 버린다. 판단은 방만 한다.
 void GameRoom::ProcessPacketTasks()
 {
 	const std::size_t task_count = packet_tasks_.ClaimTaskCount();
 	for (std::size_t i = 0; i < task_count; ++i) {
 		const auto task = packet_tasks_.Dequeue();
+		if (task->room_key != GetRoomKey()) continue;
 		auto* session = server_->GetSessionManager().FindSession(task->session_key);
-		if (!session || !IsOwnedPlayer(*session, task->session_key)) continue;
+		// 연결 종료가 예약된 세션의 패킷은 처리하지 않는다. 자리는 연결 끊김 작업으로 뺀다.
+		if (!session || session->GetLifeState() != LifeState::ACTIVE || !IsOwnedPlayer(*session, task->session_key)) continue;
 		HandlePacket(task->packet.data(), *session, task->receive_time_ms);
 	}
 }
 
-// 받는 쪽으로서 입장 요청을 확정한다. 성공하면 ROOM, 실패하면 돌려보내며 모든 분기가 결과로 끝난다.
-// 빠른 매칭에서 온 요청이 실패하면 매칭 상태로 되돌리고, 매치메이커가 다음 주기에 다시 배정한다.
+// 받는 쪽으로서 입장 요청을 확정한다. 성공하면 ROOM, 실패하면 돌려보내는 요청을 보내며 모든 분기가 결과로 끝난다.
+// 빠른 매칭에서 온 요청이 실패하면 매칭으로 되돌리고, 매칭 스레드가 다음 주기에 다시 배정한다. 로비에서 온 요청이면 로비가 확정한 뒤 실패를 알린다.
+// 연결 종료가 예약됐으면 되돌리지 못하므로, 전환 대기의 주체인 방이 정리 가능으로 바꾼다.
 void GameRoom::ProcessJoinTask(const RoomTask& task)
 {
 	// 한 세션에 걸린 전환 요청은 하나뿐이므로, 전환 대기가 아니면 이 요청의 대상이 아니다.
+	// 이 요청을 처리할 때까지 방이 세션의 주체이므로, 찾은 세션이 처리하는 동안 바뀌지 않는다.
 	auto* session = server_->GetSessionManager().FindSession(task.session_key);
 	if (!session || session->GetModeState() != ModeState::ROOM_PENDING) return;
 
@@ -471,12 +480,9 @@ void GameRoom::ProcessJoinTask(const RoomTask& task)
 	const int result = task.room_key == GetRoomKey() ? AddPlayer(*session, task.session_key, task.room_password) : ErrorCode::ROOM_NOT_FOUND;
 	if (result == SUCCESS) return;
 
-	if (task.is_matching) {
-		session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::MATCHING);
-		return;
-	}
-	// 로비는 거절하지 않으므로 방이 로비 상태로 바로 되돌리고 실패를 알린다.
-	if (session->TryChangeMode(ModeState::ROOM_PENDING, ModeState::LOBBY)) server_->SendError(*session, result);
+	auto& thread_manager = server_->GetThreadManager();
+	if (task.is_matching) thread_manager.GetMatchingThreadManager().GetMatchingThread().ReturnToMatching(*session);
+	else thread_manager.GetLobbyThreadManager().ReturnToLobby(*session, ModeState::ROOM_PENDING, result);
 }
 
 void GameRoom::ProcessRoomTask(const RoomTask& task)
@@ -487,13 +493,14 @@ void GameRoom::ProcessRoomTask(const RoomTask& task)
 	}
 	auto* session = server_->GetSessionManager().FindSession(task.session_key);
 	if (!session || !IsOwnedPlayer(*session, task.session_key)) return;
-	// 연결 종료 정리 단계가 보낸 요청이다. 자리를 빼고 소속을 놓으면 정리 단계가 다음 주기에 세션을 해제한다.
+	// 방에 있던 세션의 연결 종료 정리 통보다. 자리를 빼고 정리 가능으로 바꾼다. 이 세션에 마지막으로 하는 일이다.
+	// 정리 가능이 되면 연결 종료 정리 단계가 다음 주기에 세션을 해제한다.
 	if (task.task_type == RoomTaskType::DISCONNECT) {
-		if (session->GetLifeState() != LifeState::DISCONNECTING) return;
+		if (session->GetLifeState() != LifeState::DISCONNECT_PENDING) return;
 		auto* room_player = FindPlayer(task.session_key);
-		CompletePlayerRemoval(task.session_key, RoomExitType::LEAVE);
+		CompletePlayerRemoval(task.session_key);
 		GetTickSendBuffer(*room_player).Clear();
-		session->ReleaseMode(ModeState::ROOM);
+		session->SetDisconnectReady(ModeState::ROOM);
 		return;
 	}
 	ProcessSpecificRoomTask(task);
@@ -572,17 +579,12 @@ bool GameRoom::TryChangeRoomState(RoomState expected, RoomState desired)
 
 
 // 슬롯을 먼저 비운 뒤 남은 플레이어에게 퇴장을 알린다. 퇴장자는 로비 복귀 시 로비가 별도로 알린다.
-void GameRoom::CompletePlayerRemoval(SessionKey session_key, RoomExitType exit_type)
+void GameRoom::CompletePlayerRemoval(SessionKey session_key)
 {
 	auto* room_player = FindPlayer(session_key);
 	if (!room_player) return;
 	const int player_id = room_player->GetSessionKey().player_id;
 	if (current_player_count_.load() == 1) BeginRoomDelete();
-	if (exit_type == RoomExitType::KICK) {
-		S2C_KICK_PACKET kick_p;
-		kick_p.header = { static_cast<std::uint16_t>(sizeof(kick_p)), S2C_KICK };
-		GetTickSendBuffer(*room_player).Append(&kick_p, kick_p.header.size);
-	}
 	room_player->ClearPlayer();
 	--current_player_count_;
 

@@ -40,4 +40,11 @@ public:
 		while (!task_queue_.try_pop(task)) _mm_pause();
 		return task;
 	}
+
+	// 남은 작업을 처리하지 않고 버린다. 넣는 쪽이 더 넣지 못하게 막은 뒤 호출한다.
+	void DiscardTasks()
+	{
+		const std::size_t task_count = ClaimTaskCount();
+		for (std::size_t i = 0; i < task_count; ++i) Dequeue();
+	}
 };

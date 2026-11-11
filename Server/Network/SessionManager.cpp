@@ -37,14 +37,15 @@ Session* SessionManager::FindSession(SessionKey session_key)
 	return session;
 }
 
-// 세션의 연결 종료를 예약하고 종료 후보에 넣는다. 이미 예약됐거나 재사용된 세션이면 아무것도 하지 않고 false를 반환한다.
-// 수신은 더 걸지 않고, 소속 정리와 소켓 닫기, 해제는 정리 단계가 이어서 한다.
-bool SessionManager::RequestDisconnect(SessionKey session_key)
+// 세션의 연결 종료를 예약하고 종료 후보에 넣는다. 예약한 순간의 소속을 반환하며, 이미 예약됐거나 재사용된 세션이면 아무것도 하지 않고 NONE을 반환한다.
+// 처음 예약한 한 번만 후보에 넣으므로 소속 정리 통보도 그 한 번만 한다. 수신은 더 걸지 않고, 소켓 닫기와 해제는 소속이 정리를 마친 뒤 정리 단계가 한다.
+ModeState SessionManager::RequestDisconnect(SessionKey session_key)
 {
 	auto* session = FindSession(session_key);
-	if (!session || !session->BeginDisconnect(session_key)) return false;
-	SyncDisconnectList(session_key.session_index);
-	return true;
+	if (!session) return ModeState::NONE;
+	const ModeState mode = session->BeginDisconnect(session_key);
+	if (mode != ModeState::NONE) SyncDisconnectList(session_key.session_index);
+	return mode;
 }
 
 void SessionManager::CompleteSessionIO(SessionKey session_key)
@@ -53,20 +54,21 @@ void SessionManager::CompleteSessionIO(SessionKey session_key)
 	if (session) session->CompleteIO(session_key);
 }
 
-// 연결 종료 후보 등록 여부를 현재 세션 상태에 맞춘다. 종료 예약 상태인 세션만 후보에 있다.
+// 연결 종료 후보 등록 여부를 현재 세션 상태에 맞춘다. 종료가 예약됐거나 정리 가능인 세션만 후보에 있다.
 void SessionManager::SyncDisconnectList(int session_index)
 {
 	disconnect_list_.Sync(session_index, [this, session_index]() {
 		auto* session = FindSessionByIndex(session_index);
-		return session && session->GetLifeState() == LifeState::DISCONNECTING;
+		if (!session) return false;
+		const LifeState life_state = session->GetLifeState();
+		return life_state == LifeState::DISCONNECT_PENDING || life_state == LifeState::DISCONNECT_READY;
 	});
 }
 
-// 정리 단계가 소속 정리와 소켓 닫기를 마친 세션을 비운다. 남은 입출력이 있으면 비우지 않고 다음 정리 주기에 다시 시도한다.
+// 정리 단계가 소켓을 닫은 정리 가능 세션을 비운다. 남은 입출력이 있으면 비우지 않고 다음 정리 주기에 다시 시도한다.
 void SessionManager::TryReleaseSession(Session& session)
 {
 	const SessionKey session_key = session.GetSessionKey();
 	if (!session.TryRelease()) return;
-	active_players_.RemovePlayer(session_key.player_id, session_key);
 	SyncDisconnectList(session_key.session_index);
 }
