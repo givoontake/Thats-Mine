@@ -37,6 +37,15 @@ AThatsMinePlayerController::AThatsMinePlayerController()
 	settings_widget_class_ = settings_widget_class.Class;
 }
 
+void AThatsMinePlayerController::PlayerTick(float delta_seconds)
+{
+	Super::PlayerTick(delta_seconds);
+	if (APlayerCharacter* character = Cast<APlayerCharacter>(GetPawn()))
+	{
+		character->ApplyMoveKeys();
+	}
+}
+
 void AThatsMinePlayerController::FlushPressedKeys()
 {
 	const UUserWidget* screen = map_widget_ && map_widget_->IsInViewport() ? static_cast<UUserWidget*>(map_widget_)

@@ -35,6 +35,7 @@ private:
 	// is_forced면 보내는 간격과 관계없이 지금 위치를 바로 보낸다.
 	void SendMoveState(bool is_forced);
 	void SendInputChanges(const APlayerCharacter& character);
+	void HandleMoveKeyChanged(MoveKey key, bool is_down);
 	void HandleActionStarted(EPlayerAction action, EWeaponType weapon);
 	UFUNCTION()
 	void HandleShotFired(const FShotResult& shot);
@@ -66,9 +67,7 @@ private:
 	FRemoteMoveState last_sent_state_;
 	double last_send_time_ = 0.0;
 	bool has_sent_state_ = false;
-	// 마지막으로 보낸 이동 키 입력·조준 여부·장비. 처음에는 has_sent_input_이 거짓이라 모두 보낸다.
-	int8 sent_input_right_ = 0;
-	int8 sent_input_forward_ = 0;
+	// 마지막으로 보낸 조준 여부·장비. 처음에는 has_sent_input_이 거짓이라 모두 보낸다.
 	bool is_sent_aiming_ = false;
 	EWeaponType sent_weapon_ = EWeaponType::PICKAXE;
 	bool has_sent_input_ = false;

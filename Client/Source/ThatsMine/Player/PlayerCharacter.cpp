@@ -288,10 +288,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* player_input_c
 
 	if (UEnhancedInputComponent* enhanced_input = Cast<UEnhancedInputComponent>(player_input_component))
 	{
-		if (move_action_)
-		{
-			enhanced_input->BindAction(move_action_, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
-		}
 		if (mouse_look_action_)
 		{
 			enhanced_input->BindAction(mouse_look_action_, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
@@ -304,6 +300,17 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* player_input_c
 void APlayerCharacter::BindGameKeys(UInputComponent* input)
 {
 	const UKeyBindingSubsystem* bindings = GetGameInstance()->GetSubsystem<UKeyBindingSubsystem>();
+	// 이동 키는 누름·뗌마다 눌린 키 기록을 바꾸고 바로 알린다. 이동 입력은 매 프레임 ApplyMoveKeys가 이 기록으로 넣는다.
+	const TPair<MoveKey, EKeyAction> move_keys[] = { { MoveKey::FORWARD, EKeyAction::MOVE_FORWARD }, { MoveKey::BACKWARD, EKeyAction::MOVE_BACKWARD }, { MoveKey::LEFT, EKeyAction::MOVE_LEFT }, { MoveKey::RIGHT, EKeyAction::MOVE_RIGHT } };
+	for (const auto& [move_key, action] : move_keys)
+	{
+		for (const EInputEvent input_event : { IE_Pressed, IE_Released })
+		{
+			FInputKeyBinding binding(FInputChord(bindings->GetKey(action)), input_event);
+			binding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this, move_key, input_event]() { SetMoveKey(move_key, input_event == IE_Pressed); });
+			input->KeyBindings.Add(binding);
+		}
+	}
 	// 무기 선택 키는 무기 설정에 넣어 두고, 눌린 키로 무기를 찾는다.
 	const TPair<EWeaponType, EKeyAction> weapon_actions[] = { { EWeaponType::SNIPER, EKeyAction::WEAPON_SNIPER }, { EWeaponType::PISTOL, EKeyAction::WEAPON_PISTOL }, { EWeaponType::PICKAXE, EKeyAction::WEAPON_PICKAXE }, { EWeaponType::MAGNIFIER, EKeyAction::WEAPON_MAGNIFIER } };
 	for (const auto& [weapon, action] : weapon_actions)
@@ -326,6 +333,11 @@ void APlayerCharacter::BindGameKeys(UInputComponent* input)
 
 void APlayerCharacter::RebindKeys()
 {
+	// 바뀌기 전 키로 누른 이동 키는 뗀 것으로 한다. 묶음이 바뀌면 그 키의 뗌을 받을 수 없다.
+	for (int32 key = 0; key < static_cast<int32>(MoveKey::JUMP); ++key)
+	{
+		SetMoveKey(static_cast<MoveKey>(key), false);
+	}
 	if (InputComponent)
 	{
 		InputComponent->KeyBindings.Reset();
@@ -406,13 +418,25 @@ void APlayerCharacter::UpdateInteractPrompt()
 	interact_prompt_widget_->SetVisibility(can_interact ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
-void APlayerCharacter::Move(const FInputActionValue& value)
+void APlayerCharacter::SetMoveKey(MoveKey key, bool is_down)
 {
-	if (is_stunned_)
+	const uint8 bit = static_cast<uint8>(1u << static_cast<int32>(key));
+	if (is_stunned_ || ((move_keys_ & bit) != 0) == is_down)
 	{
 		return;
 	}
-	ApplyMovementInput(value.Get<FVector2D>());
+	move_keys_ = is_down ? (move_keys_ | bit) : (move_keys_ & ~bit);
+	on_move_key_changed_.Broadcast(key, is_down);
+}
+
+void APlayerCharacter::ApplyMoveKeys()
+{
+	if (is_stunned_ || move_keys_ == 0)
+	{
+		return;
+	}
+	const auto axis = [this](MoveKey positive, MoveKey negative) { return static_cast<double>((move_keys_ >> static_cast<int32>(positive)) & 1) - static_cast<double>((move_keys_ >> static_cast<int32>(negative)) & 1); };
+	ApplyMovementInput(FVector2D(axis(MoveKey::RIGHT, MoveKey::LEFT), axis(MoveKey::FORWARD, MoveKey::BACKWARD)));
 }
 
 void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
@@ -429,13 +453,6 @@ void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
 	}
 	AddMovementInput(GetActorForwardVector(), movement.Y);
 	AddMovementInput(GetActorRightVector(), movement.X);
-	movement_input_ = movement;
-	movement_input_frame_ = GFrameCounter;
-}
-
-FVector2D APlayerCharacter::GetMovementInput() const
-{
-	return movement_input_frame_ == GFrameCounter ? movement_input_ : FVector2D::ZeroVector;
 }
 
 void APlayerCharacter::CalcCamera(float delta_time, FMinimalViewInfo& out_result)
@@ -1112,9 +1129,11 @@ void APlayerCharacter::PlayFootstep()
 
 void APlayerCharacter::Jump()
 {
-	if (!is_stunned_)
+	// 이번 프레임 이동에서 실제로 뛸 때만 점프를 걸고 알린다.
+	if (!is_stunned_ && CanJump())
 	{
 		Super::Jump();
+		on_move_key_changed_.Broadcast(MoveKey::JUMP, true);
 	}
 }
 
@@ -1242,6 +1261,8 @@ void APlayerCharacter::StartStun()
 	if (IsLocallyControlled())
 	{
 		// 조작만 막고 이동은 그대로 두어, 땅에서는 제동으로 멈추고 공중에서는 뛰어오른 속도대로 떨어진다.
+		// 눌린 이동 키는 서버처럼 모두 뗀 것으로 하고 알리지 않는다. 기절이 끝나면 다시 눌러야 움직인다.
+		move_keys_ = 0;
 		SetAiming(false);
 		StopJumping();
 		GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
@@ -1253,7 +1274,7 @@ void APlayerCharacter::StartStun()
 	// 다른 플레이어는 서버가 지운 것처럼 이동 키 입력과 조준을 지운다. 이동은 중력과 관성대로 이어진다.
 	else if (URemoteMovementComponent* remote_movement = FindComponentByClass<URemoteMovementComponent>())
 	{
-		remote_movement->SetMoveInput(FVector2D::ZeroVector);
+		remote_movement->ClearMoveKeys();
 		SetAiming(false);
 	}
 }

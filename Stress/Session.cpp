@@ -48,7 +48,7 @@ void Session::ClearSession()
 	last_room_list_ms_ = 0;
 	walk_start_ms_.store(-1);
 	last_move_send_ms_ = 0;
-	sent_input_forward_ = 0;
+	sent_key_ = MoveKey::FORWARD;
 	has_sent_input_ = false;
 	server_time_offset_ms_.store(0);
 	has_time_sync_.store(false);
@@ -98,7 +98,7 @@ WalkStep Session::GetWalkStep(long long now_ms) const
 	step.move_state.view_pitch = 0.0f;
 	step.move_state.air_phase = AirPhase::GROUND;
 	step.move_state.client_time_ms = static_cast<std::uint32_t>(now_ms);
-	step.input_forward = is_forward ? 127 : -127;
+	step.key = is_forward ? MoveKey::FORWARD : MoveKey::BACKWARD;
 	return step;
 }
 

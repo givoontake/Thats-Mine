@@ -248,17 +248,25 @@ void TestManager::TryJoinRoom(int session_index)
 	session.SendPacket(&packet, sizeof(packet));
 }
 
-// 앞뒤 키 입력이 바뀌면 키 입력을 먼저 보내고 그 순간의 이동 상태를 바로 보낸다. 바뀌지 않으면 MOVE_SEND_INTERVAL_MS마다 이동 상태를 보낸다.
+// 앞뒤 키가 바뀌면 뗀 키와 누른 키를 먼저 보내고 그 순간의 이동 상태를 바로 보낸다. 바뀌지 않으면 MOVE_SEND_INTERVAL_MS마다 이동 상태를 보낸다.
 void TestManager::SendWalk(Session& session, long long now_ms)
 {
 	const WalkStep step = session.GetWalkStep(now_ms);
-	const bool is_input_changed = !session.HasSentInput() || step.input_forward != session.GetSentInputForward();
+	const bool is_input_changed = !session.HasSentInput() || step.key != session.GetSentKey();
 	if (is_input_changed) {
 		C2S_MOVE_INPUT_PACKET input_packet = MakePacket<C2S_MOVE_INPUT_PACKET>(C2S_MOVE_INPUT);
-		input_packet.input_right = 0;
-		input_packet.input_forward = step.input_forward;
+		std::memcpy(input_packet.location, step.move_state.location, sizeof(input_packet.location));
+		std::memcpy(input_packet.velocity, step.move_state.velocity, sizeof(input_packet.velocity));
+		input_packet.client_time_ms = step.move_state.client_time_ms;
+		if (session.HasSentInput()) {
+			input_packet.key = session.GetSentKey();
+			input_packet.is_down = false;
+			session.SendPacket(&input_packet, sizeof(input_packet));
+		}
+		input_packet.key = step.key;
+		input_packet.is_down = true;
 		session.SendPacket(&input_packet, sizeof(input_packet));
-		session.SetSentInputForward(step.input_forward);
+		session.SetSentKey(step.key);
 	}
 	if (!is_input_changed && now_ms - session.GetLastMoveSendMs() < MOVE_SEND_INTERVAL_MS) return;
 	C2S_MOVE_PACKET move_packet = MakePacket<C2S_MOVE_PACKET>(C2S_MOVE);

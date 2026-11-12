@@ -308,14 +308,47 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		}
 		const bool was_move_stopped = room_player->IsMoveStopped();
 		room_player->SetMoveState(server_->GetMapData(), move_state, receive_time_ms);
-		// 멈춤을 알렸던 플레이어의 이동 상태가 다시 오면 그 사람의 이동 키 입력을 다시 중계한다.
-		if (was_move_stopped) {
-			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, room_player->GetInputRight(), room_player->GetInputForward(), { move_state.location[0], move_state.location[1], move_state.location[2] }, { move_state.velocity[0], move_state.velocity[1] } };
-			SendToPlaying(reinterpret_cast<const char*>(&input_p), sizeof(input_p));
-		}
+		// 멈춤을 알렸던 플레이어의 이동 상태가 다시 오면 그 사람의 눌린 이동 키를 다시 중계한다.
+		if (was_move_stopped) RelayMoveKeys(*room_player, move_state);
 		break;
 	}
-	case C2S_MOVE_INPUT:
+	case C2S_MOVE_INPUT: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
+		// 기절 중에는 조작을 받지 않으므로 이동 키를 버린다. 기절할 때 눌린 키는 모두 뗀 것으로 했다.
+		if (request_p->key >= MoveKey::COUNT || room_player->IsStunned(tick_time_ms_)) break;
+		// 키 시각이 이동 키 시각 검사를 어기면 그 키를 버린다.
+		const std::optional<long long> key_time_ms = room_player->GetInputTimeMs(request_p->client_time_ms, receive_time_ms);
+		if (!key_time_ms) break;
+		if (request_p->key == MoveKey::JUMP) {
+			// 점프는 누름만 온다. 키를 누른 순간의 위치·수평 속도에서 점프 속도로 뛰어오른 이동 상태로 보고, 이동 상태처럼 검사해 인정하면 그 순간부터 공중을 시작한다.
+			if (!request_p->is_down || match_phase_ == MatchPhase::LOADING || room_player->IsAwaitingMoveRollback()) break;
+			MOVE_STATE jump_state = room_player->GetMoveState();
+			std::memcpy(jump_state.location, request_p->location, sizeof(jump_state.location));
+			jump_state.velocity[0] = request_p->velocity[0];
+			jump_state.velocity[1] = request_p->velocity[1];
+			jump_state.velocity[2] = JUMP_Z_VELOCITY;
+			jump_state.air_phase = AirPhase::RISING;
+			jump_state.client_time_ms = request_p->client_time_ms;
+			if (CheckMove(*room_player, jump_state, receive_time_ms) != MoveCheckResult::ACCEPTED) {
+				RollbackMove(*room_player);
+				break;
+			}
+			const bool was_move_stopped = room_player->IsMoveStopped();
+			room_player->SetMoveState(server_->GetMapData(), jump_state, receive_time_ms);
+			if (was_move_stopped) RelayMoveKeys(*room_player, jump_state);
+		}
+		else {
+			room_player->SetMoveKey(server_->GetMapData(), request_p->key, request_p->is_down, *key_time_ms);
+		}
+		S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, request_p->key, request_p->is_down };
+		std::memcpy(input_p.location, request_p->location, sizeof(input_p.location));
+		std::memcpy(input_p.velocity, request_p->velocity, sizeof(input_p.velocity));
+		SendToPlaying(reinterpret_cast<const char*>(&input_p), sizeof(input_p));
+		break;
+	}
 	case C2S_AIM:
 	case C2S_EQUIP: {
 		if (room_state_.load() != RoomState::PLAY) break;
@@ -323,17 +356,11 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const int player_id = request_session.GetSessionKey().player_id;
 		const std::uint8_t type = reinterpret_cast<PACKET_HEADER*>(packet)->type;
-		// 기절 중에는 조작을 받지 않으므로 이동 키 입력과 조준을 버린다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
+		// 기절 중에는 조작을 받지 않으므로 조준을 버린다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
 		if (type != C2S_EQUIP && room_player->IsStunned(tick_time_ms_)) break;
-		// 서버 이동 상태는 받은 순간까지 앞 입력으로 진행한 뒤 새 입력을 쓴다.
+		// 서버 이동 상태는 받은 순간까지 앞 입력으로 진행한 뒤 새 조준을 쓴다.
 		if (type != C2S_EQUIP) room_player->AdvanceMove(receive_time_ms);
-		if (type == C2S_MOVE_INPUT) {
-			const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
-			room_player->SetMoveInput(request_p->input_right, request_p->input_forward);
-			const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, request_p->input_right, request_p->input_forward, { request_p->location[0], request_p->location[1], request_p->location[2] }, { request_p->velocity[0], request_p->velocity[1] } };
-			SendToPlaying(reinterpret_cast<const char*>(&input_p), sizeof(input_p));
-		}
-		else if (type == C2S_AIM) {
+		if (type == C2S_AIM) {
 			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
 			// 손에 든 장비가 조준할 수 없으면 받지 않는다.
 			if (!room_player->SetAiming(is_aiming)) break;
@@ -949,14 +976,33 @@ void GameRoom::ProcessGameTick(long long tick_time_ms, long long elapsed_ms)
 int GameRoom::AppendInputState(char* buffer, const Player& player) const
 {
 	const int player_id = player.GetSessionKey().player_id;
-	const MOVE_STATE& move_state = player.GetMoveState();
-	const S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player_id, player.GetInputRight(), player.GetInputForward(), { move_state.location[0], move_state.location[1], move_state.location[2] }, { move_state.velocity[0], move_state.velocity[1] } };
+	const int key_size = AppendMoveKeys(buffer, player, player.GetMoveState());
 	const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, player.IsAiming() };
 	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, player.GetActionState().GetWeapon() };
-	std::memcpy(buffer, &input_p, sizeof(input_p));
-	std::memcpy(buffer + sizeof(input_p), &aim_p, sizeof(aim_p));
-	std::memcpy(buffer + sizeof(input_p) + sizeof(aim_p), &equip_p, sizeof(equip_p));
-	return sizeof(input_p) + sizeof(aim_p) + sizeof(equip_p);
+	std::memcpy(buffer + key_size, &aim_p, sizeof(aim_p));
+	std::memcpy(buffer + key_size + sizeof(aim_p), &equip_p, sizeof(equip_p));
+	return key_size + sizeof(aim_p) + sizeof(equip_p);
+}
+
+int GameRoom::AppendMoveKeys(char* buffer, const Player& player, const MOVE_STATE& move_state) const
+{
+	int size = 0;
+	for (int key = 0; key < static_cast<int>(MoveKey::JUMP); ++key) {
+		if (!player.IsMoveKeyDown(static_cast<MoveKey>(key))) continue;
+		S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player.GetSessionKey().player_id, static_cast<MoveKey>(key), true };
+		std::memcpy(input_p.location, move_state.location, sizeof(input_p.location));
+		std::memcpy(input_p.velocity, move_state.velocity, sizeof(input_p.velocity));
+		std::memcpy(buffer + size, &input_p, sizeof(input_p));
+		size += sizeof(input_p);
+	}
+	return size;
+}
+
+void GameRoom::RelayMoveKeys(const Player& player, const MOVE_STATE& move_state)
+{
+	char buffer[static_cast<int>(MoveKey::JUMP) * sizeof(S2C_MOVE_INPUT_PACKET)];
+	const int size = AppendMoveKeys(buffer, player, move_state);
+	if (size > 0) SendToPlaying(buffer, size);
 }
 
 // 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.
@@ -972,7 +1018,7 @@ void GameRoom::ProcessLoadedPlayers()
 
 	// 합류하는 플레이어의 시작 좌표는 방 슬롯 번호로 정하고, 이미 플레이 중인 플레이어는 지금 자리를 보낸다.
 	// 플레이어마다 스폰 뒤에 이동 키 입력·조준·장비를 이어 붙여, 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
-	constexpr int SPAWN_STATE_SIZE = sizeof(S2C_SPAWN_PACKET) + sizeof(S2C_MOVE_INPUT_PACKET) + sizeof(S2C_AIM_PACKET) + sizeof(S2C_EQUIP_PACKET);
+	constexpr int SPAWN_STATE_SIZE = sizeof(S2C_SPAWN_PACKET) + static_cast<int>(MoveKey::JUMP) * sizeof(S2C_MOVE_INPUT_PACKET) + sizeof(S2C_AIM_PACKET) + sizeof(S2C_EQUIP_PACKET);
 	char joined_buffer[MAX_ROOM_PLAYER_COUNT * SPAWN_STATE_SIZE];
 	char all_buffer[MAX_ROOM_PLAYER_COUNT * SPAWN_STATE_SIZE];
 	int joined_size = 0;
@@ -1220,7 +1266,7 @@ void GameRoom::AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon
 	const float gain = shooter.GetActionState().GetEquipment(weapon).GetSettings().stun_gauge_gain;
 	if (target.AddStunGauge(gain * STUN_GAUGE_PART_MULTIPLIERS[part_index], tick_time_ms_)) {
 		// 기절하면 조작을 받지 않으므로 이동 키 입력과 조준을 지운다. 클라이언트도 기절 적용을 받으면 스스로 지운다. 이동은 중력과 관성대로 이어진다.
-		target.SetMoveInput(0, 0);
+		target.ClearMoveKeys();
 		target.SetAiming(false);
 		S2C_STUN_APPLY_PACKET stun_p;
 		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN_APPLY };
@@ -1634,12 +1680,12 @@ MoveCheckResult GameRoom::CheckMove(const Player& player, const MOVE_STATE& move
 {
 	const float* next = move_state.location;
 	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2]) || move_state.air_phase > AirPhase::FALLING) return MoveCheckResult::ROLLBACK;
-	const std::optional<long long> clock_drift = player.GetClockDrift(move_state, time_ms);
+	const std::optional<long long> clock_drift = player.GetClockDrift(move_state.client_time_ms, time_ms);
 	if (!clock_drift || *clock_drift > CLOCK_MAX_AHEAD_MS) return MoveCheckResult::ROLLBACK;
 	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(next[0], next[1]);
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
 	if (match_phase_ != MatchPhase::STARTED && (next[0] < START_AREA_MIN[0] || next[0] > START_AREA_MAX[0] || next[1] < START_AREA_MIN[1] || next[1] > START_AREA_MAX[1])) return MoveCheckResult::ROLLBACK;
-	const MOVE_STATE expected = player.PredictMoveState(player.GetStateTimeMs(move_state, time_ms));
+	const MOVE_STATE expected = player.PredictMoveState(player.GetStateTimeMs(move_state.client_time_ms, time_ms));
 	const float deviation = std::hypot(next[0] - expected.location[0], next[1] - expected.location[1], next[2] - expected.location[2]);
 	if (deviation > MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
 	const MoveVector from{ expected.location[0], expected.location[1], expected.location[2] };

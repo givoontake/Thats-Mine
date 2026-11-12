@@ -21,11 +21,6 @@ static constexpr float DIRECTION_CHANGE_DEGREES = 15.0f;
 // 이보다 느리면 이동 방향을 비교하지 않는다.
 static constexpr float MIN_MOVING_SPEED = 10.0f;
 
-static int8 QuantizeInput(double value)
-{
-	return static_cast<int8>(FMath::RoundToInt(FMath::Clamp(value, -1.0, 1.0) * 127.0));
-}
-
 static EWeaponType ToWeaponType(uint8 value)
 {
 	return value <= static_cast<uint8>(EWeaponType::MAGNIFIER) ? static_cast<EWeaponType>(value) : EWeaponType::PICKAXE;
@@ -190,12 +185,23 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 		{
 			previous->on_action_started_.RemoveAll(this);
 			previous->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
+			previous->on_move_key_changed_.RemoveAll(this);
+			previous->on_equipment_changed_.RemoveAll(this);
 		}
 		local_character_ = character;
 		if (character)
 		{
 			character->on_action_started_.AddUObject(this, &UMovementSyncSubsystem::HandleActionStarted);
 			character->on_shot_fired_.AddDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
+			character->on_move_key_changed_.AddUObject(this, &UMovementSyncSubsystem::HandleMoveKeyChanged);
+			// 조준과 장비는 바뀌는 순간 알림을 받아 바로 보낸다.
+			character->on_equipment_changed_.AddWeakLambda(this, [this]()
+			{
+				if (const APlayerCharacter* local = local_character_.Get())
+				{
+					SendInputChanges(*local);
+				}
+			});
 		}
 	}
 	if (!character)
@@ -236,26 +242,10 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	}
 }
 
-// 이동 키 입력, 조준 여부, 손에 든 장비가 마지막으로 보낸 값과 다르면 바로 보낸다. 처음에는 모두 보낸다.
-// 이동 키 입력은 이번 프레임에 넣은 값이고, 서버 속도 검증과 원격 이동 계산이 이 입력으로 앞뒤를 나눈다.
+// 조준 여부, 손에 든 장비가 마지막으로 보낸 값과 다르면 바로 보낸다. 처음에는 모두 보낸다.
 void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
 {
 	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
-	const FVector2D move_input = character.GetMovementInput();
-	C2S_MOVE_INPUT_PACKET input_packet{};
-	input_packet.input_right = QuantizeInput(move_input.X);
-	input_packet.input_forward = QuantizeInput(move_input.Y);
-	const FVector location = character.GetActorLocation();
-	input_packet.location[0] = static_cast<float>(location.X);
-	input_packet.location[1] = static_cast<float>(location.Y);
-	input_packet.location[2] = static_cast<float>(location.Z);
-	input_packet.velocity[0] = static_cast<float>(character.GetVelocity().X);
-	input_packet.velocity[1] = static_cast<float>(character.GetVelocity().Y);
-	if ((!has_sent_input_ || input_packet.input_right != sent_input_right_ || input_packet.input_forward != sent_input_forward_) && SendPacketBody(network, C2S_MOVE_INPUT, input_packet))
-	{
-		sent_input_right_ = input_packet.input_right;
-		sent_input_forward_ = input_packet.input_forward;
-	}
 	C2S_AIM_PACKET aim_packet{};
 	aim_packet.is_aiming = character.IsAiming();
 	if ((!has_sent_input_ || aim_packet.is_aiming != is_sent_aiming_) && SendPacketBody(network, C2S_AIM, aim_packet))
@@ -271,6 +261,29 @@ void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
 		sent_weapon_ = weapon;
 	}
 	has_sent_input_ = true;
+}
+
+// 이동 키를 처리한 순간 보낸다. 키는 그 프레임의 이동 전에 처리하므로, 위치·속도는 이전 프레임 이동이 끝난 값이고
+// 시각은 그 위치의 게임 시각(이번 프레임 게임 시각 - 이번 프레임 시간)이다. 이동 상태와 같은 시계라 서버가 같은 시간선에 놓는다.
+void UMovementSyncSubsystem::HandleMoveKeyChanged(MoveKey key, bool is_down)
+{
+	const APlayerCharacter* character = local_character_.Get();
+	if (!character)
+	{
+		return;
+	}
+	C2S_MOVE_INPUT_PACKET packet{};
+	packet.key = key;
+	packet.is_down = is_down;
+	const FVector location = character->GetActorLocation();
+	const FVector velocity = character->GetVelocity();
+	for (int32 axis = 0; axis < 3; ++axis)
+	{
+		packet.location[axis] = static_cast<float>(location[axis]);
+		packet.velocity[axis] = static_cast<float>(velocity[axis]);
+	}
+	packet.client_time_ms = static_cast<uint32>(static_cast<uint64>((GetWorld()->GetTimeSeconds() - GetWorld()->GetDeltaSeconds()) * 1000.0));
+	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_MOVE_INPUT, packet);
 }
 
 // 동작보다 먼저 바뀐 입력과 장비를 보내, 서버가 동작을 지금 손에 든 장비로 판정하게 한다.
@@ -530,7 +543,7 @@ void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)
 	}
 }
 
-// 다른 플레이어의 이동 키 입력·조준·장비. 아직 스폰되지 않았거나 내 것이면 버린다.
+// 다른 플레이어의 이동 키 누름·뗌. 아직 스폰되지 않았거나 내 것이면 버린다.
 void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_MOVE_INPUT_PACKET) - sizeof(PACKET_HEADER))
@@ -540,10 +553,15 @@ void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
 	}
 	S2C_MOVE_INPUT_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (packet.key >= MoveKey::COUNT)
+	{
+		HandleInvalidPacket();
+		return;
+	}
 	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
-		remote_movement->ApplyMoveInput(FVector2D(packet.input_right / 127.0, packet.input_forward / 127.0), FVector(packet.location[0], packet.location[1], packet.location[2]), FVector2D(packet.velocity[0], packet.velocity[1]));
+		remote_movement->ApplyMoveKey(packet.key, packet.is_down, FVector(packet.location[0], packet.location[1], packet.location[2]), FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]));
 	}
 }
 

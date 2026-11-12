@@ -8,8 +8,7 @@
 struct PlayerSnapshot {
 	long long tick_time_ms;
 	MOVE_STATE move_state;
-	std::int8_t input_right;
-	std::int8_t input_forward;
+	std::uint8_t move_keys;
 	bool is_aiming;
 	CharacterPose pose;
 	long long stun_end_ms;

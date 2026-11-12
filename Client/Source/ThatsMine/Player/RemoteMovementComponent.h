@@ -16,11 +16,12 @@ public:
 	URemoteMovementComponent();
 
 	void ApplyState(const FRemoteMoveState& state);
-	// 받은 이동 키 입력. X가 오른쪽, Y가 앞쪽이다.
-	void SetMoveInput(const FVector2D& move_input) { move_input_ = move_input; }
-	// 받은 이동 키 입력과 보낸 사람이 키를 바꾼 순간의 위치·수평 속도. 멈춤이면 보낸 사람이 멈춘 자리에 맞춰 세운다.
-	void ApplyMoveInput(const FVector2D& move_input, const FVector& location, const FVector2D& sent_velocity);
-	// 서버가 멈춘 것으로 판단한 위치로 옮기고 이동 키 입력을 없는 것으로 두어 수평으로 바로 세운다. 공중이면 떨어지는 것은 이어 간다.
+	// 눌린 이동 키를 모두 뗀 것으로 한다.
+	void ClearMoveKeys() { move_keys_ = 0; }
+	// 받은 이동 키 누름·뗌과 보낸 사람이 키를 처리한 순간의 위치·속도. 이동 키를 모두 떼 멈추면 보낸 사람이 멈춘 자리에 맞춰 세우고,
+	// 점프 누름이면 그 위치에서 그 수평 속도와 점프 속도로 뛰어오르게 한다.
+	void ApplyMoveKey(MoveKey key, bool is_down, const FVector& location, const FVector& sent_velocity);
+	// 서버가 멈춘 것으로 판단한 위치로 옮기고 눌린 이동 키를 모두 뗀 것으로 두어 수평으로 바로 세운다. 공중이면 떨어지는 것은 이어 간다.
 	void ApplyMoveStop(const FVector& location);
 	// 서버가 롤백한 이동 상태로 보간 없이 바로 바꾼다. 이동 키 입력은 그대로 이어 간다.
 	void ApplyRollback(const FRemoteMoveState& state);
@@ -40,7 +41,8 @@ private:
 	static constexpr float SNAP_DISTANCE = 100.0f;
 
 	FRemoteMoveState state_;
-	FVector2D move_input_ = FVector2D::ZeroVector;
+	// 받은 눌린 이동 키. MoveKey 값 자리의 비트다. 점프는 담지 않는다.
+	uint8 move_keys_ = 0;
 	bool has_state_ = false;
 	float view_pitch_ = 0.0f;
 	// 남은 보간 이동량과 남은 시간
@@ -52,6 +54,8 @@ private:
 	// 남은 거리가 이보다 짧으면 멈출 자리에 이미 닿은 것으로 본다.
 	static constexpr float STOP_ARRIVE_DISTANCE = 1.0f;
 
+	// 눌린 이동 키로 만든 이동 입력. X가 오른쪽, Y가 앞쪽이다.
+	FVector2D GetMoveInput() const;
 	void UpdateControlledStop(float delta_seconds);
 	void FinishControlledStop();
 	// 멈출 자리에 맞춰 세우는 중이면 엔진 제동을 끄고 매 프레임 속도를 직접 정한다.

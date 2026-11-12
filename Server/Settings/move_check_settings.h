@@ -16,3 +16,5 @@ constexpr float GROUND_CHECK_DEPTH = 30.0f;
 // 늦은 쪽은 CLOCK_MAX_BEHIND_MS까지만 쌓아, 오래 끊겼다가 한 번에 몰아 보내는 몫을 무한히 미리 쌓아 두지 못하게 한다.
 constexpr long long CLOCK_MAX_AHEAD_MS = 250;
 constexpr long long CLOCK_MAX_BEHIND_MS = 2000;
+// 이동 키 시각 검사. 마지막으로 인정한 이동 상태부터 같은 방식으로 잰 앞섬 누적이 이만큼(ms)을 넘거나, 키 시각이 그 상태보다 이르면 그 키를 버린다. 누적은 이동 상태만 갱신한다.
+constexpr long long INPUT_CLOCK_MAX_AHEAD_MS = 500;

@@ -38,9 +38,8 @@ class Player
 	std::uint32_t move_client_time_ms_ = 0;
 	// 마지막으로 이동 상태를 중계한 서버 시각
 	long long relay_time_ms_ = 0;
-	// 마지막으로 받은 이동 키 입력(-127~127)
-	std::int8_t input_right_ = 0;
-	std::int8_t input_forward_ = 0;
+	// 눌린 이동 키. MoveKey 값 자리의 비트다. 이동 입력은 이 키들로 만든다.
+	std::uint8_t move_keys_ = 0;
 	// 서버가 멈춘 것으로 판단해 다른 플레이어에게 멈춤을 알렸는지. 멈춘 동안은 이동 키 입력 없이 진행하고, 이동 상태를 다시 인정하면 거짓이 된다.
 	bool is_move_stopped_ = false;
 	// 이동 상태를 인정해 간격을 기다리지 않고 이번 틱에 중계할지
@@ -107,10 +106,12 @@ public:
 	bool IsMoveWalking() const { return server_move_.IsWalking(); }
 	long long GetMoveTimeMs() const { return move_time_ms_; }
 	bool HasMoveState() const { return move_time_ms_ != 0; }
-	// time_ms에 받은 move_state를 인정하면 될 클라이언트 시각 앞섬 누적(ms). 클라이언트 시각이 거꾸로 가면 값이 없다.
-	std::optional<long long> GetClockDrift(const MOVE_STATE& move_state, long long time_ms) const;
-	// time_ms에 받은 move_state가 나타내는 서버 시각. 마지막으로 인정한 상태가 나타내는 서버 시각에 클라이언트 시각 차이를 더한다. 기준이 없으면 받은 시각이다.
-	long long GetStateTimeMs(const MOVE_STATE& move_state, long long time_ms) const;
+	// time_ms에 받은 클라이언트 시각 client_time_ms의 상태를 인정하면 될 클라이언트 시각 앞섬 누적(ms). 클라이언트 시각이 거꾸로 가면 값이 없다.
+	std::optional<long long> GetClockDrift(std::uint32_t client_time_ms, long long time_ms) const;
+	// time_ms에 받은 클라이언트 시각 client_time_ms가 나타내는 서버 시각. 마지막으로 인정한 상태가 나타내는 서버 시각에 클라이언트 시각 차이를 더한다. 기준이 없으면 받은 시각이다.
+	long long GetStateTimeMs(std::uint32_t client_time_ms, long long time_ms) const;
+	// time_ms에 받은 이동 키의 클라이언트 시각 client_time_ms가 나타내는 서버 시각. 이동 키 시각 검사(INPUT_CLOCK_MAX_AHEAD_MS)를 어기면 값이 없다.
+	std::optional<long long> GetInputTimeMs(std::uint32_t client_time_ms, long long time_ms) const;
 	// time_ms 시각의 서버 이동 상태. 지금 상태보다 뒤면 지금 이동 키 입력으로 진행하고, 앞이면 틱마다 남긴 기록 사이를 잇는다.
 	MOVE_STATE PredictMoveState(long long time_ms) const;
 	bool IsStunned(long long time_ms) const { return time_ms < stun_end_ms_; }
@@ -126,8 +127,7 @@ public:
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
 	bool CanRelayMoveState() const { return has_new_move_state_; }
-	std::int8_t GetInputRight() const { return input_right_; }
-	std::int8_t GetInputForward() const { return input_forward_; }
+	bool IsMoveKeyDown(MoveKey key) const { return (move_keys_ >> static_cast<int>(key)) & 1u; }
 	// 손에 든 장비가 조준 중인지
 	bool IsAiming() const { return action_state_.GetHeldEquipment().IsAiming(); }
 	bool IsMoveStopped() const { return is_move_stopped_; }
@@ -148,9 +148,12 @@ public:
 	// time_ms에 받은 move_state를 인정한다. 땅 위 상태나 착지면 서버 이동 상태를 그 상태로 맞추고, 공중을 시작하면 속도를 서버 상한으로 자른 상태로 맞춘다.
 	// 공중을 이어 가는 상태면 궤적은 그대로 두고 몸 방향만 바꾼다.
 	void SetMoveState(const MapData& map, const MOVE_STATE& move_state, long long time_ms);
-	// 서버 이동 상태를 time_ms까지 지금 이동 키 입력으로 진행한다. 틱마다, 그리고 이동 키 입력·조준이 바뀌기 직전에 그 시각까지 부른다.
+	// 서버 이동 상태를 time_ms까지 지금 이동 키 입력으로 진행한다. 틱마다, 그리고 조준이 바뀌기 직전에 그 시각까지 부른다.
 	void AdvanceMove(long long time_ms);
-	void SetMoveInput(std::int8_t input_right, std::int8_t input_forward);
+	// time_ms 시각에 이동 키를 누르거나 뗀다. 서버 이동 상태가 이미 그 시각을 지났으면 그 시각의 서버 이동 상태로 되감아 바뀐 키로 다시 진행한다.
+	void SetMoveKey(const MapData& map, MoveKey key, bool is_down, long long time_ms);
+	// 눌린 이동 키를 모두 뗀 것으로 한다. 기절하면 부른다.
+	void ClearMoveKeys() { move_keys_ = 0; }
 	// 손에 든 장비의 조준을 바꾼다. 조준할 수 없는 장비면 받지 않는다.
 	bool SetAiming(bool is_aiming);
 	// 서버 이동 상태를 스폰 자리에 선 상태로 둔다. 첫 이동 상태도 이 상태와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.

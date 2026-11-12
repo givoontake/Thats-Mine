@@ -138,10 +138,10 @@ void Player::ResetBlocks()
 
 void Player::SetMoveState(const MapData& map, const MOVE_STATE& move_state, long long time_ms)
 {
-	const long long state_time_ms = GetStateTimeMs(move_state, time_ms);
+	const long long state_time_ms = GetStateTimeMs(move_state.client_time_ms, time_ms);
 	const bool was_walking = server_move_.IsWalking();
 	const bool is_walking = move_state.air_phase == AirPhase::GROUND;
-	clock_drift_ms_ = GetClockDrift(move_state, time_ms).value_or(0);
+	clock_drift_ms_ = GetClockDrift(move_state.client_time_ms, time_ms).value_or(0);
 	has_client_time_ = true;
 	if (is_walking || was_walking) {
 		MOVE_STATE start = move_state;
@@ -178,10 +178,17 @@ void Player::AdvanceMove(long long time_ms)
 	server_move_time_ms_ = time_ms;
 }
 
+// 눌린 키로 한 축의 이동 입력(-127~127)을 만든다. 양쪽 키를 다 누르면 0이다.
+static std::int8_t GetKeyAxis(std::uint8_t move_keys, MoveKey positive, MoveKey negative)
+{
+	const int value = static_cast<int>((move_keys >> static_cast<int>(positive)) & 1u) - static_cast<int>((move_keys >> static_cast<int>(negative)) & 1u);
+	return static_cast<std::int8_t>(value * 127);
+}
+
 std::pair<std::int8_t, std::int8_t> Player::GetMoveInput(long long time_ms) const
 {
 	if (is_move_stopped_ || IsInputLocked(time_ms)) return { 0, 0 };
-	return { input_right_, input_forward_ };
+	return { GetKeyAxis(move_keys_, MoveKey::RIGHT, MoveKey::LEFT), GetKeyAxis(move_keys_, MoveKey::FORWARD, MoveKey::BACKWARD) };
 }
 
 void Player::StopMove()
@@ -190,10 +197,19 @@ void Player::StopMove()
 	is_move_stopped_ = true;
 }
 
-void Player::SetMoveInput(std::int8_t input_right, std::int8_t input_forward)
+void Player::SetMoveKey(const MapData& map, MoveKey key, bool is_down, long long time_ms)
 {
-	input_right_ = input_right;
-	input_forward_ = input_forward;
+	const long long now_ms = server_move_time_ms_;
+	if (time_ms < now_ms) {
+		server_move_ = MoveSimulation(map, PredictMoveState(time_ms));
+		server_move_time_ms_ = time_ms;
+	}
+	else {
+		AdvanceMove(time_ms);
+	}
+	const std::uint8_t bit = static_cast<std::uint8_t>(1u << static_cast<int>(key));
+	move_keys_ = is_down ? static_cast<std::uint8_t>(move_keys_ | bit) : static_cast<std::uint8_t>(move_keys_ & ~bit);
+	AdvanceMove(now_ms);
 }
 
 bool Player::SetAiming(bool is_aiming)
@@ -216,11 +232,11 @@ void Player::SetSpawnLocation(const MapData& map, const float location[3], float
 	relay_time_ms_ = time_ms;
 }
 
-std::optional<long long> Player::GetClockDrift(const MOVE_STATE& move_state, long long time_ms) const
+std::optional<long long> Player::GetClockDrift(std::uint32_t client_time_ms, long long time_ms) const
 {
 	if (!has_client_time_) return 0;
 	// 클라이언트 시각은 32비트로 돌아가므로 차이를 부호 있는 값으로 본다.
-	const std::int32_t client_elapsed_ms = static_cast<std::int32_t>(move_state.client_time_ms - move_client_time_ms_);
+	const std::int32_t client_elapsed_ms = static_cast<std::int32_t>(client_time_ms - move_client_time_ms_);
 	if (client_elapsed_ms < 0) return std::nullopt;
 	return std::max(-CLOCK_MAX_BEHIND_MS, clock_drift_ms_ + client_elapsed_ms - (time_ms - move_time_ms_));
 }
@@ -234,10 +250,17 @@ static float LerpAngle(float from, float to, float alpha)
 	return from + delta * alpha;
 }
 
-long long Player::GetStateTimeMs(const MOVE_STATE& move_state, long long time_ms) const
+long long Player::GetStateTimeMs(std::uint32_t client_time_ms, long long time_ms) const
 {
 	if (!has_client_time_) return time_ms;
-	return move_state_time_ms_ + static_cast<std::int32_t>(move_state.client_time_ms - move_client_time_ms_);
+	return move_state_time_ms_ + static_cast<std::int32_t>(client_time_ms - move_client_time_ms_);
+}
+
+std::optional<long long> Player::GetInputTimeMs(std::uint32_t client_time_ms, long long time_ms) const
+{
+	const std::optional<long long> clock_drift = GetClockDrift(client_time_ms, time_ms);
+	if (!clock_drift || *clock_drift > INPUT_CLOCK_MAX_AHEAD_MS) return std::nullopt;
+	return GetStateTimeMs(client_time_ms, time_ms);
 }
 
 MOVE_STATE Player::PredictMoveState(long long time_ms) const
@@ -345,8 +368,7 @@ void Player::ClearMoveState()
 	clock_drift_ms_ = 0;
 	has_client_time_ = false;
 	has_new_move_state_ = false;
-	input_right_ = 0;
-	input_forward_ = 0;
+	move_keys_ = 0;
 	is_move_stopped_ = false;
 	action_state_.ResetWeapon();
 	is_awaiting_move_rollback_ = false;
@@ -359,7 +381,7 @@ void Player::RecordHistory(long long tick_time_ms)
 	const int index = (history_start_ + history_count_) % HISTORY_SIZE;
 	if (history_count_ == HISTORY_SIZE) history_start_ = (history_start_ + 1) % HISTORY_SIZE;
 	else ++history_count_;
-	history_[index] = { tick_time_ms, GetMoveState(), input_right_, input_forward_, IsAiming(), pose_, stun_end_ms_, GetStunProtectionMs() };
+	history_[index] = { tick_time_ms, GetMoveState(), move_keys_, IsAiming(), pose_, stun_end_ms_, GetStunProtectionMs() };
 }
 
 std::optional<RewoundState> Player::GetRewoundState(long long time_ms) const

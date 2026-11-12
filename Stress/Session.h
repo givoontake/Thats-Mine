@@ -21,11 +21,11 @@ enum class SessionState
 	DISCONNECTING
 };
 
-// 지금 시각의 걷기 상태. 이동 상태와 그때 누르고 있는 앞뒤 키 입력이다.
+// 지금 시각의 걷기 상태. 이동 상태와 그때 누르고 있는 앞뒤 키다.
 struct WalkStep
 {
 	MOVE_STATE move_state;
-	std::int8_t input_forward;
+	MoveKey key;
 };
 
 // 보낸 이동 상태의 위치와 보낸 시각
@@ -55,7 +55,7 @@ class Session
 	std::atomic<long long> walk_start_ms_{ -1 };
 	// 보내기 스레드만 쓴다.
 	long long last_move_send_ms_ = 0;
-	std::int8_t sent_input_forward_ = 0;
+	MoveKey sent_key_ = MoveKey::FORWARD;
 	bool has_sent_input_ = false;
 	// 보내기 스레드가 보낸 이동을 넣고, 받기 처리가 내 이동 중계의 위치로 찾아 꺼낸다. 서버는 받은 위치를 그대로 중계한다.
 	std::array<SentMove, SENT_MOVE_QUEUE_SIZE> sent_moves_{};
@@ -101,7 +101,7 @@ public:
 	SessionState GetState() const { return state_.load(); }
 	long long GetLastRoomListMs() const { return last_room_list_ms_; }
 	long long GetLastMoveSendMs() const { return last_move_send_ms_; }
-	std::int8_t GetSentInputForward() const { return sent_input_forward_; }
+	MoveKey GetSentKey() const { return sent_key_; }
 	bool HasSentInput() const { return has_sent_input_; }
 	int IncrementReadyPlayerCount() { return ready_player_count_.fetch_add(1) + 1; }
 
@@ -109,7 +109,7 @@ public:
 	void SetRemainingDataSize(int size) { remaining_data_size_ = size; }
 	void SetLastRoomListMs(long long time_ms) { last_room_list_ms_ = time_ms; }
 	void SetLastMoveSendMs(long long time_ms) { last_move_send_ms_ = time_ms; }
-	void SetSentInputForward(std::int8_t input_forward) { sent_input_forward_ = input_forward; has_sent_input_ = true; }
+	void SetSentKey(MoveKey key) { sent_key_ = key; has_sent_input_ = true; }
 	bool TrySetState(SessionState expected, SessionState desired) { return state_.compare_exchange_strong(expected, desired); }
 	void SetState(SessionState desired) { state_.store(desired); }
 };

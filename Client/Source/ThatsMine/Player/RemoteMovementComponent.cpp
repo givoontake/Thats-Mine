@@ -43,21 +43,59 @@ URemoteMovementComponent::URemoteMovementComponent()
 // - 제동 시작 위치보다 뒤: 지금 속도로 그 위치까지 간 뒤 보낸 사람 속도로 바꿔 엔진 제동으로 선다.
 // - 제동 시작 위치와 멈출 자리 사이: 멈출 자리에 서도록 일정하게 감속한다.
 // - 멈출 자리를 이미 지남: 더 미끄러지지 않게 바로 세우고, 지난 만큼만 받은 위치로 보정한다.
-void URemoteMovementComponent::ApplyMoveInput(const FVector2D& move_input, const FVector& location, const FVector2D& sent_velocity)
+FVector2D URemoteMovementComponent::GetMoveInput() const
+{
+	const auto axis = [this](MoveKey positive, MoveKey negative) { return static_cast<double>((move_keys_ >> static_cast<int32>(positive)) & 1) - static_cast<double>((move_keys_ >> static_cast<int32>(negative)) & 1); };
+	return FVector2D(axis(MoveKey::RIGHT, MoveKey::LEFT), axis(MoveKey::FORWARD, MoveKey::BACKWARD));
+}
+
+void URemoteMovementComponent::ApplyMoveKey(MoveKey key, bool is_down, const FVector& location, const FVector& sent_velocity)
 {
 	APlayerCharacter* character = CastChecked<APlayerCharacter>(GetOwner());
 	UCharacterMovementComponent* movement = character->GetCharacterMovement();
+	if (key == MoveKey::JUMP)
+	{
+		// 이미 공중이면 이동 상태 중계로 뛰어오른 것이다. 뛴 위치와의 차이는 받은 좌표처럼 보간 이동으로 메운다.
+		if (!is_down || !has_state_ || movement->IsFalling())
+		{
+			return;
+		}
+		if (is_controlled_stop_)
+		{
+			FinishControlledStop();
+		}
+		const FVector difference = location - character->GetActorLocation();
+		if (difference.Size() > SNAP_DISTANCE)
+		{
+			character->SetActorLocation(location, false, nullptr, ETeleportType::TeleportPhysics);
+			correction_ = FVector::ZeroVector;
+			correction_remaining_ = 0.0f;
+		}
+		else
+		{
+			correction_ = difference;
+			correction_remaining_ = CORRECTION_SECONDS;
+		}
+		movement->Velocity = FVector(sent_velocity.X, sent_velocity.Y, movement->JumpZVelocity);
+		movement->SetMovementMode(MOVE_Falling);
+		return;
+	}
+	const FVector2D previous_input = GetMoveInput();
+	const uint8 bit = static_cast<uint8>(1u << static_cast<int32>(key));
+	move_keys_ = is_down ? (move_keys_ | bit) : (move_keys_ & ~bit);
+	const FVector2D move_input = GetMoveInput();
 	if (is_controlled_stop_ && !move_input.IsNearlyZero())
 	{
 		FinishControlledStop();
 	}
 	const float speed = FVector2D(movement->Velocity).Size();
-	const float sent_speed = sent_velocity.Size();
-	const bool is_stop = has_state_ && move_input.IsNearlyZero() && !move_input_.IsNearlyZero();
+	const FVector2D sent_horizontal_velocity(sent_velocity.X, sent_velocity.Y);
+	const float sent_speed = sent_horizontal_velocity.Size();
+	const bool is_stop = has_state_ && move_input.IsNearlyZero() && !previous_input.IsNearlyZero();
 	if (is_stop && speed > STOP_MIN_SPEED && sent_speed > STOP_ARRIVE_DISTANCE && !movement->IsFalling())
 	{
-		// 방향과 남은 제동은 보낸 사람 속도로 정한다. 보낸 사람은 키를 뗀 프레임에 이미 한 번 감속한 뒤 보내므로 그 속도를 그대로 쓴다.
-		const FVector2D direction = sent_velocity / sent_speed;
+		// 방향과 남은 제동은 보낸 사람 속도로 정한다. 보낸 사람은 키를 뗀 순간(그 프레임 이동 전)의 속도를 보내므로 그 속도에서 제동한다.
+		const FVector2D direction = sent_horizontal_velocity / sent_speed;
 		const FVector target = location + FVector(direction * PredictBrakingDistance(movement, sent_speed, GetWorld()->GetDeltaSeconds()), 0.0f);
 		const FVector offset = target - character->GetActorLocation();
 		const float remaining = FVector2D(offset.X, offset.Y) | direction;
@@ -89,7 +127,6 @@ void URemoteMovementComponent::ApplyMoveInput(const FVector2D& move_input, const
 			movement->GroundFriction = 0.0f;
 		}
 	}
-	SetMoveInput(move_input);
 }
 
 void URemoteMovementComponent::ApplyMoveStop(const FVector& location)
@@ -105,7 +142,7 @@ void URemoteMovementComponent::ApplyMoveStop(const FVector& location)
 	movement->Velocity.Y = 0.0f;
 	correction_ = FVector::ZeroVector;
 	correction_remaining_ = 0.0f;
-	SetMoveInput(FVector2D::ZeroVector);
+	ClearMoveKeys();
 }
 
 void URemoteMovementComponent::ApplyRollback(const FRemoteMoveState& state)
@@ -285,5 +322,5 @@ void URemoteMovementComponent::TickComponent(float delta_seconds, ELevelTick tic
 
 	UpdateControlledStop(delta_seconds);
 	// 받은 입력으로 이동 계산을 이어 간다. 멈춤은 서버가 멈춤 패킷으로 알려 입력을 0으로 바꾼다.
-	character->ApplyMovementInput(move_input_);
+	character->ApplyMovementInput(GetMoveInput());
 }

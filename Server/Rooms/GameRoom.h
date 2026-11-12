@@ -144,8 +144,12 @@ private:
 	void RelayMoveStop(Player& player);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
 	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
-	// 그 플레이어의 이동 키 입력·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
+	// 그 플레이어의 눌린 이동 키·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
 	int AppendInputState(char* buffer, const Player& player) const;
+	// 그 플레이어의 눌린 이동 키(점프 제외)마다 누름 패킷을 move_state의 위치·속도로 buffer에 쓰고 쓴 크기를 돌려준다.
+	int AppendMoveKeys(char* buffer, const Player& player, const MOVE_STATE& move_state) const;
+	// 그 플레이어의 눌린 이동 키를 방 전체에 다시 알린다. 멈춤을 알렸던 플레이어가 다시 움직일 때 쓴다.
+	void RelayMoveKeys(const Player& player, const MOVE_STATE& move_state);
 	// 공개 여부에 맞는 방 입장 패킷으로 방 이름을 buffer에 쓰고 쓴 크기를 돌려준다.
 	int AppendRoomName(char* buffer) const;
 	void AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part);

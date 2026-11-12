@@ -12,6 +12,7 @@
 #include "player_action.h"
 #include "item_kind.h"
 #include "equipment_types.h"
+#include "game_packets.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -41,6 +42,7 @@ DECLARE_MULTICAST_DELEGATE(FOnEquipmentChanged);
 DECLARE_MULTICAST_DELEGATE(FOnHintsChanged);
 DECLARE_MULTICAST_DELEGATE(FOnItemsChanged);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnActionStarted, EPlayerAction, EWeaponType);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMoveKeyChanged, MoveKey, bool);
 
 UCLASS()
 class THATSMINE_API APlayerCharacter : public ACharacter
@@ -63,8 +65,8 @@ public:
 
 	// 이동 입력(X 오른쪽, Y 앞쪽)을 이동 계산에 넣는다. 다른 플레이어는 받은 입력으로 호출한다.
 	void ApplyMovementInput(const FVector2D& movement);
-	// 이번 프레임에 넣은 이동 키 입력(좌우, 앞뒤). 이번 프레임에 넣지 않았으면 0이다.
-	FVector2D GetMovementInput() const;
+	// 눌린 이동 키로 이번 프레임의 이동 입력을 넣는다. 조종자가 입력을 처리한 뒤 매 프레임 부른다. 기절 중이거나 눌린 키가 없으면 넣지 않는다.
+	void ApplyMoveKeys();
 
 	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
 	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
@@ -98,6 +100,8 @@ public:
 
 	// 내 캐릭터가 동작을 시작했을 때 알린다.
 	FOnActionStarted on_action_started_;
+	// 내 캐릭터의 이동 키를 누르거나 뗀 순간 알린다. 점프는 실제로 뛸 때 누름만 알린다.
+	FOnMoveKeyChanged on_move_key_changed_;
 	// 마지막으로 시작한 동작의 실제 시각(FPlatformTime 초). 발사 간격을 이 시각으로 세고, 서버로 보내는 동작 시각도 이 값으로 만든다.
 	double GetActionRealTime() const { return action_real_time_; }
 	// 마지막으로 다른 무기로 바꾼 실제 시각(FPlatformTime 초). 서버로 보내는 장비 교체 시각을 이 값으로 만든다.
@@ -230,9 +234,8 @@ private:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|State", meta = (AllowPrivateAccess = "true"))
 	bool is_aiming_ = false;
-	// 마지막으로 넣은 이동 키 입력과 그 프레임 번호
-	FVector2D movement_input_ = FVector2D::ZeroVector;
-	uint64 movement_input_frame_ = 0;
+	// 눌린 이동 키. MoveKey 값 자리의 비트다. 점프는 담지 않는다.
+	uint8 move_keys_ = 0;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|State", meta = (AllowPrivateAccess = "true"))
 	bool is_action_locked_ = false;
@@ -332,9 +335,10 @@ private:
 	// 아이템 종류마다 가진 가장 높은 등급. 없으면 비어 있다.
 	TOptional<EHintGrade> item_grades_[static_cast<int32>(EItemKind::COUNT)];
 
-	// 키 설정의 키로 동작 입력을 묶는다. 이동은 입력 매핑으로 받아 여기서 묶지 않는다.
+	// 키 설정의 키로 이동 키와 동작 입력을 묶는다.
 	void BindGameKeys(UInputComponent* input);
-	void Move(const FInputActionValue& value);
+	// 이동 키를 누르거나 떼어 눌린 키 기록을 바꾸고 알린다. 기절 중이거나 이미 그 상태면 무시한다.
+	void SetMoveKey(MoveKey key, bool is_down);
 	void Look(const FInputActionValue& value);
 	void SelectWeaponFromKey(FKey key);
 	void UpdateWeaponVisuals();

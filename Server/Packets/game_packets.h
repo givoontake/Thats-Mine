@@ -14,6 +14,9 @@ enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
 // 이동 상태의 공중 단계. 땅 위, 점프로 올라가는 중, 떨어지는 중(점프 정점 이후·천장에 부딪힌 뒤·걸어서 떨어질 때)이다.
 enum class AirPhase : std::uint8_t { GROUND, RISING, FALLING };
 
+// 이동 키. 앞뒤·좌우 이동 키와 점프다.
+enum class MoveKey : std::uint8_t { FORWARD, BACKWARD, LEFT, RIGHT, JUMP, COUNT };
+
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
 enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
 // 탄을 쏘는 무기인지. 클라이언트가 손에 든 무기 번호로 총 여부를 판단한다.
@@ -76,14 +79,16 @@ struct C2S_MOVE_PACKET {
 	MOVE_STATE move_state;
 };
 
-// 이동 키 입력이 바뀌었다. 오른쪽·앞쪽 축을 -127~127로 줄여 담는다.
-// location·velocity는 키 입력이 바뀐 순간의 위치와 수평 속도다. 받는 쪽이 멈춘 자리를 계산하는 데 쓴다.
+// 이동 키를 누르거나 뗐다. 키를 처리한 순간 보낸다. 점프는 실제로 뛸 때 누름만 보낸다.
+// location·velocity는 키를 처리한 순간(그 프레임의 이동 전)의 위치와 속도다. 점프면 서버가 이 위치·속도에서 점프를 시작하고, 받는 쪽은 뗀 자리에서 멈출 자리를 계산하는 데 쓴다.
+// client_time_ms는 그 위치의 클라이언트 게임 시각(ms)으로 이동 상태와 같은 시계다. 서버는 이 시각에 키를 바꾼다.
 struct C2S_MOVE_INPUT_PACKET {
 	PACKET_HEADER header;
-	std::int8_t input_right;
-	std::int8_t input_forward;
+	MoveKey key;
+	bool is_down;
 	float location[3];
-	float velocity[2];
+	float velocity[3];
+	std::uint32_t client_time_ms;
 };
 
 // 조준을 시작하거나 끝냈다.
@@ -111,14 +116,14 @@ struct S2C_MOVE_PACKET {
 	AirPhase air_phase;
 };
 
-// 다른 플레이어의 이동 키 입력. 받은 쪽은 이 입력으로 그 캐릭터의 이동을 계산한다.
+// 다른 플레이어가 이동 키를 누르거나 뗐다. 받은 쪽은 눌린 키로 그 캐릭터의 이동을 계산하고, 점프 누름이면 그 위치에서 뛰게 한다.
 struct S2C_MOVE_INPUT_PACKET {
 	PACKET_HEADER header;
 	int player_id;
-	std::int8_t input_right;
-	std::int8_t input_forward;
+	MoveKey key;
+	bool is_down;
 	float location[3];
-	float velocity[2];
+	float velocity[3];
 };
 
 // 다른 플레이어의 조준 여부
