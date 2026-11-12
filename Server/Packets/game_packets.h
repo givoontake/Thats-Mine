@@ -16,7 +16,7 @@ enum class AirPhase : std::uint8_t { GROUND, RISING, FALLING };
 
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
 enum class WeaponType : std::uint8_t { PICKAXE, SNIPER, PISTOL, MAGNIFIER };
-// 탄을 쏘는 무기인지. 서버와 클라이언트가 총 여부를 무기 종류로 판단한다.
+// 탄을 쏘는 무기인지. 클라이언트가 손에 든 무기 번호로 총 여부를 판단한다.
 constexpr bool IsGunWeapon(WeaponType weapon) { return weapon == WeaponType::SNIPER || weapon == WeaponType::PISTOL; }
 
 // 아이템 종류. 등급은 S·A뿐이고 HintGrade 값을 쓴다. 얻으면 그 게임 동안 계속 적용된다.
@@ -93,7 +93,7 @@ struct C2S_AIM_PACKET {
 };
 
 // 손에 든 장비를 바꿨다. weapon은 바꾼 뒤 손에 든 WeaponType이다. action_time_ms는 바꾼 순간의 서버 기준 시각(ms)이다.
-// 서버는 조준 중이면 받지 않고, 다른 무기로 바뀌면 그 시각부터 EQUIP_DURATIONS_MS 동안 발사·휘두르기·재장전을 받지 않는다.
+// 서버는 조준 중이면 받지 않고, 다른 무기로 바뀌면 그 시각부터 그 장비의 교체 대기(equip_duration_ms) 동안 발사·휘두르기·재장전을 받지 않는다.
 struct C2S_EQUIP_PACKET {
 	PACKET_HEADER header;
 	std::uint8_t weapon;

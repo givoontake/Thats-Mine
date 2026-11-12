@@ -42,17 +42,6 @@ constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 �
 // 음수 보상은 FIRE_DEBT_FREE_MS를 넘은 몫만 간격에서 깎는다. 동작 시각이 서버가 받은 시각보다 늦으면 인정하지 않는다.
 constexpr long long FIRE_REWARD_MAX_MS = 500;
 constexpr long long FIRE_DEBT_FREE_MS = 500;
-// 장비 교체 대기. 다른 무기로 바꾼 동작 시각부터 이 시간(ms) 동안 발사·휘두르기·재장전을 받지 않는다. 클라이언트도 같은 값을 쓴다.
-// 탄창이 빈 무기로 바꾸면 대기가 끝날 때 자동 재장전한다. 무기 값 순서: 곡괭이, 저격총, 권총, 돋보기.
-constexpr int EQUIP_DURATIONS_MS[] = { 200, 500, 500, 200 };
-// 총 수치. 무기 값 순서: 곡괭이, 저격총, 권총, 돋보기. 총이 아닌 무기는 0이다. 클라이언트도 같은 값을 쓴다.
-constexpr float WEAPON_HITSCAN_DISTANCES[] = { 0.0f, 50000.0f, 10000.0f, 0.0f }; // 사거리(cm)
-constexpr int WEAPON_MAGAZINE_CAPACITIES[] = { 0, 3, 7, 0 }; // 탄창 하나의 탄 수
-constexpr int WEAPON_RELOAD_DURATIONS_MS[] = { 0, 2000, 1000, 0 }; // 재장전 시간(ms)
-constexpr int WEAPON_FIRE_INTERVALS_MS[] = { 0, 1000, 200, 0 }; // 발사 간격(ms)
-// 곡괭이 사용 가능 횟수. 게임마다 최대치로 시작하고, 최대치보다 적으면 PICKAXE_CHARGE_MS마다 1번씩 찬다.
-constexpr int PICKAXE_MAX_CHARGES = 3;
-constexpr int PICKAXE_CHARGE_MS = 60000;
 
 // 탄약 상자. 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 만들고, 한 상자에는 한 무기의 탄만 든다. 열면 그 무기의 소지 탄이 늘어난다.
 constexpr int AMMO_BOX_COUNT = 50;

@@ -11,6 +11,7 @@
 #include "inventory_item.h"
 #include "player_action.h"
 #include "item_kind.h"
+#include "equipment_types.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -49,6 +50,10 @@ class THATSMINE_API APlayerCharacter : public ACharacter
 public:
 	// 무기를 바꾼 뒤 쓸 수 있을 때까지 시간(초). 서버와 같은 무기별 장비 교체 대기 시간이다. 장착 동작은 이 시간에 맞춰 재생한다.
 	static float GetEquipDuration(EWeaponType weapon);
+	// 무기 번호의 장비 고유값(equipment_settings.h). 서버 장비와 같은 상수다.
+	static const EquipmentSettings& GetEquipmentSettings(EWeaponType weapon);
+	// 무기 번호가 총이면 그 총의 고유값, 아니면 빈 포인터
+	static const GunSettings* FindGunSettings(EWeaponType weapon);
 
 	// 이동 컴포넌트는 서버와 같은 공용 이동 계산을 쓰는 UPlayerMovementComponent로 만든다.
 	APlayerCharacter(const FObjectInitializer& object_initializer);

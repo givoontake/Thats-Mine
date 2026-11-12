@@ -129,14 +129,15 @@ private:
 	void ProcessRoomTask(const RoomTask& task);
 	int AddPlayer(Session& new_session, SessionKey session_key, const char* room_password);
 	void ProcessSpecificRoomTask(const RoomTask& task);
-	void ProcessGameTick(long long tick_time_ms);
+	// elapsed_ms는 지난 틱부터 지난 시간이다.
+	void ProcessGameTick(long long tick_time_ms, long long elapsed_ms);
 	void ResetGameState();
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
 	// 손에 든 weapon으로 한 동작이나 재장전을 인정하는지 본다. time_ms는 서버가 요청을 받은 시각, action_time_ms는 요청의 동작 시각이다.
 	bool AcceptAction(Player& player, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
 	// 서버가 아는 곡괭이 사용 가능 횟수와 남은 충전 시간을 그 사람에게 보낸다.
-	void SendPickaxeCharges(const Player& player, long long time_ms);
+	void SendPickaxeCharges(const Player& player);
 	// 그 무기의 지금 탄창 탄과 소지 탄을 재장전 끝으로 그 사람에게 보낸다.
 	void SendReloadDone(const Player& player, std::uint8_t weapon);
 	// 그 플레이어의 서버 이동 상태를 그 자리에 세우고 방 전체에 멈춘 위치와 함께 멈춤을 알린다.
@@ -156,8 +157,8 @@ private:
 	int AppendHintPacket(char* buffer, std::uint32_t hint) const;
 	void ProcessAreaRemoval();
 	void ProcessStunRelease();
-	// 자동 재장전 시작, 재장전 끝, 곡괭이 충전처럼 서버가 시각을 정하는 동작 상태를 진행하고 알린다.
-	void ProcessActionStates();
+	// 자동 재장전 시작, 재장전 끝, 곡괭이 충전처럼 서버가 시각을 정하는 장비 상태를 지난 시간(ms)만큼 진행하고 알린다.
+	void ProcessActionStates(long long elapsed_ms);
 	void DigTreasure(const Player& digger);
 	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
 	void ProcessTimeLimit();

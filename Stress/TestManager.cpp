@@ -14,6 +14,7 @@
 #include <utility>
 #include "combat_settings.h"
 #include "database_packets.h"
+#include "equipment_settings.h"
 #include "ex_overlapped.h"
 #include "lobby_settings.h"
 #include "movement_settings.h"
@@ -276,7 +277,7 @@ void TestManager::SendFire(Session& session, long long now_ms)
 		equip_packet.weapon = static_cast<std::uint8_t>(FIRE_WEAPON);
 		equip_packet.action_time_ms = session.GetActionTimeMs(now_ms);
 		session.SendPacket(&equip_packet, sizeof(equip_packet));
-		session.SetNextFireMs(now_ms + EQUIP_DURATIONS_MS[static_cast<int>(FIRE_WEAPON)]);
+		session.SetNextFireMs(now_ms + PISTOL_SETTINGS.equip_duration_ms);
 		return;
 	}
 	if (now_ms < session.GetNextFireMs()) return;

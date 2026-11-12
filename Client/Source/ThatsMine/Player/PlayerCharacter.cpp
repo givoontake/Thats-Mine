@@ -44,6 +44,7 @@
 #include "UI/Effects/StunGaugeWidget.h"
 #include "UI/Hint/HintPopupWidget.h"
 #include "combat_settings.h"
+#include "equipment_settings.h"
 #include "item_settings.h"
 #include "movement_settings.h"
 #include "stun_settings.h"
@@ -144,7 +145,7 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& object_initializer)
 	stun_gauge_widget_class_ = UStunGaugeWidget::StaticClass();
 	damage_direction_widget_class_ = UDamageDirectionWidget::StaticClass();
 
-	pickaxe_charges_ = PICKAXE_MAX_CHARGES;
+	pickaxe_charges_ = PICKAXE_SETTINGS.max_charges;
 	FWeaponSettings pickaxe;
 	pickaxe.display_name = NSLOCTEXT("Equipment", "Pickaxe", "PICKAXE");
 	pickaxe.selection_key = EKeys::Three;
@@ -157,7 +158,6 @@ APlayerCharacter::APlayerCharacter(const FObjectInitializer& object_initializer)
 	sniper.display_name = NSLOCTEXT("Equipment", "Sniper", "Stun Sniper");
 	sniper.selection_key = EKeys::One;
 	sniper.mesh.ComponentProperty = TEXT("Sniper");
-	sniper.can_aim = true;
 	sniper.uses_rifle_pose = true;
 	sniper.left_hand_grip_socket = TEXT("LeftHandGrip");
 	weapon_settings_.Add(EWeaponType::SNIPER, sniper);
@@ -560,8 +560,27 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 
 float APlayerCharacter::GetEquipDuration(EWeaponType weapon)
 {
-	const int32 index = static_cast<int32>(weapon);
-	return index < UE_ARRAY_COUNT(EQUIP_DURATIONS_MS) ? EQUIP_DURATIONS_MS[index] / 1000.0f : 0.0f;
+	return GetEquipmentSettings(weapon).equip_duration_ms / 1000.0f;
+}
+
+const EquipmentSettings& APlayerCharacter::GetEquipmentSettings(EWeaponType weapon)
+{
+	switch (weapon)
+	{
+	case EWeaponType::SNIPER:
+		return SNIPER_SETTINGS;
+	case EWeaponType::PISTOL:
+		return PISTOL_SETTINGS;
+	case EWeaponType::MAGNIFIER:
+		return MAGNIFIER_SETTINGS;
+	default:
+		return PICKAXE_SETTINGS;
+	}
+}
+
+const GunSettings* APlayerCharacter::FindGunSettings(EWeaponType weapon)
+{
+	return IsGunWeapon(static_cast<WeaponType>(weapon)) ? &static_cast<const GunSettings&>(GetEquipmentSettings(weapon)) : nullptr;
 }
 
 void APlayerCharacter::UpdateWeaponVisuals()
@@ -812,7 +831,8 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		return;
 	}
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_);
-	if (!ammo || ammo->rounds <= 0 || ammo->is_reloading)
+	const GunSettings* gun = FindGunSettings(current_weapon_);
+	if (!ammo || !gun || ammo->rounds <= 0 || ammo->is_reloading)
 	{
 		return;
 	}
@@ -825,7 +845,7 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	}
 
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
-	next_fire_times_.Add(current_weapon_, real_now + WEAPON_FIRE_INTERVALS_MS[static_cast<uint8>(current_weapon_)] / 1000.0);
+	next_fire_times_.Add(current_weapon_, real_now + gun->fire_interval_ms / 1000.0);
 	action_real_time_ = real_now;
 	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
@@ -833,12 +853,11 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	FShotResult shot;
 	shot.weapon = current_weapon_;
 	// 연사 열기를 올린다. 화면의 퍼짐 표시에만 쓰고, 빗나감은 서버가 정한다.
-	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
-	ammo->spread_heat = AddShotHeat(spread_settings, RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), WEAPON_FIRE_INTERVALS_MS[static_cast<uint8>(current_weapon_)]));
+	ammo->spread_heat = AddShotHeat(gun->spread, RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), gun->fire_interval_ms));
 	ammo->spread_time = now;
 	// 총구는 화염·궤적 표시에만 쓴다.
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
-	const float distance = WEAPON_HITSCAN_DISTANCES[static_cast<uint8>(current_weapon_)];
+	const float distance = gun->hitscan_distance;
 	FCollisionQueryParams query(SCENE_QUERY_STAT(HitscanShot), false, this);
 	query.bFindInitialOverlaps = true;
 	for (const auto& [weapon, mesh] : weapon_meshes_)
@@ -1025,12 +1044,13 @@ void APlayerCharacter::PlayFireSound(const FHitscanSettings& settings) const
 {
 	USceneComponent* weapon_mesh = GetEquippedWeaponMesh();
 	USoundBase* sound = settings.fire_sound.LoadSynchronous();
-	if (!sound || !IsValid(weapon_mesh))
+	const GunSettings* gun = FindGunSettings(current_weapon_);
+	if (!sound || !gun || !IsValid(weapon_mesh))
 	{
 		return;
 	}
 	const FVector location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
-	if (const float volume = GetHeardVolume(GetWorld(), location, WEAPON_HITSCAN_DISTANCES[static_cast<uint8>(current_weapon_)]); volume > 0.0f)
+	if (const float volume = GetHeardVolume(GetWorld(), location, gun->hitscan_distance); volume > 0.0f)
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, sound, location, volume);
 	}
@@ -1101,14 +1121,13 @@ void APlayerCharacter::Jump()
 float APlayerCharacter::GetCurrentShotSpread() const
 {
 	const FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_);
-	const FWeaponSettings* settings = GetCurrentWeaponSettings();
-	if (!ammo || !settings || !GetWorld())
+	const GunSettings* gun = FindGunSettings(current_weapon_);
+	if (!ammo || !gun || !GetWorld())
 	{
 		return 0.0f;
 	}
-	const ShotSpreadSettings& spread_settings = GetShotSpreadSettings(static_cast<uint8>(current_weapon_));
-	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->spread_time), WEAPON_FIRE_INTERVALS_MS[static_cast<uint8>(current_weapon_)]);
-	return GetShotSpread(spread_settings, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
+	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->spread_time), gun->fire_interval_ms);
+	return GetShotSpread(gun->spread, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
 }
 
 void APlayerCharacter::UseAmmo(EWeaponType weapon, int32 rounds)
@@ -1170,7 +1189,7 @@ void APlayerCharacter::StartServerReload(EWeaponType weapon)
 void APlayerCharacter::SetPickaxeCharges(int32 charges, int32 remaining_ms)
 {
 	pickaxe_charges_ = charges;
-	if (charges >= PICKAXE_MAX_CHARGES)
+	if (charges >= PICKAXE_SETTINGS.max_charges)
 	{
 		GetWorldTimerManager().ClearTimer(pickaxe_charge_timer_);
 	}
@@ -1341,9 +1360,10 @@ void APlayerCharacter::PlayRemoteAction(EPlayerAction action, EWeaponType weapon
 	}
 	if (action == EPlayerAction::RELOAD)
 	{
-		if (UAnimMontage* montage = settings->hitscan.reload_montage)
+		const GunSettings* gun = FindGunSettings(current_weapon_);
+		if (UAnimMontage* montage = settings->hitscan.reload_montage; montage && gun)
 		{
-			anim_instance->Montage_Play(montage, montage->GetPlayLength() / (WEAPON_RELOAD_DURATIONS_MS[static_cast<uint8>(current_weapon_)] / 1000.0f), EMontagePlayReturnType::MontageLength, 0.0f, false);
+			anim_instance->Montage_Play(montage, montage->GetPlayLength() / (gun->reload_duration_ms / 1000.0f), EMontagePlayReturnType::MontageLength, 0.0f, false);
 		}
 		return;
 	}
@@ -1427,7 +1447,8 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 		display.should_show_crosshair = IsGunWeapon(static_cast<WeaponType>(weapon)) && !is_aiming_ && !(controller && controller->IsMenuOpen());
 		if (display.uses_ammo)
 		{
-			display.capacity = FMath::Max(1, WEAPON_MAGAZINE_CAPACITIES[static_cast<uint8>(weapon)]);
+			const GunSettings* gun = FindGunSettings(weapon);
+			display.capacity = FMath::Max(1, gun ? gun->magazine_capacity : 0);
 			if (const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
 			{
 				display.rounds = ammo->rounds;
@@ -1439,7 +1460,7 @@ FEquipmentDisplay APlayerCharacter::GetWeaponDisplay(EWeaponType weapon) const
 		if (weapon == EWeaponType::PICKAXE)
 		{
 			display.rounds = pickaxe_charges_;
-			if (pickaxe_charges_ < PICKAXE_MAX_CHARGES)
+			if (pickaxe_charges_ < PICKAXE_SETTINGS.max_charges)
 			{
 				const double charge_seconds = GetPickaxeChargeSeconds();
 				const double elapsed = FMath::Max(0.0, GetWorld()->GetTimeSeconds() - pickaxe_charge_start_);
@@ -1526,7 +1547,7 @@ TArray<FInventoryItem> APlayerCharacter::GetInventoryItems() const
 double APlayerCharacter::GetPickaxeChargeSeconds() const
 {
 	const TOptional<EHintGrade>& grade = item_grades_[static_cast<int32>(EItemKind::PICKAXE_CHARGE)];
-	return (grade ? PICKAXE_CHARGE_MS - ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[static_cast<int32>(*grade)] : PICKAXE_CHARGE_MS) / 1000.0;
+	return (grade ? PICKAXE_SETTINGS.charge_ms - ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[static_cast<int32>(*grade)] : PICKAXE_SETTINGS.charge_ms) / 1000.0;
 }
 
 float APlayerCharacter::GetStunGaugeDecayPerSecond() const
@@ -1586,7 +1607,8 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 {
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-	if (weapon != current_weapon_ || is_equipping_ || !ammo || !settings || !IsGunWeapon(static_cast<WeaponType>(weapon)) || ammo->spare_rounds <= 0 || ammo->rounds >= WEAPON_MAGAZINE_CAPACITIES[static_cast<uint8>(weapon)] || ammo->is_reloading)
+	const GunSettings* gun = FindGunSettings(weapon);
+	if (weapon != current_weapon_ || is_equipping_ || !ammo || !settings || !gun || ammo->spare_rounds <= 0 || ammo->rounds >= gun->magazine_capacity || ammo->is_reloading)
 	{
 		return;
 	}
@@ -1610,8 +1632,9 @@ void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
 {
 	const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
+	const GunSettings* gun = FindGunSettings(weapon);
 	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-	if (weapon != current_weapon_ || !ammo || !ammo->is_reloading || !settings || !settings->hitscan.reload_montage || !anim_instance)
+	if (weapon != current_weapon_ || !ammo || !ammo->is_reloading || !settings || !gun || !settings->hitscan.reload_montage || !anim_instance)
 	{
 		return;
 	}
@@ -1620,7 +1643,7 @@ void APlayerCharacter::PlayReloadAnimation(EWeaponType weapon)
 	{
 		return;
 	}
-	const float duration = WEAPON_RELOAD_DURATIONS_MS[static_cast<uint8>(weapon)] / 1000.0f;
+	const float duration = gun->reload_duration_ms / 1000.0f;
 	const float play_rate = montage->GetPlayLength() / duration;
 	const float position = static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->reload_start_time) * play_rate;
 	anim_instance->Montage_Play(montage, play_rate, EMontagePlayReturnType::MontageLength, position, false);
@@ -1655,7 +1678,7 @@ void APlayerCharacter::ToggleAim()
 	{
 		return;
 	}
-	if (const FWeaponSettings* settings = GetCurrentWeaponSettings(); settings && settings->can_aim)
+	if (GetEquipmentSettings(current_weapon_).can_aim)
 	{
 		SetAiming(!is_aiming_);
 	}
@@ -1669,11 +1692,12 @@ void APlayerCharacter::SetAiming(bool is_aiming)
 		return;
 	}
 
-	is_aiming_ = is_aiming && settings && settings->can_aim;
+	is_aiming_ = is_aiming && settings && GetEquipmentSettings(current_weapon_).can_aim;
 	if (is_aiming_)
 	{
 		// 3인칭 화면 중앙이 가리키던 지점을 조준경 중앙이 그대로 가리키도록 시점을 돌린다.
-		if (third_person_camera_->IsActive() && Controller && GetWorld())
+		const GunSettings* gun = FindGunSettings(current_weapon_);
+		if (third_person_camera_->IsActive() && Controller && GetWorld() && gun)
 		{
 			const FVector view_direction = third_person_camera_->GetForwardVector();
 			const FVector view_location = third_person_camera_->GetComponentLocation();
@@ -1686,7 +1710,7 @@ void APlayerCharacter::SetAiming(bool is_aiming)
 				}
 			}
 			const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(GetActorLocation() - view_location, view_direction));
-			const FVector aim_end = aim_start + view_direction * WEAPON_HITSCAN_DISTANCES[static_cast<uint8>(current_weapon_)];
+			const FVector aim_end = aim_start + view_direction * gun->hitscan_distance;
 			FHitResult aim_hit;
 			const FVector aim_point = GetWorld()->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, settings->hitscan.trace_channel, query) ? aim_hit.ImpactPoint : aim_end;
 			// 조준 카메라 위치는 몸 방향을 따라 돌기 때문에 바뀐 방향으로 한 번 더 맞춘다.

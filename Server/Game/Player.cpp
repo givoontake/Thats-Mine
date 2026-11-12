@@ -7,6 +7,7 @@
 #include "shot_spread.h"
 #include "MoveSimulation.h"
 #include "combat_settings.h"
+#include "equipment_settings.h"
 #include "item_settings.h"
 #include "move_check_settings.h"
 #include "movement_settings.h"
@@ -87,14 +88,7 @@ ShotSpreadInput Player::GetShotSpreadInput(long long time_ms) const
 	const bool has_state = HasMoveState();
 	const MOVE_STATE state = GetMoveState();
 	const bool is_falling = has_state && state.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
-	const bool is_unaimed = !has_state || (!is_aiming_ && time_ms - aim_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS);
-	return { !is_unaimed, is_falling, std::hypot(state.velocity[0], state.velocity[1]) };
-}
-
-int Player::GetPickaxeChargeMs() const
-{
-	const std::uint8_t grade = item_grades_[static_cast<std::size_t>(ItemKind::PICKAXE_CHARGE)];
-	return grade == NO_ITEM_GRADE ? PICKAXE_CHARGE_MS : PICKAXE_CHARGE_MS - ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[grade];
+	return { is_falling, std::hypot(state.velocity[0], state.velocity[1]) };
 }
 
 float Player::GetStunGaugeDecayPerSecond() const
@@ -121,6 +115,8 @@ void Player::AddItem(ItemKind kind, std::uint8_t grade)
 	// 등급 값은 높은 등급일수록 작다.
 	std::uint8_t& current = item_grades_[static_cast<std::size_t>(kind)];
 	if (current == NO_ITEM_GRADE || grade < current) current = grade;
+	// 곡괭이 충전 아이템은 곡괭이 충전 시간을 줄인다. 더 짧아질 때만 바뀐다.
+	if (kind == ItemKind::PICKAXE_CHARGE) action_state_.GetPickaxe().ShortenChargeMs(PICKAXE_SETTINGS.charge_ms - ITEM_PICKAXE_CHARGE_REDUCTIONS_MS[grade]);
 }
 
 void Player::ResetItems()
@@ -180,7 +176,7 @@ void Player::AdvanceMove(long long time_ms)
 {
 	if (!HasMoveState() || time_ms <= server_move_time_ms_) return;
 	const auto [input_right, input_forward] = GetMoveInput(time_ms);
-	server_move_.Simulate(input_right, input_forward, is_aiming_, static_cast<float>(time_ms - server_move_time_ms_) / 1000.0f);
+	server_move_.Simulate(input_right, input_forward, IsAiming(), static_cast<float>(time_ms - server_move_time_ms_) / 1000.0f);
 	server_move_time_ms_ = time_ms;
 }
 
@@ -202,11 +198,11 @@ void Player::SetMoveInput(std::int8_t input_right, std::int8_t input_forward)
 	input_forward_ = input_forward;
 }
 
-void Player::SetAiming(bool is_aiming, long long time_ms)
+bool Player::SetAiming(bool is_aiming, long long time_ms)
 {
-	if (is_aiming != is_aiming_) aim_change_ms_ = time_ms;
-	is_aiming_ = is_aiming;
+	if (!action_state_.GetHeldEquipment().TrySetAiming(is_aiming, time_ms)) return false;
 	pose_.SetAiming(is_aiming);
+	return true;
 }
 
 void Player::SetSpawnLocation(const MapData& map, const float location[3], float yaw, long long time_ms)
@@ -251,7 +247,7 @@ MOVE_STATE Player::PredictMoveState(long long time_ms) const
 	if (time_ms >= server_move_time_ms_ || history_count_ == 0) {
 		MoveSimulation simulation = server_move_;
 		const auto [input_right, input_forward] = GetMoveInput(time_ms);
-		simulation.Simulate(input_right, input_forward, is_aiming_, static_cast<float>(time_ms - server_move_time_ms_) / 1000.0f);
+		simulation.Simulate(input_right, input_forward, IsAiming(), static_cast<float>(time_ms - server_move_time_ms_) / 1000.0f);
 		return simulation.GetMoveState();
 	}
 	// 최신 기록부터 거슬러 가며 time_ms 이전 마지막 기록(before)과 그 다음 기록(after)을 찾는다. 다음 기록이 없으면 지금 서버 이동 상태다.
@@ -353,7 +349,6 @@ void Player::ClearMoveState()
 	has_new_move_state_ = false;
 	input_right_ = 0;
 	input_forward_ = 0;
-	is_aiming_ = false;
 	is_move_stopped_ = false;
 	action_state_.ResetWeapon();
 	is_awaiting_move_rollback_ = false;
@@ -366,7 +361,7 @@ void Player::RecordHistory(long long tick_time_ms)
 	const int index = (history_start_ + history_count_) % HISTORY_SIZE;
 	if (history_count_ == HISTORY_SIZE) history_start_ = (history_start_ + 1) % HISTORY_SIZE;
 	else ++history_count_;
-	history_[index] = { tick_time_ms, GetMoveState(), input_right_, input_forward_, is_aiming_, pose_, stun_end_ms_, GetStunProtectionMs() };
+	history_[index] = { tick_time_ms, GetMoveState(), input_right_, input_forward_, IsAiming(), pose_, stun_end_ms_, GetStunProtectionMs() };
 }
 
 std::optional<RewoundState> Player::GetRewoundState(long long time_ms) const

@@ -25,6 +25,10 @@ add_executable(GameServer
     Game/Player.cpp
     Game/PlayerActionState.cpp
     Game/MoveSimulation.cpp
+    Game/Equipment/Equipment.cpp
+    Game/Equipment/Gun.cpp
+    Game/Equipment/Magnifier.cpp
+    Game/Equipment/Pickaxe.cpp
     Game/Boxes/BoxCandidateData.cpp
     Game/Boxes/BoxShapeData.cpp
     Game/Hints/DirectionHintData.cpp
@@ -71,6 +75,7 @@ add_executable(GameServer
     Common/char_buffer.h
     Common/ConcurrentTaskQueue.h
     Common/enum_class.h
+    Common/equipment_types.h
     Common/error_code.h
     Common/hint_meshes.h
     Common/IndexRegistry.h
@@ -80,6 +85,7 @@ add_executable(GameServer
     Common/spread_selection.h
     Common/types.h
     Settings/combat_settings.h
+    Settings/equipment_settings.h
     Settings/item_settings.h
     Settings/lobby_settings.h
     Settings/match_settings.h
@@ -94,7 +100,10 @@ add_executable(GameServer
     Database/db_session_task.h
     Game/Player.h
     Game/PlayerActionState.h
-    Game/weapon_ammo.h
+    Game/Equipment/Equipment.h
+    Game/Equipment/Gun.h
+    Game/Equipment/Magnifier.h
+    Game/Equipment/Pickaxe.h
     Game/MoveSimulation.h
     Game/player_snapshot.h
     Game/Boxes/box_types.h
@@ -162,7 +171,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GAME_SERVER_FILES})
 target_compile_features(GameServer PRIVATE cxx_std_20)
 target_compile_definitions(GameServer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(GameServer PRIVATE
-    . Common Core Database Game Game/Boxes Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Network Packets Rooms Settings SharedMovement Threads
+    . Common Core Database Game Game/Boxes Game/Equipment Game/Hints Game/Hitbox Game/Map Game/Regions Game/Treasure Lobby Network Packets Rooms Settings SharedMovement Threads
     Threads/Database Threads/Game Threads/IO Threads/Lobby Threads/Matching Threads/Timer Threads/Managers
 )
 target_link_libraries(GameServer PRIVATE TBB::tbb Botan::Botan MySQLConnector ws2_32 mswsock bcrypt)

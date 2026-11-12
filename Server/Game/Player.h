@@ -15,7 +15,6 @@
 #include "block_pieces.h"
 #include "CharacterPose.h"
 #include "hitbox_types.h"
-#include "weapon_ammo.h"
 #include "MoveSimulation.h"
 #include "player_snapshot.h"
 #include "PlayerActionState.h"
@@ -39,14 +38,12 @@ class Player
 	std::uint32_t move_client_time_ms_ = 0;
 	// 마지막으로 이동 상태를 중계한 서버 시각
 	long long relay_time_ms_ = 0;
-	// 마지막으로 받은 이동 키 입력(-127~127)과 조준 여부
+	// 마지막으로 받은 이동 키 입력(-127~127)
 	std::int8_t input_right_ = 0;
 	std::int8_t input_forward_ = 0;
-	bool is_aiming_ = false;
 	// 서버가 멈춘 것으로 판단해 다른 플레이어에게 멈춤을 알렸는지. 멈춘 동안은 이동 키 입력 없이 진행하고, 이동 상태를 다시 인정하면 거짓이 된다.
 	bool is_move_stopped_ = false;
-	// 조준·공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
-	long long aim_change_ms_ = 0;
+	// 공중 여부가 마지막으로 바뀐 시각. 탄 퍼짐 최소치를 정할 때 막 바뀐 상태는 봐준다.
 	long long fall_change_ms_ = 0;
 	// 이동 상태를 인정해 간격을 기다리지 않고 이번 틱에 중계할지
 	bool has_new_move_state_ = false;
@@ -70,7 +67,7 @@ class Player
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
 	std::uint32_t move_rollback_id_ = 0;
 	bool is_awaiting_move_rollback_ = false;
-	// 손에 든 장비, 동작을 받을지 판단하는 상태, 탄약, 곡괭이 사용 횟수
+	// 가진 장비와 손에 든 장비, 동작을 받을지 판단하는 상태
 	PlayerActionState action_state_;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
 	std::vector<std::uint32_t> hint_indices_;
@@ -133,7 +130,8 @@ public:
 	bool CanRelayMoveState() const { return has_new_move_state_; }
 	std::int8_t GetInputRight() const { return input_right_; }
 	std::int8_t GetInputForward() const { return input_forward_; }
-	bool IsAiming() const { return is_aiming_; }
+	// 손에 든 장비가 조준 중인지
+	bool IsAiming() const { return action_state_.GetHeldEquipment().IsAiming(); }
 	bool IsMoveStopped() const { return is_move_stopped_; }
 	// 서버 이동 상태를 수평으로 바로 세우고, 다음 이동 상태를 인정할 때까지 이동 키 입력 없이 진행한다.
 	void StopMove();
@@ -141,9 +139,7 @@ public:
 	bool IsMoveRelayDue(long long tick_time_ms) const { return tick_time_ms - relay_time_ms_ >= MOVE_SEND_INTERVAL_MS; }
 	PlayerActionState& GetActionState() { return action_state_; }
 	const PlayerActionState& GetActionState() const { return action_state_; }
-	// 가진 아이템을 적용한 곡괭이 1번 충전 시간(ms)
-	int GetPickaxeChargeMs() const;
-	// time_ms에 쏠 때 퍼짐 크기를 정할 상태. 공중이나 조준하지 않은 상태는 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 상태로 본다.
+	// time_ms에 쏠 때 퍼짐 크기를 정할 이동 상태. 공중은 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 공중으로 본다.
 	ShotSpreadInput GetShotSpreadInput(long long time_ms) const;
 
 	void SetRoomPlayerState(RoomPlayerState new_state) { return room_player_state_.store(new_state); }
@@ -157,7 +153,8 @@ public:
 	// 서버 이동 상태를 time_ms까지 지금 이동 키 입력으로 진행한다. 틱마다, 그리고 이동 키 입력·조준이 바뀌기 직전에 그 시각까지 부른다.
 	void AdvanceMove(long long time_ms);
 	void SetMoveInput(std::int8_t input_right, std::int8_t input_forward);
-	void SetAiming(bool is_aiming, long long time_ms);
+	// 손에 든 장비의 조준을 바꾼다. 조준할 수 없는 장비면 받지 않는다.
+	bool SetAiming(bool is_aiming, long long time_ms);
 	// 서버 이동 상태를 스폰 자리에 선 상태로 둔다. 첫 이동 상태도 이 상태와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
 	void SetSpawnLocation(const MapData& map, const float location[3], float yaw, long long time_ms);
 	void MarkMoveStateRelayed(long long tick_time_ms);

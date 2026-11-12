@@ -29,7 +29,6 @@
 #include "Player/PlayerCharacter.h"
 #include "Player/player_action.h"
 #include "game_packets.h"
-#include "combat_settings.h"
 
 static const TCHAR* EXPORT_CHARACTER_BLUEPRINT = TEXT("/Game/Thats_Mine/Actors/Characters/BP_KayKitBarbarian.BP_KayKitBarbarian");
 static const TCHAR* EXPORT_BLEND_SPACE = TEXT("/Game/Thats_Mine/Animations/Move/BS_KayKitMovement.BS_KayKitMovement");
@@ -333,9 +332,9 @@ FString UHitboxExportTools::ExportServerData(USkeletalMesh* mesh, UPhysicsAsset*
 		{
 			add_montage(settings.primary_action.montage, static_cast<uint8>(settings.melee_hit.is_enabled ? EPlayerAction::MELEE : EPlayerAction::FIRE), weapon, settings.primary_action.play_rate);
 		}
-		if (IsGunWeapon(static_cast<WeaponType>(weapon)) && settings.hitscan.reload_montage)
+		if (const GunSettings* gun = APlayerCharacter::FindGunSettings(static_cast<EWeaponType>(weapon)); gun && settings.hitscan.reload_montage)
 		{
-			add_montage(settings.hitscan.reload_montage, static_cast<uint8>(EPlayerAction::RELOAD), weapon, settings.hitscan.reload_montage->GetPlayLength() / (WEAPON_RELOAD_DURATIONS_MS[weapon] / 1000.0f));
+			add_montage(settings.hitscan.reload_montage, static_cast<uint8>(EPlayerAction::RELOAD), weapon, settings.hitscan.reload_montage->GetPlayLength() / (gun->reload_duration_ms / 1000.0f));
 		}
 		if (settings.equip_montage)
 		{

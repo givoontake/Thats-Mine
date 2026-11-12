@@ -2,10 +2,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <iterator>
 
 // 총 탄 퍼짐. 서버와 클라이언트가 같은 계산을 쓴다.
-// 공중에서는 항상 최대 퍼짐이다. 조준이 있는 무기(저격총)는 조준하지 않으면 기본, 조준하고 서 있으면 aimed_still, 조준하고 움직이면 aimed_moving이다.
+// 공중에서는 항상 최대 퍼짐이다. 조준할 수 있는 무기(장비 고유값 can_aim, 저격총)는 조준하지 않으면 기본, 조준하고 서 있으면 aimed_still, 조준하고 움직이면 aimed_moving이다.
 // 연사가 있는 무기(권총)는 연사 열기로 퍼짐이 커진다. 쏠 때마다 열기가 1 오르고(최대 heat_limit), 열기가 free_heat보다 높으면 넘은 만큼 per_shot씩 퍼짐이 커진다.
 // 마지막 발사 뒤 발사 간격만큼 더 쏘지 않으면 그때부터 발사 간격마다 열기가 1씩 내려간다. 최대 속도로 연사하면 회복 없이 오른다.
 // 한 발이 빗나가는 방향은 (판 시드, 플레이어 아이디, 무기, 그 무기의 발사 번호)를 섞은 해시로 정한다. 정수 연산만 써서 서버와 클라이언트가 같은 값을 얻는다.
@@ -15,7 +14,6 @@
 struct ShotSpreadSettings {
 	float base;
 	float max;
-	bool has_aim;
 	float aimed_still;
 	float aimed_moving;
 	float per_shot;
@@ -23,14 +21,6 @@ struct ShotSpreadSettings {
 	int heat_limit;
 };
 
-// 무기 값 순서: 곡괭이, 저격총, 권총, 돋보기. 총이 아닌 무기는 퍼짐이 없다.
-// 권총은 1·2발째가 기본이고 3발째부터 0.1도씩 커져 7발째에 최대다.
-constexpr ShotSpreadSettings SHOT_SPREADS[] = {
-	{ 0.0f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0, 0 },
-	{ 5.0f, 5.0f, true, 0.0f, 0.5f, 0.0f, 0, 0 },
-	{ 0.5f, 1.0f, false, 0.0f, 0.0f, 0.1f, 1, 6 },
-	{ 0.0f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0, 0 },
-};
 // 조준한 채 움직이는 것으로 보는 수평 속도(cm/s)
 constexpr float SHOT_SPREAD_MOVING_SPEED = 10.0f;
 // 언리얼의 PI 매크로와 겹치지 않게 따로 둔다.
@@ -42,11 +32,6 @@ struct ShotSpreadDirection {
 	float y;
 	float z;
 };
-
-constexpr const ShotSpreadSettings& GetShotSpreadSettings(std::uint8_t weapon)
-{
-	return SHOT_SPREADS[weapon < std::size(SHOT_SPREADS) ? weapon : 0];
-}
 
 // 마지막 발사 뒤 elapsed_seconds가 지났을 때의 연사 열기
 inline int RecoverShotHeat(int heat, float elapsed_seconds, int fire_interval_ms)
@@ -65,7 +50,7 @@ inline int AddShotHeat(const ShotSpreadSettings& settings, int heat)
 inline float GetShotSpread(const ShotSpreadSettings& settings, int heat, bool is_aiming, float horizontal_speed, bool is_falling)
 {
 	if (is_falling) return settings.max;
-	if (settings.has_aim && is_aiming) return horizontal_speed > SHOT_SPREAD_MOVING_SPEED ? settings.aimed_moving : settings.aimed_still;
+	if (is_aiming) return horizontal_speed > SHOT_SPREAD_MOVING_SPEED ? settings.aimed_moving : settings.aimed_still;
 	return std::min(settings.max, settings.base + settings.per_shot * std::max(0, heat - settings.free_heat));
 }
 

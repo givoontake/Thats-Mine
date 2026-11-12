@@ -35,9 +35,6 @@ struct FWeaponSettings
 	FHitscanSettings hitscan;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
-	bool can_aim = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	bool uses_rifle_pose = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
@@ -52,6 +49,6 @@ struct FWeaponSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	FName left_hand_grip_socket;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (EditCondition = "can_aim", ClampMin = "5", ClampMax = "170"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (ClampMin = "5", ClampMax = "170"))
 	float aiming_field_of_view = 40.0f;
 };
