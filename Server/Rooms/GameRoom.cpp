@@ -336,7 +336,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		else if (type == C2S_AIM) {
 			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
 			// 손에 든 장비가 조준할 수 없으면 받지 않는다.
-			if (!room_player->SetAiming(is_aiming, tick_time_ms_)) break;
+			if (!room_player->SetAiming(is_aiming)) break;
 			const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, is_aiming };
 			SendToPlaying(reinterpret_cast<const char*>(&aim_p), sizeof(aim_p));
 		}
@@ -1132,7 +1132,7 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
 	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
 	if (!std::isfinite(aim_length) || aim_length < 0.5f) return;
-	const std::optional<FiredShot> shot = action_state.TryFire(shooter.GetShotSpreadInput(time_ms), request_p.action_time_ms, time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon));
+	const std::optional<FiredShot> shot = action_state.TryFire(shooter.GetShotSpreadInput(), request_p.action_time_ms, time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon));
 	if (!shot) return;
 	const Gun* gun = action_state.FindGun(weapon);
 
@@ -1221,7 +1221,7 @@ void GameRoom::AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon
 	if (target.AddStunGauge(gain * STUN_GAUGE_PART_MULTIPLIERS[part_index], tick_time_ms_)) {
 		// 기절하면 조작을 받지 않으므로 이동 키 입력과 조준을 지운다. 클라이언트도 기절 적용을 받으면 스스로 지운다. 이동은 중력과 관성대로 이어진다.
 		target.SetMoveInput(0, 0);
-		target.SetAiming(false, tick_time_ms_);
+		target.SetAiming(false);
 		S2C_STUN_APPLY_PACKET stun_p;
 		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN_APPLY };
 		stun_p.player_id = target.GetSessionKey().player_id;
@@ -1273,7 +1273,7 @@ bool GameRoom::CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& c
 	if (!std::isfinite(camera.x) || !std::isfinite(camera.y) || !std::isfinite(camera.z)) return false;
 	const MOVE_STATE& state = shooter.GetMoveState();
 	const float yaw = DirectX::XMConvertToRadians(state.yaw);
-	const float tolerance = CAMERA_POSITION_TOLERANCE + std::hypot(state.velocity[0], state.velocity[1], state.velocity[2]) * CAMERA_FRAME_ALLOWANCE_SECONDS;
+	const float tolerance = MOVE_TOLERANCE + std::hypot(state.velocity[0], state.velocity[1], state.velocity[2]) * CAMERA_FRAME_ALLOWANCE_SECONDS;
 	if (shooter.IsAiming()) {
 		const float horizontal = std::hypot(camera.x - (state.location[0] + AIM_CAMERA_FORWARD * std::cos(yaw)), camera.y - (state.location[1] + AIM_CAMERA_FORWARD * std::sin(yaw)));
 		if (horizontal > tolerance || std::abs(camera.z - (state.location[2] + AIM_CAMERA_UP)) > tolerance + AIM_CAMERA_BOB_RANGE) return false;

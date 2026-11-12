@@ -24,16 +24,13 @@ constexpr float CAMERA_PITCH_DOWN_DEGREES = 8.0f;
 constexpr float AIM_CAMERA_FORWARD = 66.9f;
 constexpr float AIM_CAMERA_UP = 18.7f;
 constexpr float AIM_CAMERA_BOB_RANGE = 30.0f;
-// 명중 카메라 검증. 받은 카메라 위치가 서버가 계산한 자리에서 이만큼(cm)과 "속도 × CAMERA_FRAME_ALLOWANCE_SECONDS"까지 벗어나도 된다.
+// 명중 카메라 검증. 받은 카메라 위치가 서버가 계산한 자리에서 이동 검증 허용치(MOVE_TOLERANCE)와 "속도 × CAMERA_FRAME_ALLOWANCE_SECONDS"까지 벗어나도 된다.
 // 카메라는 이전 프레임에 자리를 정하므로 그만큼 움직인 몫을 봐준다. 3인칭 카메라에서 맞은 곳은 카메라 방향에서 CAMERA_VIEW_CONE_DEGREES 안이어야 한다.
-constexpr float CAMERA_POSITION_TOLERANCE = 15.0f;
 constexpr float CAMERA_FRAME_ALLOWANCE_SECONDS = 0.05f;
 constexpr float CAMERA_VIEW_CONE_DEGREES = 45.0f;
 
-// 탄 퍼짐(shot_spread.h). 서버가 퍼짐 크기를 정한다. 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정하고,
-// 공중이나 조준하지 않은 상태는 이동 상태에서 SHOT_SPREAD_STATE_ALLOWANCE_MS 넘게 이어졌을 때만 그 퍼짐을 쓴다. 상태가 막 바뀐 것은 지연으로 보고 봐준다.
+// 탄 퍼짐(shot_spread.h). 서버가 퍼짐 크기를 정한다. 서버가 받은 발사 시각으로 센 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 정한다.
 constexpr float SHOT_SPREAD_TIME_ALLOWANCE_SECONDS = 0.2f;
-constexpr long long SHOT_SPREAD_STATE_ALLOWANCE_MS = 300;
 constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.
 
 // 발사 간격 검증. 무기마다 직전 인정 발사와의 동작 시각 간격에 보상(ms)을 더해 발사 간격 이상이면 인정한다.

@@ -41,6 +41,6 @@ public:
 	// 지난 시간(ms)만큼 상태를 진행하고 일어난 일을 돌려준다.
 	virtual EquipmentEvent Update(long long) { return EquipmentEvent::NONE; }
 	virtual bool IsAiming() const { return false; }
-	// 조준을 바꾼다. 조준할 수 없는 장비는 조준하려는 요청을 받지 않는다. time_ms는 바꾼 시각이다.
-	virtual bool TrySetAiming(bool is_aiming, long long) { return !is_aiming; }
+	// 조준을 바꾼다. 조준할 수 없는 장비는 조준하려는 요청을 받지 않는다.
+	virtual bool TrySetAiming(bool is_aiming) { return !is_aiming; }
 };

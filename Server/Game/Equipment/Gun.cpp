@@ -21,7 +21,6 @@ void Gun::Reset()
 	shot_count_ = 0;
 	spread_heat_ = 0;
 	is_aiming_ = false;
-	aim_change_ms_ = 0;
 }
 
 void Gun::ResetActionTime(long long time_ms)
@@ -66,10 +65,9 @@ EquipmentEvent Gun::Update(long long elapsed_ms)
 	return EquipmentEvent::RELOAD_START;
 }
 
-bool Gun::TrySetAiming(bool is_aiming, long long time_ms)
+bool Gun::TrySetAiming(bool is_aiming)
 {
 	if (is_aiming && !GetSettings().can_aim) return false;
-	if (is_aiming != is_aiming_) aim_change_ms_ = time_ms;
 	is_aiming_ = is_aiming;
 	return true;
 }
@@ -91,9 +89,8 @@ std::optional<FiredShot> Gun::TryFire(const ShotSpreadInput& spread_input, std::
 	last_fire_action_ms_ = action_time_ms;
 	last_fire_receive_ms_ = time_ms;
 	--rounds_;
-	// 서버가 받은 조준 변화와 발사 간격은 지연 때문에 실제와 다를 수 있어, 막 바뀐 조준은 조준한 것으로 보고 퍼짐 크기는 연사 열기를 더 회복한 값으로 본다.
-	const bool is_aimed = is_aiming_ || time_ms - aim_change_ms_ < SHOT_SPREAD_STATE_ALLOWANCE_MS;
-	const FiredShot shot{ shot_count_++, GetShotSpread(gun.spread, RecoverShotHeat(spread_heat_, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, gun.fire_interval_ms), is_aimed, spread_input.horizontal_speed, spread_input.is_falling) };
+	// 서버가 받은 발사 간격은 지연 때문에 실제와 다를 수 있어, 퍼짐 크기는 연사 열기를 더 회복한 값으로 본다.
+	const FiredShot shot{ shot_count_++, GetShotSpread(gun.spread, RecoverShotHeat(spread_heat_, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, gun.fire_interval_ms), is_aiming_, spread_input.horizontal_speed, spread_input.is_falling) };
 	spread_heat_ = AddShotHeat(gun.spread, RecoverShotHeat(spread_heat_, elapsed_seconds, gun.fire_interval_ms));
 	// 탄창이 비면 발사 동작이 끝난 뒤 재장전한다.
 	if (rounds_ == 0) ScheduleAutoReload(time_ms, fire_motion_ms);

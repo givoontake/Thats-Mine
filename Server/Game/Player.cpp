@@ -6,7 +6,6 @@
 #include "random_seed.h"
 #include "shot_spread.h"
 #include "MoveSimulation.h"
-#include "combat_settings.h"
 #include "equipment_settings.h"
 #include "item_settings.h"
 #include "move_check_settings.h"
@@ -82,12 +81,12 @@ std::optional<std::uint32_t> Player::TakeRandomHint()
 	return hint;
 }
 
-ShotSpreadInput Player::GetShotSpreadInput(long long time_ms) const
+ShotSpreadInput Player::GetShotSpreadInput() const
 {
-	// 서버가 받은 상태 변화는 지연 때문에 실제와 다를 수 있어, 막 바뀐 상태는 유리한 쪽으로 본다. 조준한 채 움직이는지는 서버 이동 상태의 수평 속도로 본다.
+	// 조준한 채 움직이는지는 서버 이동 상태의 수평 속도로 본다.
 	const bool has_state = HasMoveState();
 	const MOVE_STATE state = GetMoveState();
-	const bool is_falling = has_state && state.air_phase != AirPhase::GROUND && time_ms - fall_change_ms_ >= SHOT_SPREAD_STATE_ALLOWANCE_MS;
+	const bool is_falling = has_state && state.air_phase != AirPhase::GROUND;
 	return { is_falling, std::hypot(state.velocity[0], state.velocity[1]) };
 }
 
@@ -142,7 +141,6 @@ void Player::SetMoveState(const MapData& map, const MOVE_STATE& move_state, long
 	const long long state_time_ms = GetStateTimeMs(move_state, time_ms);
 	const bool was_walking = server_move_.IsWalking();
 	const bool is_walking = move_state.air_phase == AirPhase::GROUND;
-	if (was_walking != is_walking) fall_change_ms_ = time_ms;
 	clock_drift_ms_ = GetClockDrift(move_state, time_ms).value_or(0);
 	has_client_time_ = true;
 	if (is_walking || was_walking) {
@@ -198,9 +196,9 @@ void Player::SetMoveInput(std::int8_t input_right, std::int8_t input_forward)
 	input_forward_ = input_forward;
 }
 
-bool Player::SetAiming(bool is_aiming, long long time_ms)
+bool Player::SetAiming(bool is_aiming)
 {
-	if (!action_state_.GetHeldEquipment().TrySetAiming(is_aiming, time_ms)) return false;
+	if (!action_state_.GetHeldEquipment().TrySetAiming(is_aiming)) return false;
 	pose_.SetAiming(is_aiming);
 	return true;
 }

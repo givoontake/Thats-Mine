@@ -3,7 +3,7 @@
 #include <optional>
 #include "Equipment.h"
 
-// 퍼짐 크기를 정할 쏜 사람의 이동 상태. 공중 여부는 막 바뀐 상태를 봐준 값이고, 수평 속도는 서버 이동 상태의 값(cm/s)이다.
+// 퍼짐 크기를 정할 쏜 사람의 이동 상태. 공중 여부와 수평 속도(cm/s)는 서버 이동 상태의 값이다.
 struct ShotSpreadInput {
 	bool is_falling;
 	float horizontal_speed;
@@ -32,9 +32,8 @@ class Gun : public Equipment
 	// 탄 퍼짐(shot_spread.h). 이번 게임에서 인정한 발사 수와 마지막 발사 직후의 연사 열기
 	std::uint32_t shot_count_ = 0;
 	int spread_heat_ = 0;
-	// 조준 중인지와 조준이 마지막으로 바뀐 시각. 탄 퍼짐에서 막 바뀐 조준은 봐준다.
+	// 조준 중인지
 	bool is_aiming_ = false;
-	long long aim_change_ms_ = 0;
 
 public:
 	explicit Gun(const GunSettings& settings);
@@ -53,7 +52,7 @@ public:
 	// 재장전이 끝나면 소지 탄에서 탄창이 빈 만큼 채우고, 예약한 자동 재장전 시간이 지나면 재장전을 시작한다.
 	EquipmentEvent Update(long long elapsed_ms) override;
 	bool IsAiming() const override { return is_aiming_; }
-	bool TrySetAiming(bool is_aiming, long long time_ms) override;
+	bool TrySetAiming(bool is_aiming) override;
 
 	// 쏜다. 교체 대기 중, 재장전 중, 탄이 없거나 발사 간격 검증을 통과하지 못하면 값이 없다.
 	// 인정하면 탄 하나를 쓰고 발사 번호와 퍼짐 크기를 정한다. 탄창이 비면 발사 동작(fire_motion_ms)이 끝날 때 자동 재장전을 예약한다.
