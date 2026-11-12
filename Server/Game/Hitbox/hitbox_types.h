@@ -73,11 +73,9 @@ enum class UpperBodyPose : std::uint8_t { IDLE, PICKAXE_HOLD, PISTOL_AIM, RIFLE_
 
 enum class WeaponPoseType : std::uint8_t { NONE, PICKAXE, PISTOL, RIFLE };
 
-// 무기 값 순서대로 둔 무기 정보. 상체 자세 종류, 조준 상하 제한(도), 총(광선 판정) 여부와 사거리(cm)다.
+// 무기 값 순서대로 둔 무기 정보. 상체 자세 종류다.
 struct WeaponInfo {
 	WeaponPoseType pose_type;
-	float aim_pitch_up_limit;
-	float aim_pitch_down_limit;
 };
 
 // FULL_BODY: 전신, UPPER_BODY: 허리부터 위, RIGHT_ARM: 오른팔

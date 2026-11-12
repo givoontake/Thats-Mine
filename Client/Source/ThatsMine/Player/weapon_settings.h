@@ -46,12 +46,6 @@ struct FWeaponSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	bool uses_pickaxe_pose = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose || uses_pistol_pose", ClampMin = "0", ClampMax = "89", Units = "deg"))
-	float aim_pitch_up_limit = 60.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose || uses_pistol_pose", ClampMin = "0", ClampMax = "89", Units = "deg"))
-	float aim_pitch_down_limit = 45.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Pose", meta = (EditCondition = "uses_rifle_pose || uses_pistol_pose", ClampMin = "0.1"))
 	float aim_pitch_interp_speed = 12.0f;
 

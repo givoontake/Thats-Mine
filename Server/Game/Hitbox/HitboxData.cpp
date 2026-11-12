@@ -11,7 +11,7 @@
 using namespace DirectX;
 
 // 파일 형식 버전. 내보내기 도구와 같아야 한다.
-constexpr std::uint32_t HITBOX_DATA_VERSION = 5;
+constexpr std::uint32_t HITBOX_DATA_VERSION = 6;
 constexpr int BONE_NAME_SIZE = 32;
 constexpr int TRACK_SOURCE_SIZE = 256;
 constexpr int POSE_NAME_SIZE = 32;
@@ -286,8 +286,6 @@ bool HitboxData::Load(const std::string& file_path)
 	for (std::uint32_t weapon = 0; weapon < weapon_count && is_valid; ++weapon) {
 		WeaponInfo info{};
 		read_value(info.pose_type);
-		read_value(info.aim_pitch_up_limit);
-		read_value(info.aim_pitch_down_limit);
 		weapon_infos_.push_back(info);
 	}
 

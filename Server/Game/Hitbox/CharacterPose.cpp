@@ -307,9 +307,9 @@ std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_
 		}
 	}
 
-	// 5. 조준 상하: 권총·소총은 시선 상하 각도를 허리와 가슴에 나눠 기울인다. 위를 볼 때 앞(X)이 위(Z)로 가도록 Y축 반대로 돈다.
+	// 5. 조준 상하: 권총·소총은 시선 상하 각도를 허리와 가슴에 나눠 기울인다. 위를 볼 때 앞(X)이 위(Z)로 가도록 Y축 반대로 돈다. 상하 제한은 고개와 같다.
 	if (pose_type == WeaponPoseType::PISTOL || pose_type == WeaponPoseType::RIFLE) {
-		const float pitch = XMConvertToRadians(std::clamp(move_state.view_pitch, -weapon_info->aim_pitch_down_limit, weapon_info->aim_pitch_up_limit));
+		const float pitch = XMConvertToRadians(std::clamp(move_state.view_pitch, -data.GetHeadPitchDownLimit(), data.GetHeadPitchUpLimit()));
 		rotate_bone(data.GetSpineBone(), XMQuaternionRotationNormal(g_XMIdentityR1, -pitch * SPINE_AIM_RATIO));
 		rotate_bone(data.GetChestBone(), XMQuaternionRotationNormal(g_XMIdentityR1, -pitch * CHEST_AIM_RATIO));
 	}
