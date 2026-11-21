@@ -187,18 +187,18 @@ static std::int8_t GetKeyAxis(std::uint8_t move_keys, MoveKey positive, MoveKey 
 	return static_cast<std::int8_t>(value * 127);
 }
 
-std::pair<std::int8_t, std::int8_t> Player::GetStepInput(std::uint8_t move_keys, std::uint32_t tick) const
+std::pair<std::int8_t, std::int8_t> Player::GetStepInput(std::uint8_t move_keys, bool is_input_locked) const
 {
-	if (IsInputLocked(tick)) return { 0, 0 };
+	if (is_input_locked) return { 0, 0 };
 	return { GetKeyAxis(move_keys, MoveKey::RIGHT, MoveKey::LEFT), GetKeyAxis(move_keys, MoveKey::FORWARD, MoveKey::BACKWARD) };
 }
 
-MoveSimulation Player::PredictMoveStep(const MOVE_STATE& move_state, std::uint8_t move_keys, std::uint32_t tick) const
+MoveSimulation Player::PredictMoveStep(const MOVE_STATE& move_state, std::uint8_t move_keys, bool is_input_locked) const
 {
 	MoveSimulation simulation = server_move_;
 	simulation.SetView(move_state.yaw, move_state.view_pitch);
-	if (HasMoveKey(move_keys, MoveKey::JUMP) && simulation.IsWalking() && !IsInputLocked(tick)) simulation.StartJump();
-	const auto [input_right, input_forward] = GetStepInput(move_keys, tick);
+	if (HasMoveKey(move_keys, MoveKey::JUMP) && simulation.IsWalking() && !is_input_locked) simulation.StartJump();
+	const auto [input_right, input_forward] = GetStepInput(move_keys, is_input_locked);
 	simulation.Simulate(input_right, input_forward, IsAiming(), static_cast<float>(MOVE_STEP_MS) / 1000.0f, true);
 	return simulation;
 }
@@ -261,6 +261,7 @@ void Player::ClearStun()
 	stun_gauge_ = 0.0f;
 	stun_gauge_tick_ = 0;
 	stun_end_tick_ = 0;
+	stun_frame_limit_ = -1;
 	has_pending_stun_release_ = false;
 }
 
@@ -283,6 +284,10 @@ bool Player::AddStunGauge(float amount, std::uint32_t tick)
 	stun_gauge_ = 0.0f;
 	stun_gauge_tick_ = stun_end_tick_;
 	has_pending_stun_release_ = true;
+	// 서버는 이 플레이어의 번호를 만들어진 때보다 갭만큼 늦게 처리하므로, 지금 처리하는 번호 뒤 갭만큼은 클라이언트가 기절을 알기 전에 만든 번호다.
+	// 그 번호들은 받은 입력·동작대로 처리해 클라이언트와 같은 자리에서 기절하게 한다. 갭이 없으면(스폰·롤백 직후) 바로 조작을 막는다.
+	const long long process_number = frame_gap_.GetProcessNumber(tick);
+	stun_frame_limit_ = process_number < 0 ? -1 : process_number + frame_gap_.GetGap();
 	return true;
 }
 

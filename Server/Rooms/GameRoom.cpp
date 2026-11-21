@@ -304,9 +304,12 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		const auto* request_p = reinterpret_cast<C2S_MOVE_PACKET*>(packet);
 		const MOVE_STATE& move_state = request_p->move_state;
 		// 서버 이동 상태에서 이 번호를 이 패킷의 입력으로 계산해 받은 상태와 비교한다.
-		const MoveSimulation step_end = room_player->PredictMoveStep(move_state, request_p->move_keys, tick_number_);
-		// 기절 중에는 조작을 받지 않으므로 받은 상태와 비교하지 않고 서버가 입력 없이 계산한 상태로 둔다.
-		if (room_player->IsStunned(tick_number_)) {
+		// 기절해 조작을 받지 않는 번호는 조준을 끄고 입력 없이 계산하며, 받은 상태와 비교하지 않고 서버가 계산한 상태로 둔다.
+		// 기절 중이어도 클라이언트가 기절을 알기 전에 만든 번호는 받은 입력대로 계산하고 비교한다.
+		const bool is_input_locked = room_player->IsInputLocked(tick_number_, request_p->frame_number);
+		if (is_input_locked) room_player->SetAiming(false);
+		const MoveSimulation step_end = room_player->PredictMoveStep(move_state, request_p->move_keys, is_input_locked);
+		if (is_input_locked) {
 			room_player->SetServerMove(step_end);
 			break;
 		}
@@ -328,7 +331,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 			// 조준은 번호 안에서 이동 패킷보다 먼저 처리되므로, 이 번호의 이동부터 바뀐 조준으로 계산된다.
 			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
 			// 기절 중이면 조작을 받지 않고, 손에 든 장비가 조준할 수 없으면 받지 않는다. 받지 않으면 먼저 바꾼 본인에게 서버 조준을 보내 맞추게 한다.
-			if (room_player->IsStunned(tick_number_) || !room_player->SetAiming(is_aiming)) {
+			if (room_player->IsInputLocked(tick_number_, reinterpret_cast<C2S_AIM_PACKET*>(packet)->frame_number) || !room_player->SetAiming(is_aiming)) {
 				SendAimCorrection(*room_player);
 				break;
 			}
@@ -368,10 +371,11 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const bool is_reload = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_RELOAD;
 		const PlayerAction action = is_reload ? PlayerAction::RELOAD : static_cast<PlayerAction>(reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action);
-		const std::uint32_t action_time_ms = (is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->frame_number : reinterpret_cast<C2S_ACTION_PACKET*>(packet)->frame_number) * MOVE_STEP_MS;
+		const std::uint32_t frame_number = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->frame_number : reinterpret_cast<C2S_ACTION_PACKET*>(packet)->frame_number;
+		const std::uint32_t action_time_ms = frame_number * MOVE_STEP_MS;
 		const std::uint8_t weapon = room_player->GetActionState().GetWeapon();
 		// 롤백 확인을 기다리는 동안에는 동작을 받지 않는다. 휘두르기·줍기는 버리기만 한다.
-		const bool can_act = action <= PlayerAction::PICKUP && action != PlayerAction::FIRE && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_number_) && room_player->GetNetworkState() != NetworkState::ROLLBACK;
+		const bool can_act = action <= PlayerAction::PICKUP && action != PlayerAction::FIRE && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsInputLocked(tick_number_, frame_number) && room_player->GetNetworkState() != NetworkState::ROLLBACK;
 		if (!can_act || !AcceptAction(*room_player, action, weapon, action_time_ms)) {
 			// 클라이언트는 재장전을 바로 시작하므로, 인정하지 않으면 지금 탄약으로 재장전 끝을 보내 되돌린다.
 			if (is_reload) SendReloadDone(*room_player, weapon);
@@ -393,15 +397,15 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 	case C2S_FIRE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_number_)) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsInputLocked(tick_number_, reinterpret_cast<C2S_FIRE_PACKET*>(packet)->frame_number)) break;
 		ProcessFire(*room_player, *reinterpret_cast<C2S_FIRE_PACKET*>(packet));
 		break;
 	}
 	case C2S_BOX_OPEN: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_number_) || room_player->GetNetworkState() == NetworkState::ROLLBACK) break;
 		const auto* open_p = reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet);
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsInputLocked(tick_number_, open_p->frame_number) || room_player->GetNetworkState() == NetworkState::ROLLBACK) break;
 		if (CheckBoxOpen(*room_player, *open_p)) ProcessBoxOpen(*room_player, open_p->box, open_p->frame_number * MOVE_STEP_MS);
 		break;
 	}
@@ -1324,9 +1328,9 @@ void GameRoom::AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon
 	if (part_index >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_number_)) return;
 	const float gain = shooter.GetActionState().GetEquipment(weapon).GetSettings().stun_gauge_gain;
 	if (target.AddStunGauge(gain * STUN_GAUGE_PART_MULTIPLIERS[part_index], tick_number_)) {
-		// 기절하면 조작을 받지 않으므로 이동 키 입력과 조준을 지운다. 클라이언트도 기절 적용을 받으면 스스로 지운다. 이동은 중력과 관성대로 이어진다.
+		// 기절하면 조작을 받지 않으므로 이동 키 입력을 지운다. 조준은 그 사람이 조작을 잃는 첫 번호에서 끈다. 클라이언트도 기절 적용을 받으면 스스로 지운다.
+		// 이동은 중력과 관성대로 이어진다.
 		target.ClearMoveKeys();
-		target.SetAiming(false);
 		S2C_STUN_APPLY_PACKET stun_p;
 		stun_p.header = { static_cast<std::uint16_t>(sizeof(stun_p)), S2C_STUN_APPLY };
 		stun_p.player_id = target.GetSessionKey().player_id;

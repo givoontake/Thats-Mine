@@ -54,6 +54,9 @@ class Player
 	float stun_gauge_ = 0.0f;
 	std::uint32_t stun_gauge_tick_ = 0;
 	std::uint32_t stun_end_tick_ = 0;
+	// 기절 중에도 받은 입력·동작을 따르는 이 플레이어의 마지막 번호. 기절을 건 틱에 처리하던 번호 + 그때 갭이고,
+	// 클라이언트가 기절을 알기 전에 만든 번호까지다. 이 뒤 번호부터 조작을 받지 않는다.
+	long long stun_frame_limit_ = -1;
 	// 기절을 알린 뒤 아직 기절 해제를 알리지 않았는지
 	bool has_pending_stun_release_ = false;
 	// 가진 장비와 손에 든 장비, 동작을 받을지 판단하는 상태
@@ -78,8 +81,8 @@ class Player
 	std::uint32_t GetStunGaugeDecayDelayTicks() const;
 
 	void ClearMoveState();
-	// move_keys로 방 틱 tick에 처리하는 번호를 계산할 이동 입력(오른쪽, 앞쪽). 기절해 입력이 없는 것으로 보면 0이다.
-	std::pair<std::int8_t, std::int8_t> GetStepInput(std::uint8_t move_keys, std::uint32_t tick) const;
+	// move_keys로 번호 하나를 계산할 이동 입력(오른쪽, 앞쪽). 그 번호에서 기절해 조작을 받지 않으면 0이다.
+	std::pair<std::int8_t, std::int8_t> GetStepInput(std::uint8_t move_keys, bool is_input_locked) const;
 
 
 
@@ -103,11 +106,12 @@ public:
 	FrameGap& GetFrameGap() { return frame_gap_; }
 	const FrameGap& GetFrameGap() const { return frame_gap_; }
 	// 서버 이동 상태에서 이동 패킷 하나의 번호(MOVE_STEP_MS)를 그 패킷의 몸 방향·시선과 move_keys, 지금 조준으로 계산한다. 점프 비트면 번호 시작에 뛴다.
-	// tick은 그 번호를 처리하는 방 틱이고, 그때 기절해 있으면 입력 없이 계산한다. 받은 입력이라 바닥 끝에서 떨어진다.
-	MoveSimulation PredictMoveStep(const MOVE_STATE& move_state, std::uint8_t move_keys, std::uint32_t tick) const;
+	// is_input_locked면(그 번호에서 기절해 조작을 받지 않음) 입력 없이 계산한다. 받은 입력이라 바닥 끝에서 떨어진다.
+	MoveSimulation PredictMoveStep(const MOVE_STATE& move_state, std::uint8_t move_keys, bool is_input_locked) const;
 	bool IsStunned(std::uint32_t tick) const { return tick < stun_end_tick_; }
-	// 기절해 이동 입력이 없는 것으로 보는지. 기절 시작부터 끝까지 참이다.
-	bool IsInputLocked(std::uint32_t tick) const { return IsStunned(tick) && tick >= stun_end_tick_ - MsToTicks(STUN_DURATION_MS); }
+	// 방 틱 tick에 처리하는 이 플레이어의 번호 frame_number에서 기절해 조작(이동 입력·조준·동작)을 받지 않는지.
+	// 기절 중이어도 클라이언트가 기절을 알기 전에 만든 번호(stun_frame_limit_까지)는 받는다.
+	bool IsInputLocked(std::uint32_t tick, std::uint32_t frame_number) const { return IsStunned(tick) && frame_number > stun_frame_limit_; }
 	// 기절 중이거나 기절이 끝난 뒤 보호 시간 안이면 기절 게이지가 오르지 않는다.
 	bool IsStunProtected(std::uint32_t tick) const { return stun_end_tick_ != 0 && tick < stun_end_tick_ + GetStunProtectionTicks(); }
 	std::uint32_t GetStunProtectionTicks() const;
