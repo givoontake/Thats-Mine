@@ -580,6 +580,15 @@ void UMovementSyncSubsystem::HandleAimPacket(const TArray<uint8>& payload)
 	}
 	S2C_AIM_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	// 내 것이면 서버가 조준 변경을 받지 않은 것이다. 서버 조준으로 맞춘다. 맞춘 조준은 플레이어가 바꾼 것이 아니라 보내지 않는다.
+	if (packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
+	{
+		if (APlayerCharacter* character = local_character_.Get())
+		{
+			character->SetAiming(packet.is_aiming);
+		}
+		return;
+	}
 	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
@@ -596,6 +605,15 @@ void UMovementSyncSubsystem::HandleEquipPacket(const TArray<uint8>& payload)
 	}
 	S2C_EQUIP_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	// 내 것이면 서버가 장비 교체를 받지 않은 것이다. 서버 장비로 맞춘다. 맞춘 장비는 플레이어가 고른 것이 아니라 보내지 않는다.
+	if (packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
+	{
+		if (APlayerCharacter* character = local_character_.Get())
+		{
+			character->ApplyServerWeapon(ToWeaponType(packet.weapon));
+		}
+		return;
+	}
 	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{

@@ -585,6 +585,17 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	}
 }
 
+void APlayerCharacter::ApplyServerWeapon(EWeaponType weapon)
+{
+	if (weapon == current_weapon_)
+	{
+		return;
+	}
+	// 조준 중이면 무기를 바꿀 수 없으므로 먼저 푼다.
+	SetAiming(false);
+	SelectWeapon(weapon);
+}
+
 float APlayerCharacter::GetEquipDuration(EWeaponType weapon)
 {
 	return GetEquipmentSettings(weapon).equip_duration_ms / 1000.0f;
@@ -712,17 +723,11 @@ void APlayerCharacter::PrimaryAction()
 		}
 		else if (current_weapon_ != EWeaponType::MAGNIFIER)
 		{
-			// 곡괭이는 사용 가능 횟수가 있어야 휘두르고, 최대치에서 쓰면 충전을 시작한다.
+			// 곡괭이는 서버가 알려 준 사용 가능 횟수가 있어야 휘두른다. 횟수는 서버가 휘두르기마다 보내는 값으로만 바뀐다.
 			const bool is_pickaxe = current_weapon_ == EWeaponType::PICKAXE;
 			if ((is_pickaxe && pickaxe_charges_ <= 0) || !PlayAction(settings->primary_action, &settings->melee_hit))
 			{
 				return;
-			}
-			// 횟수는 서버가 휘두르기마다 보내는 값으로 맞춘다. 그 전까지 쓴 만큼 미리 줄여 표시한다.
-			if (is_pickaxe)
-			{
-				--pickaxe_charges_;
-				UpdateEquipmentDisplay();
 			}
 			action_real_time_ = FPlatformTime::Seconds();
 			on_action_started_.Broadcast(EPlayerAction::MELEE, current_weapon_);
@@ -1207,12 +1212,16 @@ void APlayerCharacter::CompleteReload(EWeaponType weapon, int32 rounds, int32 sp
 void APlayerCharacter::StartServerReload(EWeaponType weapon)
 {
 	const FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon);
-	if (weapon != current_weapon_ || !ammo || ammo->is_reloading)
+	if (!ammo || ammo->is_reloading)
 	{
 		return;
 	}
+	// 서버가 정한 재장전이라 지금 손에 든 무기가 아니어도 그 무기의 재장전 상태로 둔다. 애니메이션과 소리는 손에 든 무기일 때만 낸다.
 	StartReloadState(weapon);
-	PlayReloadSound(weapon);
+	if (weapon == current_weapon_)
+	{
+		PlayReloadSound(weapon);
+	}
 }
 
 void APlayerCharacter::SetPickaxeCharges(int32 charges, int32 remaining_ms)

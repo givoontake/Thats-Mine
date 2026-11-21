@@ -144,6 +144,10 @@ private:
 	void RelayMoveStop(Player& player);
 	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
 	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
+	// 서버가 조준 변경을 받지 않았을 때, 먼저 바꾼 본인에게 서버가 아는 조준 여부를 보내 맞추게 한다.
+	void SendAimCorrection(const Player& player);
+	// 서버가 장비 교체를 받지 않았을 때, 먼저 바꾼 본인에게 서버가 아는 손에 든 장비를 보내 맞추게 한다. 그 무기를 재장전 중이면 재장전 시작도 보낸다.
+	void SendEquipCorrection(const Player& player);
 	// 그 플레이어의 눌린 이동 키·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
 	int AppendInputState(char* buffer, const Player& player) const;
 	// 그 플레이어의 눌린 이동 키(점프 제외)마다 누름 패킷을 move_state의 위치·속도로 buffer에 쓰고 쓴 크기를 돌려준다.
@@ -222,4 +226,6 @@ public:
 	void Broadcast(char* packet);
 	// 플레이 중인 사람마다 이번 틱 송신 버퍼에 붙인다. 틱 끝에 그 사람의 다른 패킷과 함께 한 번에 나간다.
 	void SendToPlaying(const char* packet, int packet_size);
+	// 플레이 중인 사람 중 sender를 뺀 모두에게 보낸다. 클라이언트가 먼저 시작한 일을 인정했을 때 쓴다. 본인에게는 인정하지 않았을 때만 정정을 보낸다.
+	void SendToOtherPlaying(const Player& sender, const char* packet, int packet_size);
 };

@@ -20,3 +20,10 @@ void GameRoom::SendToPlaying(const char* packet, int packet_size)
 		if (FindSession(room_player) && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) GetTickSendBuffer(room_player).Append(packet, packet_size);
 	}
 }
+
+void GameRoom::SendToOtherPlaying(const Player& sender, const char* packet, int packet_size)
+{
+	for (auto& room_player : room_players_) {
+		if (&room_player != &sender && FindSession(room_player) && room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) GetTickSendBuffer(room_player).Append(packet, packet_size);
+	}
+}

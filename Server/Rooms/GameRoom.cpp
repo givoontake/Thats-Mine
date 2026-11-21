@@ -356,24 +356,35 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const int player_id = request_session.GetSessionKey().player_id;
 		const std::uint8_t type = reinterpret_cast<PACKET_HEADER*>(packet)->type;
-		// 기절 중에는 조작을 받지 않으므로 조준을 버린다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
-		if (type != C2S_EQUIP && room_player->IsStunned(tick_time_ms_)) break;
+		// 기절 중에는 조작을 받지 않으므로 조준을 받지 않고, 먼저 바꾼 본인에게 서버 조준을 보내 맞추게 한다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
+		if (type != C2S_EQUIP && room_player->IsStunned(tick_time_ms_)) {
+			SendAimCorrection(*room_player);
+			break;
+		}
 		// 서버 이동 상태는 받은 순간까지 앞 입력으로 진행한 뒤 새 조준을 쓴다.
 		if (type != C2S_EQUIP) room_player->AdvanceMove(receive_time_ms);
 		if (type == C2S_AIM) {
 			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
-			// 손에 든 장비가 조준할 수 없으면 받지 않는다.
-			if (!room_player->SetAiming(is_aiming)) break;
+			// 손에 든 장비가 조준할 수 없으면 받지 않고, 먼저 바꾼 본인에게 서버 조준을 보내 맞추게 한다.
+			if (!room_player->SetAiming(is_aiming)) {
+				SendAimCorrection(*room_player);
+				break;
+			}
+			// 본인은 먼저 바꿨으므로 다른 플레이어에게만 보낸다.
 			const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, is_aiming };
-			SendToPlaying(reinterpret_cast<const char*>(&aim_p), sizeof(aim_p));
+			SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&aim_p), sizeof(aim_p));
 		}
 		else {
-			// 조준 중이면 장비를 바꾸지 않는다. 클라이언트도 같은 조건으로 막는다.
+			// 조준 중이면 장비를 바꾸지 않는다. 클라이언트도 같은 조건으로 막는다. 받지 않으면 먼저 바꾼 본인에게 서버 장비를 보내 맞추게 한다.
 			const auto* request_p = reinterpret_cast<C2S_EQUIP_PACKET*>(packet);
-			if (!server_->GetHitboxData().GetWeaponInfo(request_p->weapon) || !room_player->GetActionState().TryEquip(request_p->weapon, request_p->action_time_ms, receive_time_ms)) break;
+			if (!server_->GetHitboxData().GetWeaponInfo(request_p->weapon) || !room_player->GetActionState().TryEquip(request_p->weapon, request_p->action_time_ms, receive_time_ms)) {
+				SendEquipCorrection(*room_player);
+				break;
+			}
 			room_player->GetPose().ChangeWeapon(request_p->weapon, tick_time_ms_);
+			// 본인은 먼저 바꿨으므로 다른 플레이어에게만 보낸다.
 			const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, request_p->weapon };
-			SendToPlaying(reinterpret_cast<const char*>(&equip_p), sizeof(equip_p));
+			SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&equip_p), sizeof(equip_p));
 		}
 		break;
 	}
@@ -400,8 +411,9 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		}
 		const int player_id = request_session.GetSessionKey().player_id;
 		if (is_reload) {
+			// 본인은 먼저 시작했으므로 다른 플레이어에게만 보낸다.
 			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, player_id, weapon };
-			SendToPlaying(reinterpret_cast<const char*>(&reload_p), sizeof(reload_p));
+			SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&reload_p), sizeof(reload_p));
 		}
 		else {
 			const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, player_id, static_cast<std::uint8_t>(action) };
@@ -1003,6 +1015,27 @@ void GameRoom::RelayMoveKeys(const Player& player, const MOVE_STATE& move_state)
 	char buffer[static_cast<int>(MoveKey::JUMP) * sizeof(S2C_MOVE_INPUT_PACKET)];
 	const int size = AppendMoveKeys(buffer, player, move_state);
 	if (size > 0) SendToPlaying(buffer, size);
+}
+
+void GameRoom::SendAimCorrection(const Player& player)
+{
+	if (!FindSession(player)) return;
+	const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player.GetSessionKey().player_id, player.IsAiming() };
+	GetTickSendBuffer(player).Append(&aim_p, aim_p.header.size);
+}
+
+void GameRoom::SendEquipCorrection(const Player& player)
+{
+	if (!FindSession(player)) return;
+	const int player_id = player.GetSessionKey().player_id;
+	const std::uint8_t weapon = player.GetActionState().GetWeapon();
+	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, weapon };
+	GetTickSendBuffer(player).Append(&equip_p, equip_p.header.size);
+	// 클라이언트는 장비를 바꿀 때 재장전을 끄므로, 서버가 그 무기를 재장전 중이면 재장전 시작을 다시 알린다.
+	const Gun* gun = player.GetActionState().FindGun(weapon);
+	if (!gun || !gun->IsReloading()) return;
+	const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, player_id, weapon };
+	GetTickSendBuffer(player).Append(&reload_p, reload_p.header.size);
 }
 
 // 로딩을 마친 플레이어를 마치는 대로 스폰하고 맵을 보여 준다.

@@ -177,7 +177,8 @@ void UGameStartSubsystem::HandleSpawnPacket(const TArray<uint8>& payload)
 		return;
 	}
 	const int64 local_player_key = world->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey();
-	const FTransform transform = game_mode->FindStartTransform(FTransform(FRotator(0.0, packet.yaw, 0.0), FVector(packet.location[0], packet.location[1], packet.location[2])));
+	// 스폰 위치는 서버가 정한 그대로 쓴다.
+	const FTransform transform(FRotator(0.0, packet.yaw, 0.0), FVector(packet.location[0], packet.location[1], packet.location[2]));
 	if (packet.player_id != local_player_key)
 	{
 		movement->SpawnRemotePlayer(packet.player_id, transform);

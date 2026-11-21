@@ -79,6 +79,10 @@ public:
 	void UseAmmo(EWeaponType weapon, int32 rounds);
 	// 탄약 상자에서 얻은 소지 탄을 더하고 획득 안내를 띄운다.
 	void GainAmmo(EWeaponType weapon, int32 rounds);
+	// 서버가 아는 손에 든 장비로 맞춘다. 서버가 내 장비 교체를 받지 않았을 때 쓴다.
+	void ApplyServerWeapon(EWeaponType weapon);
+	// 조준을 바꾼다. 손에 든 장비가 조준할 수 없으면 조준하지 않는다. 서버가 내 조준 변경을 받지 않았을 때도 서버 조준 여부로 부른다.
+	void SetAiming(bool is_aiming);
 	// 서버가 내 재장전 시작을 알렸다. 자동 재장전이거나 내가 시작한 재장전을 인정한 것이다. 이미 그 재장전 중이면 그대로 둔다.
 	void StartServerReload(EWeaponType weapon);
 	// 서버의 재장전이 끝났거나 인정하지 않았다. 재장전을 끝내고 탄창 탄과 소지 탄으로 바꾼다.
@@ -350,7 +354,6 @@ private:
 	void Look(const FInputActionValue& value);
 	void SelectWeaponFromKey(FKey key);
 	void UpdateWeaponVisuals();
-	void SetAiming(bool is_aiming);
 	bool PlayAction(const FActionSettings& action, const FMeleeHitSettings* melee_hit = nullptr);
 	void FinishAction(uint32 action_id);
 	void FireHitscan(const FHitscanSettings& settings);

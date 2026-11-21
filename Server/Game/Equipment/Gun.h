@@ -40,6 +40,7 @@ public:
 
 	const GunSettings& GetGunSettings() const { return static_cast<const GunSettings&>(GetSettings()); }
 	int GetRounds() const { return rounds_; }
+	bool IsReloading() const { return reload_remaining_ms_ > 0; }
 	int GetSpareRounds() const { return spare_rounds_; }
 
 	// 탄과 소지 탄 없이 시작한다.
