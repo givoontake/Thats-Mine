@@ -53,7 +53,7 @@ CapsuleSweep MakeCapsuleSweep(const MoveVector& start, const MoveVector& end, fl
 // is_single_face면 planes[0] 하나가 삼각형 면이고 닿은 면 법선은 늘 그 법선이다. planes가 비면 닿은 면 법선은 닿은 점의 법선과 같다.
 MoveHit SweepConvex(const CapsuleSweep& sweep, std::span<const DirectX::XMVECTOR> shape, float shape_radius, std::span<const DirectX::XMVECTOR> planes, bool is_single_face);
 
-// 쓸기 결과 hit이 best보다 먼저 막으면 hit을 돌려준다. 처음부터 겹친 결과끼리는 닿은 면이 이동과 가장 맞서는 쪽을 고른다.
+// 쓸기 결과 hit이 best보다 먼저 막으면 hit을 돌려준다. 처음부터 겹친 결과끼리와, 닿음 기준 거리 안에서 함께 닿은 결과끼리는 닿은 면이 이동과 가장 맞서는 쪽을 고른다.
 const MoveHit& GetFirstBlockingHit(const MoveHit& best, const MoveHit& hit, const MoveVector& delta);
 
 // 칸 크기 1인 격자 위 선분 (x0, y0)→(x1, y1)이 지나는 칸을 시작점 쪽부터 차례로 visit에 넘긴다(격자 순회).

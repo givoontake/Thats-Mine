@@ -387,5 +387,7 @@ const MoveHit& GetFirstBlockingHit(const MoveHit& best, const MoveHit& hit, cons
 		if (hit.is_start_penetrating != best.is_start_penetrating) return hit.is_start_penetrating ? hit : best;
 		return Dot(hit.impact_normal, delta) < Dot(best.impact_normal, delta) ? hit : best;
 	}
+	// 두 삼각형이 만나는 모서리처럼 닿음 기준 거리 안에서 함께 닿았으면 같은 곳에 닿은 것으로 보고, 언리얼처럼 이동과 가장 맞서는 면(아래로 쓸면 윗면)을 고른다.
+	if (std::fabs(hit.time - best.time) * Length(delta) <= MOVE_SWEEP_CONTACT_DISTANCE) return Dot(hit.impact_normal, delta) < Dot(best.impact_normal, delta) ? hit : best;
 	return hit.time < best.time ? hit : best;
 }
