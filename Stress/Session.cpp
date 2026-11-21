@@ -1,4 +1,5 @@
 #include "Session.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include "ex_overlapped.h"
@@ -81,11 +82,24 @@ void Session::SetWalkPath(float x, float y)
 	walk_yaw_ = to.y > from.y ? 90.0f : -90.0f;
 }
 
+// 스폰 자리(바닥보다 SPAWN_HEIGHT_OFFSET 위)에서 땅에 닿을 때까지 떨어지는 시간(ms)
+static float GetSpawnFallMs()
+{
+	return std::sqrt(2.0f * SPAWN_HEIGHT_OFFSET / GRAVITY) * 1000.0f;
+}
+
+long long Session::GetWalkStartMs() const
+{
+	const long long start_ms = walk_start_ms_.load();
+	if (start_ms < 0) return -1;
+	return std::max(start_ms, spawn_ms_.load() + static_cast<long long>(std::ceil(GetSpawnFallMs())));
+}
+
 WalkStep Session::GetWalkStep(long long now_ms) const
 {
 	const long long forward_ms = static_cast<long long>(WALK_DISTANCE / MOVE_SPEED_FORWARD * 1000.0f);
 	const long long backward_ms = static_cast<long long>(WALK_DISTANCE / MOVE_SPEED_BACKWARD * 1000.0f);
-	const long long elapsed_ms = (now_ms - walk_start_ms_.load()) % (forward_ms + backward_ms);
+	const long long elapsed_ms = (now_ms - GetWalkStartMs()) % (forward_ms + backward_ms);
 	const bool is_forward = elapsed_ms < forward_ms;
 	const float ratio = is_forward ? static_cast<float>(elapsed_ms) / forward_ms : 1.0f - static_cast<float>(elapsed_ms - forward_ms) / backward_ms;
 	const float speed = is_forward ? MOVE_SPEED_FORWARD : -MOVE_SPEED_BACKWARD;

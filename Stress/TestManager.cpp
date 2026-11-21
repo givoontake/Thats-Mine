@@ -370,7 +370,12 @@ void TestManager::HandlePacket(char* packet, int session_index)
 	}
 	case S2C_SPAWN: {
 		const auto* spawn_packet = reinterpret_cast<S2C_SPAWN_PACKET*>(packet);
-		if (spawn_packet->player_id == session.GetPlayerID()) session.SetWalkPath(spawn_packet->location[0], spawn_packet->location[1]);
+		if (spawn_packet->player_id != session.GetPlayerID()) break;
+		session.SetWalkPath(spawn_packet->location[0], spawn_packet->location[1]);
+		session.StartSpawn(GetCurrentTimeMs());
+		// 서버는 스폰 알림을 받은 뒤부터 이동을 처리한다.
+		const C2S_SPAWN_COMPLETE_PACKET spawn_complete_packet = MakePacket<C2S_SPAWN_COMPLETE_PACKET>(C2S_SPAWN_COMPLETE);
+		session.SendPacket(&spawn_complete_packet, sizeof(spawn_complete_packet));
 		break;
 	}
 	case S2C_PLAY_START: {

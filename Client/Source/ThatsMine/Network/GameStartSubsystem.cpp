@@ -10,7 +10,6 @@
 #include "Environment/StartBarrier.h"
 #include "Flow/ClientStateSubsystem.h"
 #include "Interaction/TreasureChest.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GameNetworkSubsystem.h"
 #include "MovementSyncSubsystem.h"
@@ -30,14 +29,13 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogGameStart, Log, All);
 
-// 스폰 때 막아 둔 내 캐릭터의 이동을 푼다. 이미 풀려 있으면 그대로 둔다.
+// 스폰 때 막아 둔 내 캐릭터의 걷기·점프 입력을 푼다.
 static void EnableLocalMovement(UWorld* world)
 {
 	const APlayerController* controller = world->GetFirstPlayerController();
-	const ACharacter* character = controller ? Cast<ACharacter>(controller->GetPawn()) : nullptr;
-	if (character && character->GetCharacterMovement()->MovementMode == MOVE_None)
+	if (APlayerCharacter* character = controller ? Cast<APlayerCharacter>(controller->GetPawn()) : nullptr)
 	{
-		character->GetCharacterMovement()->SetDefaultMovementMode();
+		character->SetMoveInputBlocked(false);
 	}
 }
 
@@ -186,10 +184,12 @@ void UGameStartSubsystem::HandleSpawnPacket(const TArray<uint8>& payload)
 	else if (!controller->GetPawn())
 	{
 		game_mode->RestartPlayerAtTransform(controller, transform);
-		// 시작 대기에 들어갈 때까지(전원 로딩 완료) 움직이지 못하게 한다.
-		if (ACharacter* character = Cast<ACharacter>(controller->GetPawn()))
+		// 시작 대기에 들어갈 때까지(전원 로딩 완료) 걷기와 점프만 막는다. 중력과 관성은 그대로 계산한다.
+		if (APlayerCharacter* character = Cast<APlayerCharacter>(controller->GetPawn()))
 		{
-			character->GetCharacterMovement()->DisableMovement();
+			character->SetMoveInputBlocked(true);
+			// 서버는 스폰 알림을 받은 뒤부터 이 플레이어의 이동을 처리한다.
+			world->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_SPAWN_COMPLETE, TArray<uint8>());
 		}
 	}
 }

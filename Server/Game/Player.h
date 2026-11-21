@@ -64,6 +64,8 @@ class Player
 	// 이동을 되돌린 번호와, 그 번호의 확인을 기다리는 중인지. 기다리는 동안 받은 이동 상태는 버린다.
 	std::uint32_t move_rollback_id_ = 0;
 	bool is_awaiting_move_rollback_ = false;
+	// 스폰 패킷을 보내고 클라이언트의 스폰 알림을 기다리는 중인지. 기다리는 동안은 스폰 자리에 그대로 두고 이동 패킷을 버린다.
+	bool is_awaiting_spawn_ = false;
 	// 가진 장비와 손에 든 장비, 동작을 받을지 판단하는 상태
 	PlayerActionState action_state_;
 	// 이번 게임에서 가진 힌트의 힌트 목록 번호. 같은 힌트는 한 번만 가진다.
@@ -123,6 +125,7 @@ public:
 	// 알린 기절이 time_ms에 끝났으면 한 번만 참을 돌려준다. 방이 기절 해제를 보낼 때 쓴다.
 	bool TakeStunRelease(long long time_ms);
 	bool IsAwaitingMoveRollback() const { return is_awaiting_move_rollback_; }
+	bool IsAwaitingSpawn() const { return is_awaiting_spawn_; }
 	float GetStunGauge(long long time_ms) const;
 	CharacterPose& GetPose() { return pose_; }
 	const CharacterPose& GetPose() const { return pose_; }
@@ -156,8 +159,11 @@ public:
 	void ClearMoveKeys() { move_keys_ = 0; }
 	// 손에 든 장비의 조준을 바꾼다. 조준할 수 없는 장비면 받지 않는다.
 	bool SetAiming(bool is_aiming);
-	// 서버 이동 상태를 스폰 자리에 선 상태로 둔다. 첫 이동 상태도 이 상태와 비교해 검사한다. 스폰 패킷이 따로 가므로 중계하지 않는다.
+	// 서버 이동 상태를 스폰 자리에 둔다. 그 자리 바닥에 닿아 있으면 걷는 중, 아니면 떨어지는 중이다. 첫 이동 상태도 이 상태와 비교해 검사한다.
+	// 스폰 패킷이 따로 가므로 중계하지 않는다. 스폰 알림을 받을 때까지 서버 이동 상태를 진행하지 않는다.
 	void SetSpawnLocation(const MapData& map, const float location[3], float yaw, long long time_ms);
+	// time_ms에 받은 스폰 알림을 처리한다. 이때부터 서버 이동 상태를 진행하고 이동 끊김을 센다.
+	void CompleteSpawn(long long time_ms);
 	void MarkMoveStateRelayed(long long tick_time_ms);
 	// 기절 게이지를 올린다. 기절 중이거나 보호 중이면 무시하고, 최대치에 닿으면 기절을 시작해 true를 돌려준다.
 	bool AddStunGauge(float amount, long long time_ms);

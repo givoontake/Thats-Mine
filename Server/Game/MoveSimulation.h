@@ -67,6 +67,8 @@ public:
 	// 몸 방향과 시선 상하를 바꾼다. 위치와 속도는 그대로다.
 	void SetView(float yaw, float view_pitch);
 	bool IsWalking() const { return is_walking_; }
+	// 걷는 중이고 찾아 둔 바닥이 걸을 수 있는 바닥인지. 바닥이 없으면 다음 진행에서 떨어지기 시작한다.
+	bool IsOnWalkableFloor() const { return is_walking_ && floor_.is_walkable; }
 	// 지금 이동 상태. 클라이언트 시각은 0이다.
 	MOVE_STATE GetMoveState() const;
 

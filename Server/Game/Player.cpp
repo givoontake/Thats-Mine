@@ -172,7 +172,8 @@ void Player::SetMoveState(const MapData& map, const MOVE_STATE& move_state, long
 
 void Player::AdvanceMove(long long time_ms)
 {
-	if (!HasMoveState() || time_ms <= server_move_time_ms_) return;
+	// 스폰 알림을 받기 전에는 스폰 자리에 그대로 둔다.
+	if (!HasMoveState() || is_awaiting_spawn_ || time_ms <= server_move_time_ms_) return;
 	const auto [input_right, input_forward] = GetMoveInput(time_ms);
 	server_move_.Simulate(input_right, input_forward, IsAiming(), static_cast<float>(time_ms - server_move_time_ms_) / 1000.0f);
 	server_move_time_ms_ = time_ms;
@@ -225,11 +226,22 @@ void Player::SetSpawnLocation(const MapData& map, const float location[3], float
 	MOVE_STATE state{};
 	std::memcpy(state.location, location, sizeof(state.location));
 	state.yaw = yaw;
-	state.air_phase = AirPhase::GROUND;
+	// 스폰 자리 바닥에 닿아 있으면 걷는 중, 아니면 떨어지는 중으로 둔다.
+	state.air_phase = MoveSimulation(map, state).IsOnWalkableFloor() ? AirPhase::GROUND : AirPhase::FALLING;
 	server_move_ = MoveSimulation(map, state);
 	server_move_time_ms_ = time_ms;
 	move_time_ms_ = time_ms;
 	relay_time_ms_ = time_ms;
+	is_awaiting_spawn_ = true;
+}
+
+void Player::CompleteSpawn(long long time_ms)
+{
+	if (!is_awaiting_spawn_) return;
+	// 클라이언트가 실제로 스폰한 때부터 서버 이동 상태를 진행하고 이동 끊김을 센다.
+	server_move_time_ms_ = time_ms;
+	move_time_ms_ = time_ms;
+	is_awaiting_spawn_ = false;
 }
 
 std::optional<long long> Player::GetClockDrift(std::uint32_t client_time_ms, long long time_ms) const
@@ -372,6 +384,7 @@ void Player::ClearMoveState()
 	is_move_stopped_ = false;
 	action_state_.ResetWeapon();
 	is_awaiting_move_rollback_ = false;
+	is_awaiting_spawn_ = false;
 	history_start_ = 0;
 	history_count_ = 0;
 }

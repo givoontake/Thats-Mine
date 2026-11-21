@@ -294,11 +294,10 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		break;
 	}
 	case C2S_MOVE: {
-		// 전원 로딩을 기다리는 동안에는 움직이지 못하므로 이동 상태를 받지 않는다.
-		if (room_state_.load() != RoomState::PLAY || match_phase_ == MatchPhase::LOADING) break;
+		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		// 되돌리기 확인을 기다리는 동안 받은 이동 상태는 버린다.
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingMoveRollback()) break;
+		// 스폰 알림 전과 되돌리기 확인을 기다리는 동안 받은 이동 상태는 버린다.
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingSpawn() || room_player->IsAwaitingMoveRollback()) break;
 		// 기절 중에도 위치와 공중 단계는 중력과 관성으로 움직인 결과라 평소처럼 검사한다.
 		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
 		// 이동 시각은 받은 순간의 서버 시각으로 잡는다. 처리한 틱 시각을 쓰면 같은 간격으로 온 패킷도 틱 하나만큼 간격이 흔들린다.
@@ -315,7 +314,8 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 	case C2S_MOVE_INPUT: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		// 스폰 알림 전에 받은 이동 키는 버린다.
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingSpawn()) break;
 		const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
 		// 기절 중에는 조작을 받지 않으므로 이동 키를 버린다. 기절할 때 눌린 키는 모두 뗀 것으로 했다.
 		if (request_p->key >= MoveKey::COUNT || room_player->IsStunned(tick_time_ms_)) break;
@@ -324,7 +324,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!key_time_ms) break;
 		if (request_p->key == MoveKey::JUMP) {
 			// 점프는 누름만 온다. 키를 누른 순간의 위치·수평 속도에서 점프 속도로 뛰어오른 이동 상태로 보고, 이동 상태처럼 검사해 인정하면 그 순간부터 공중을 시작한다.
-			if (!request_p->is_down || match_phase_ == MatchPhase::LOADING || room_player->IsAwaitingMoveRollback()) break;
+			if (!request_p->is_down || room_player->IsAwaitingMoveRollback()) break;
 			MOVE_STATE jump_state = room_player->GetMoveState();
 			std::memcpy(jump_state.location, request_p->location, sizeof(jump_state.location));
 			jump_state.velocity[0] = request_p->velocity[0];
@@ -474,6 +474,12 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (room_player && room_player->GetRoomPlayerState() == RoomPlayerState::LOADING) room_player->SetRoomPlayerState(RoomPlayerState::LOADED);
+		break;
+	}
+	case C2S_SPAWN_COMPLETE: {
+		if (room_state_.load() != RoomState::PLAY) break;
+		auto* room_player = FindPlayer(request_session.GetSessionKey());
+		if (room_player && room_player->GetRoomPlayerState() == RoomPlayerState::PLAY) room_player->CompleteSpawn(receive_time_ms);
 		break;
 	}
 	default:
@@ -935,13 +941,13 @@ void GameRoom::ProcessGameTick(long long tick_time_ms, long long elapsed_ms)
 	}
 	// 공중에서 이동 상태가 MOVE_AIR_DELAY_SECONDS 넘게 오지 않으면 그 클라이언트를 서버 이동 상태(공중 궤적)로 맞춘다.
 	for (auto& room_player : room_players_) {
-		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingMoveRollback()) continue;
+		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingSpawn() || room_player.IsAwaitingMoveRollback()) continue;
 		if (room_player.IsMoveWalking() || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
 		if (FindSession(room_player)) RollbackMove(room_player);
 	}
 	// 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 서버 이동 상태 자리에 세우고 방 전체에 알린다.
 	for (auto& room_player : room_players_) {
-		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsMoveStopped()) continue;
+		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingSpawn() || room_player.IsMoveStopped()) continue;
 		if (tick_time_ms <= room_player.GetMoveTimeMs() + static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f)) continue;
 		RelayMoveStop(room_player);
 	}

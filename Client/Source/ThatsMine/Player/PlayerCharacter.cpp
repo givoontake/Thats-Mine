@@ -426,12 +426,37 @@ void APlayerCharacter::SetMoveKey(MoveKey key, bool is_down)
 		return;
 	}
 	move_keys_ = is_down ? (move_keys_ | bit) : (move_keys_ & ~bit);
-	on_move_key_changed_.Broadcast(key, is_down);
+	// 이동 입력을 막은 동안에는 서버에 알리지 않는다. 풀 때 눌려 있는 키를 알린다.
+	if (!is_move_input_blocked_)
+	{
+		on_move_key_changed_.Broadcast(key, is_down);
+	}
+}
+
+void APlayerCharacter::SetMoveInputBlocked(bool is_blocked)
+{
+	if (is_move_input_blocked_ == is_blocked)
+	{
+		return;
+	}
+	is_move_input_blocked_ = is_blocked;
+	if (is_blocked)
+	{
+		return;
+	}
+	// 막는 동안 눌러 둔 이동 키를 푸는 순간 누름으로 알려, 서버도 이 순간부터 그 키로 움직이게 한다.
+	for (int32 key = 0; key < static_cast<int32>(MoveKey::JUMP); ++key)
+	{
+		if ((move_keys_ >> key) & 1)
+		{
+			on_move_key_changed_.Broadcast(static_cast<MoveKey>(key), true);
+		}
+	}
 }
 
 void APlayerCharacter::ApplyMoveKeys()
 {
-	if (is_stunned_ || move_keys_ == 0)
+	if (is_stunned_ || is_move_input_blocked_ || move_keys_ == 0)
 	{
 		return;
 	}
@@ -1145,7 +1170,7 @@ void APlayerCharacter::PlayFootstep()
 void APlayerCharacter::Jump()
 {
 	// 이번 프레임 이동에서 실제로 뛸 때만 점프를 걸고 알린다.
-	if (!is_stunned_ && CanJump())
+	if (!is_stunned_ && !is_move_input_blocked_ && CanJump())
 	{
 		Super::Jump();
 		on_move_key_changed_.Broadcast(MoveKey::JUMP, true);

@@ -53,6 +53,8 @@ class Session
 	float walk_end_[3]{};
 	float walk_yaw_ = 0.0f;
 	std::atomic<long long> walk_start_ms_{ -1 };
+	// 내 스폰을 받은 시각. 서버는 스폰 알림을 받은 때부터 스폰 자리에서 떨어뜨린다.
+	std::atomic<long long> spawn_ms_{ -1 };
 	// 보내기 스레드만 쓴다.
 	long long last_move_send_ms_ = 0;
 	MoveKey sent_key_ = MoveKey::FORWARD;
@@ -78,6 +80,9 @@ public:
 	// 스폰 자리로 걷기 길을 정한다. 이웃 스폰 자리는 같은 x에서 y가 WALK_DISTANCE 떨어진 자리다.
 	void SetWalkPath(float x, float y);
 	void StartWalk(long long start_ms) { walk_start_ms_.store(start_ms); }
+	void StartSpawn(long long now_ms) { spawn_ms_.store(now_ms); }
+	// 걷기 시작 시각. 스폰 자리에서 땅까지 떨어지는 동안은 이동을 보내지 않고, 땅에 닿은 뒤 걷는다.
+	long long GetWalkStartMs() const;
 	WalkStep GetWalkStep(long long now_ms) const;
 	void AddSentMove(const float location[3], long long send_time_ms);
 	// 같은 위치의 보낸 이동을 찾아 보낸 시각을 돌려준다. 그보다 먼저 보낸 이동은 중계되지 않은 것이라 함께 버린다.
@@ -90,7 +95,7 @@ public:
 	void SetNextFireMs(long long time_ms) { next_fire_ms_ = time_ms; }
 	void SetFireSendMs(long long time_ms) { fire_send_ms_.store(time_ms); }
 	long long TakeFireSendMs() { return fire_send_ms_.exchange(-1); }
-	bool IsWalking(long long now_ms) const { const long long start_ms = walk_start_ms_.load(); return start_ms >= 0 && now_ms >= start_ms; }
+	bool IsWalking(long long now_ms) const { const long long start_ms = GetWalkStartMs(); return start_ms >= 0 && now_ms >= start_ms; }
 
 	SOCKET GetSocket() const { return socket_; }
 	WSAOVERLAPPED& GetRecvOverlapped() { return recv_over_; }

@@ -67,8 +67,10 @@ public:
 
 	// 이동 입력(X 오른쪽, Y 앞쪽)을 이동 계산에 넣는다. 다른 플레이어는 받은 입력으로 호출한다.
 	void ApplyMovementInput(const FVector2D& movement);
-	// 눌린 이동 키로 이번 프레임의 이동 입력을 넣는다. 조종자가 입력을 처리한 뒤 매 프레임 부른다. 기절 중이거나 눌린 키가 없으면 넣지 않는다.
+	// 눌린 이동 키로 이번 프레임의 이동 입력을 넣는다. 조종자가 입력을 처리한 뒤 매 프레임 부른다. 기절 중이거나 이동 입력을 막았거나 눌린 키가 없으면 넣지 않는다.
 	void ApplyMoveKeys();
+	// 걷기 키와 점프 입력을 막거나 푼다. 막은 동안에도 눌린 키는 받아 두어, 풀면 누르고 있던 키로 바로 움직인다. 중력과 관성은 그대로 계산한다.
+	void SetMoveInputBlocked(bool is_blocked);
 
 	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
 	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
@@ -248,6 +250,8 @@ private:
 	bool is_aiming_ = false;
 	// 눌린 이동 키. MoveKey 값 자리의 비트다. 점프는 담지 않는다.
 	uint8 move_keys_ = 0;
+	// 걷기 키와 점프 입력을 막았는지. 온라인 게임에서 내 캐릭터를 스폰할 때 막고, 시작 대기에 들어가면 푼다.
+	bool is_move_input_blocked_ = false;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|State", meta = (AllowPrivateAccess = "true"))
 	bool is_action_locked_ = false;
@@ -349,7 +353,7 @@ private:
 
 	// 키 설정의 키로 이동 키와 동작 입력을 묶는다.
 	void BindGameKeys(UInputComponent* input);
-	// 이동 키를 누르거나 떼어 눌린 키 기록을 바꾸고 알린다. 기절 중이거나 이미 그 상태면 무시한다.
+	// 이동 키를 누르거나 떼어 눌린 키 기록을 바꾸고 알린다. 이동 입력을 막은 동안에는 알리지 않는다. 기절 중이거나 이미 그 상태면 무시한다.
 	void SetMoveKey(MoveKey key, bool is_down);
 	void Look(const FInputActionValue& value);
 	void SelectWeaponFromKey(FKey key);

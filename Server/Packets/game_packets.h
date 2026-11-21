@@ -190,6 +190,10 @@ struct S2C_SPAWN_PACKET {
 struct C2S_LOAD_COMPLETE_PACKET {
 	PACKET_HEADER header;
 };
+// 내 캐릭터를 스폰했다. 서버는 이것을 받은 뒤부터 그 플레이어의 이동 패킷을 처리한다.
+struct C2S_SPAWN_COMPLETE_PACKET {
+	PACKET_HEADER header;
+};
 
 // 스폰이 끝났으니 로딩 화면을 닫고 맵을 보여 준다. 받는 플레이어의 스폰 패킷 바로 뒤에 보낸다.
 struct S2C_PLAY_START_PACKET {
