@@ -498,18 +498,28 @@ void APlayerCharacter::Look(const FInputActionValue& value)
 
 void APlayerCharacter::SelectWeaponFromKey(FKey key)
 {
-	if (is_stunned_)
-	{
-		return;
-	}
 	for (const auto& [weapon, settings] : weapon_settings_)
 	{
 		if (settings.selection_key != key)
 		{
 			continue;
 		}
-		SelectWeapon(weapon);
+		SelectWeaponByPlayer(weapon);
 		return;
+	}
+}
+
+// 서버에는 플레이어가 고른 순간의 무기만 요청으로 보낸다. 조준 중이라 바꾸지 못했거나 이미 든 무기면 알리지 않는다.
+void APlayerCharacter::SelectWeaponByPlayer(EWeaponType weapon)
+{
+	if (is_stunned_ || weapon == current_weapon_)
+	{
+		return;
+	}
+	SelectWeapon(weapon);
+	if (current_weapon_ == weapon)
+	{
+		on_weapon_selected_.Broadcast(weapon);
 	}
 }
 
@@ -1701,7 +1711,12 @@ void APlayerCharacter::ToggleAim()
 	}
 	if (GetEquipmentSettings(current_weapon_).can_aim)
 	{
+		const bool was_aiming = is_aiming_;
 		SetAiming(!is_aiming_);
+		if (is_aiming_ != was_aiming)
+		{
+			on_aim_toggled_.Broadcast(is_aiming_);
+		}
 	}
 }
 

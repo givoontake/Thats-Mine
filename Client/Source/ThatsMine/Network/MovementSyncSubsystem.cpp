@@ -144,6 +144,8 @@ void UMovementSyncSubsystem::Deinitialize()
 		{
 			character->on_action_started_.RemoveAll(this);
 			character->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
+			character->on_weapon_selected_.RemoveAll(this);
+			character->on_aim_toggled_.RemoveAll(this);
 		}
 		is_active_ = false;
 	}
@@ -186,7 +188,8 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 			previous->on_action_started_.RemoveAll(this);
 			previous->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 			previous->on_move_key_changed_.RemoveAll(this);
-			previous->on_equipment_changed_.RemoveAll(this);
+			previous->on_weapon_selected_.RemoveAll(this);
+			previous->on_aim_toggled_.RemoveAll(this);
 		}
 		local_character_ = character;
 		if (character)
@@ -194,21 +197,15 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 			character->on_action_started_.AddUObject(this, &UMovementSyncSubsystem::HandleActionStarted);
 			character->on_shot_fired_.AddDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 			character->on_move_key_changed_.AddUObject(this, &UMovementSyncSubsystem::HandleMoveKeyChanged);
-			// 조준과 장비는 바뀌는 순간 알림을 받아 바로 보낸다.
-			character->on_equipment_changed_.AddWeakLambda(this, [this]()
-			{
-				if (const APlayerCharacter* local = local_character_.Get())
-				{
-					SendInputChanges(*local);
-				}
-			});
+			// 장비와 조준은 플레이어가 바꾼 순간 알림을 받아 바로 보낸다.
+			character->on_weapon_selected_.AddUObject(this, &UMovementSyncSubsystem::HandleWeaponSelected);
+			character->on_aim_toggled_.AddUObject(this, &UMovementSyncSubsystem::HandleAimToggled);
 		}
 	}
 	if (!character)
 	{
 		return;
 	}
-	SendInputChanges(*character);
 
 	const UCharacterMovementComponent* movement = character->GetCharacterMovement();
 	FRemoteMoveState state;
@@ -242,25 +239,22 @@ void UMovementSyncSubsystem::SendMoveState(bool is_forced)
 	}
 }
 
-// 조준 여부, 손에 든 장비가 마지막으로 보낸 값과 다르면 바로 보낸다. 처음에는 모두 보낸다.
-void UMovementSyncSubsystem::SendInputChanges(const APlayerCharacter& character)
+// 플레이어가 고른 무기를 바로 보낸다. 동작보다 먼저 보내므로 서버는 동작을 바꾼 무기로 판정한다.
+void UMovementSyncSubsystem::HandleWeaponSelected(EWeaponType weapon)
 {
-	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
-	C2S_AIM_PACKET aim_packet{};
-	aim_packet.is_aiming = character.IsAiming();
-	if ((!has_sent_input_ || aim_packet.is_aiming != is_sent_aiming_) && SendPacketBody(network, C2S_AIM, aim_packet))
-	{
-		is_sent_aiming_ = aim_packet.is_aiming;
-	}
-	const EWeaponType weapon = character.GetCurrentWeapon();
-	C2S_EQUIP_PACKET equip_packet{};
-	equip_packet.weapon = static_cast<uint8>(weapon);
-	equip_packet.action_time_ms = GetActionTimeMs(character.GetEquipRealTime());
-	if ((!has_sent_input_ || weapon != sent_weapon_) && SendPacketBody(network, C2S_EQUIP, equip_packet))
-	{
-		sent_weapon_ = weapon;
-	}
-	has_sent_input_ = true;
+	const APlayerCharacter* character = local_character_.Get();
+	C2S_EQUIP_PACKET packet{};
+	packet.weapon = static_cast<uint8>(weapon);
+	packet.action_time_ms = GetActionTimeMs(character ? character->GetEquipRealTime() : FPlatformTime::Seconds());
+	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_EQUIP, packet);
+}
+
+// 플레이어가 바꾼 조준 여부를 바로 보낸다.
+void UMovementSyncSubsystem::HandleAimToggled(bool is_aiming)
+{
+	C2S_AIM_PACKET packet{};
+	packet.is_aiming = is_aiming;
+	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_AIM, packet);
 }
 
 // 이동 키를 처리한 순간 보낸다. 키는 그 프레임의 이동 전에 처리하므로, 위치·속도는 이전 프레임 이동이 끝난 값이고
@@ -286,15 +280,10 @@ void UMovementSyncSubsystem::HandleMoveKeyChanged(MoveKey key, bool is_down)
 	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_MOVE_INPUT, packet);
 }
 
-// 동작보다 먼저 바뀐 입력과 장비를 보내, 서버가 동작을 지금 손에 든 장비로 판정하게 한다.
 // 총을 쏘면 서버가 발사 순간의 위치·방향으로 탄 광선을 판정하도록 지금 위치를 바로 보내고, 발사 패킷은 조준 방향이 정해진 뒤 HandleShotFired가 보낸다.
 // 재장전은 손에 든 무기를 서버가 알고 있으므로 동작 시각만 보낸다.
 void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponType weapon)
 {
-	if (const APlayerCharacter* character = local_character_.Get())
-	{
-		SendInputChanges(*character);
-	}
 	if (action == EPlayerAction::FIRE)
 	{
 		SendMoveState(true);

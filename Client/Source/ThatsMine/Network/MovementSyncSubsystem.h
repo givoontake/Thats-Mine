@@ -34,7 +34,8 @@ protected:
 private:
 	// is_forced면 보내는 간격과 관계없이 지금 위치를 바로 보낸다.
 	void SendMoveState(bool is_forced);
-	void SendInputChanges(const APlayerCharacter& character);
+	void HandleWeaponSelected(EWeaponType weapon);
+	void HandleAimToggled(bool is_aiming);
 	void HandleMoveKeyChanged(MoveKey key, bool is_down);
 	void HandleActionStarted(EPlayerAction action, EWeaponType weapon);
 	UFUNCTION()
@@ -67,10 +68,6 @@ private:
 	FRemoteMoveState last_sent_state_;
 	double last_send_time_ = 0.0;
 	bool has_sent_state_ = false;
-	// 마지막으로 보낸 조준 여부·장비. 처음에는 has_sent_input_이 거짓이라 모두 보낸다.
-	bool is_sent_aiming_ = false;
-	EWeaponType sent_weapon_ = EWeaponType::PICKAXE;
-	bool has_sent_input_ = false;
 	bool is_active_ = false;
 	// 받은 서버 시각과 받은 순간의 실제 시각(FPlatformTime 초). 발사의 동작 시각은 이 서버 시각에 그 뒤 흐른 실제 시간을 더한다.
 	uint32 sync_server_time_ms_ = 0;

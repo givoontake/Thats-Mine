@@ -43,6 +43,8 @@ DECLARE_MULTICAST_DELEGATE(FOnHintsChanged);
 DECLARE_MULTICAST_DELEGATE(FOnItemsChanged);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnActionStarted, EPlayerAction, EWeaponType);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMoveKeyChanged, MoveKey, bool);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnWeaponSelected, EWeaponType);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnAimToggled, bool);
 
 UCLASS()
 class THATSMINE_API APlayerCharacter : public ACharacter
@@ -102,6 +104,10 @@ public:
 	FOnActionStarted on_action_started_;
 	// 내 캐릭터의 이동 키를 누르거나 뗀 순간 알린다. 점프는 실제로 뛸 때 누름만 알린다.
 	FOnMoveKeyChanged on_move_key_changed_;
+	// 플레이어가 고른 무기로 바꿨을 때 알린다. 서버 정정·원격 표시로 바뀐 것은 알리지 않는다.
+	FOnWeaponSelected on_weapon_selected_;
+	// 플레이어가 조준 키로 조준을 바꿨을 때 바뀐 조준 여부를 알린다.
+	FOnAimToggled on_aim_toggled_;
 	// 마지막으로 시작한 동작의 실제 시각(FPlatformTime 초). 발사 간격을 이 시각으로 세고, 서버로 보내는 동작 시각도 이 값으로 만든다.
 	double GetActionRealTime() const { return action_real_time_; }
 	// 마지막으로 다른 무기로 바꾼 실제 시각(FPlatformTime 초). 서버로 보내는 장비 교체 시각을 이 값으로 만든다.
@@ -139,6 +145,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Weapon")
 	void SelectWeapon(EWeaponType weapon);
+	// 플레이어가 무기를 골랐다. 기절 중이면 무시하고, 바꿨으면 알린다.
+	void SelectWeaponByPlayer(EWeaponType weapon);
 
 	UFUNCTION(BlueprintCallable, Category = "Player|Actions")
 	virtual void PrimaryAction();
