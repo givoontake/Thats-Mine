@@ -1,8 +1,13 @@
 #pragma once
+#include <cstdint>
 // 서버 운영. 틱, 네트워크, 접속·방 수, 스레드 수, 정리 주기, DB.
 
 constexpr int TICK_RATE = 50;
 constexpr int TICK_INTERVAL_MS = 1000 / TICK_RATE;
+// 방이 한 번 깨어날 때 밀린 틱을 몰아서 처리하는 최대 수. 남은 틱은 다음에 깨어날 때 이어서 처리한다.
+constexpr int MAX_CATCH_UP_TICKS = 5;
+// ms 설정값을 틱 수로 바꾼다. 게임 안 시간은 모두 틱으로 센다. 틱 간격으로 나누어떨어지지 않으면 올린다.
+constexpr std::uint32_t MsToTicks(long long ms) { return static_cast<std::uint32_t>((ms + TICK_INTERVAL_MS - 1) / TICK_INTERVAL_MS); }
 
 constexpr int BUF_SIZE = 2048;
 constexpr int SERVER_PORT = 12312;

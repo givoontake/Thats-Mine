@@ -30,8 +30,6 @@ public:
 	/** Constructor */
 	AThatsMinePlayerController();
 	virtual void FlushPressedKeys() override;
-	// 입력을 처리한 뒤 조종하는 캐릭터에 눌린 이동 키로 이번 프레임의 이동 입력을 넣는다. 캐릭터 이동보다 먼저 돈다.
-	virtual void PlayerTick(float delta_seconds) override;
 	// ESC 메뉴, 거기서 연 설정 창, 지도, 인벤토리, 도움말 중 하나가 떠 있는지. 떠 있으면 에임을 숨긴다.
 	bool IsMenuOpen() const;
 

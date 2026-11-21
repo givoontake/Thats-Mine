@@ -9,7 +9,7 @@ class MapData;
 // 서버가 정한 한 플레이어의 이동 상태와, 그 상태를 이동 키 입력대로 진행하는 계산. 언리얼 캐릭터 이동의 걷기·떨어지기와 같은 순서로 단계를 나누어,
 // 단계마다 MapData 충돌(랜드스케이프와 캐릭터를 막는 배치물)을 묻고 그 결과를 공용 이동 계산(SharedMovement)에 넣는다.
 // 진행한 상태를 들고 있어 이어 부르면 앞 진행의 끝에서 이어 간다.
-// 서버는 받은 이동 상태 뒤를 키 입력으로 이어 가므로, 걷다가 바닥 끝에 닿으면 떨어지지 않고 가장자리에 선다. 공중으로 넘어가는 것은 클라이언트가 알린다.
+// 받은 이동 패킷의 단계는 클라이언트처럼 바닥 끝에서 떨어지고, 마지막 패킷 뒤를 키 입력으로 이어 가는 예측에서는 떨어지지 않고 가장자리에 선다.
 class MoveSimulation
 {
 	const MapData* map_ = nullptr;
@@ -24,6 +24,8 @@ class MoveSimulation
 	// 걷는 중 밟고 있는 바닥. 떨어지는 중에는 비어 있다.
 	MoveFloor floor_;
 	bool is_walking_ = false;
+	// 걷다가 바닥 끝에 닿으면 떨어질지. 떨어지지 않으면 가장자리를 따라 가 보거나 멈춘다.
+	bool can_walk_off_ledges_ = false;
 	// 이번 단계에서 위치를 바로 옮겨, 간 거리로 속도를 다시 정하지 않을지
 	bool is_just_teleported_ = false;
 	// 한 번 진행하는 동안 점프 정점에서 단계를 나눈 횟수
@@ -58,10 +60,12 @@ class MoveSimulation
 
 public:
 	MoveSimulation() = default;
-	// state(위치·속도·몸 방향·시선·공중 단계)에서 시작한다. 걷는 중이면 그 자리 바닥을 찾아 둔다.
+	// state(위치·속도·몸 방향·시선·공중 여부)에서 시작한다. 걷는 중이면 그 자리 바닥을 찾아 둔다.
 	MoveSimulation(const MapData& map, const MOVE_STATE& state);
-	// 이동 키 입력과 조준 여부를 그대로 둔 채 seconds초 진행한다.
-	void Simulate(std::int8_t input_right, std::int8_t input_forward, bool is_aiming, float seconds);
+	// 이동 키 입력과 조준 여부를 그대로 둔 채 seconds초 진행한다. can_walk_off_ledges면 걷다가 바닥 끝에서 떨어진다.
+	void Simulate(std::int8_t input_right, std::int8_t input_forward, bool is_aiming, float seconds, bool can_walk_off_ledges);
+	// 이번 단계 시작에 뛴다. 걷는 중일 때만 부른다.
+	void StartJump();
 	// 수평으로 바로 멈춘다. 공중이면 떨어지는 것은 이어 간다.
 	void StopHorizontal();
 	// 몸 방향과 시선 상하를 바꾼다. 위치와 속도는 그대로다.

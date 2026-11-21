@@ -42,7 +42,6 @@ DECLARE_MULTICAST_DELEGATE(FOnEquipmentChanged);
 DECLARE_MULTICAST_DELEGATE(FOnHintsChanged);
 DECLARE_MULTICAST_DELEGATE(FOnItemsChanged);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnActionStarted, EPlayerAction, EWeaponType);
-DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMoveKeyChanged, MoveKey, bool);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnWeaponSelected, EWeaponType);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnAimToggled, bool);
 
@@ -65,12 +64,19 @@ public:
 	virtual void UnPossessed() override;
 	virtual FRotator GetViewRotation() const override;
 
-	// 이동 입력(X 오른쪽, Y 앞쪽)을 이동 계산에 넣는다. 다른 플레이어는 받은 입력으로 호출한다.
-	void ApplyMovementInput(const FVector2D& movement);
-	// 눌린 이동 키로 이번 프레임의 이동 입력을 넣는다. 조종자가 입력을 처리한 뒤 매 프레임 부른다. 기절 중이거나 이동 입력을 막았거나 눌린 키가 없으면 넣지 않는다.
-	void ApplyMoveKeys();
+	// 이동 입력(X 오른쪽, Y 앞쪽)을 조준 여부에 맞는 속도로 이동 계산에 넣는다.
+	void ApplyMovementInput(const FVector2D& movement, bool is_aiming);
+	// 이동 키 move_keys와 조준 여부로 이동 입력을 넣는다. 내 캐릭터 이동 컴포넌트가 번호를 계산할 때와 번호 사이를 이어 계산할 때마다 부른다.
+	// 기절 중이거나 이동 입력을 막았거나 눌린 키가 없으면 넣지 않는다.
+	void ApplyMoveKeys(uint8 move_keys, bool is_aiming);
+	// 이동에 쓰는 눌린 이동 키. MoveKey 값 자리의 비트이고 점프는 담지 않는다. 이동 입력을 막은 동안은 0이다.
+	uint8 GetMoveKeys() const { return is_move_input_blocked_ ? 0 : move_keys_; }
 	// 걷기 키와 점프 입력을 막거나 푼다. 막은 동안에도 눌린 키는 받아 두어, 풀면 누르고 있던 키로 바로 움직인다. 중력과 관성은 그대로 계산한다.
-	void SetMoveInputBlocked(bool is_blocked);
+	void SetMoveInputBlocked(bool is_blocked) { is_move_input_blocked_ = is_blocked; }
+	bool IsStunned() const { return is_stunned_; }
+	// 점프 키를 눌러 아직 그 번호의 입력으로 남기지 않은 점프가 있는지. 점프는 누른 번호를 계산할 때 뛴다.
+	bool IsJumpRequested() const { return is_jump_requested_; }
+	void ClearJumpRequest() { is_jump_requested_ = false; }
 
 	// 다른 플레이어의 동작을 판정 없이 애니메이션만 재생한다.
 	void PlayRemoteAction(EPlayerAction action, EWeaponType weapon);
@@ -108,16 +114,10 @@ public:
 
 	// 내 캐릭터가 동작을 시작했을 때 알린다.
 	FOnActionStarted on_action_started_;
-	// 내 캐릭터의 이동 키를 누르거나 뗀 순간 알린다. 점프는 실제로 뛸 때 누름만 알린다.
-	FOnMoveKeyChanged on_move_key_changed_;
 	// 플레이어가 고른 무기로 바꿨을 때 알린다. 서버 정정·원격 표시로 바뀐 것은 알리지 않는다.
 	FOnWeaponSelected on_weapon_selected_;
 	// 플레이어가 조준 키로 조준을 바꿨을 때 바뀐 조준 여부를 알린다.
 	FOnAimToggled on_aim_toggled_;
-	// 마지막으로 시작한 동작의 실제 시각(FPlatformTime 초). 발사 간격을 이 시각으로 세고, 서버로 보내는 동작 시각도 이 값으로 만든다.
-	double GetActionRealTime() const { return action_real_time_; }
-	// 마지막으로 다른 무기로 바꾼 실제 시각(FPlatformTime 초). 서버로 보내는 장비 교체 시각을 이 값으로 만든다.
-	double GetEquipRealTime() const { return equip_real_time_; }
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	FEquipmentDisplay GetEquipmentDisplay() const;
@@ -250,6 +250,8 @@ private:
 	bool is_aiming_ = false;
 	// 눌린 이동 키. MoveKey 값 자리의 비트다. 점프는 담지 않는다.
 	uint8 move_keys_ = 0;
+	// 점프 키를 눌렀고 아직 그 단계를 계산하지 않았는지
+	bool is_jump_requested_ = false;
 	// 걷기 키와 점프 입력을 막았는지. 온라인 게임에서 내 캐릭터를 스폰할 때 막고, 시작 대기에 들어가면 푼다.
 	bool is_move_input_blocked_ = false;
 
@@ -320,12 +322,12 @@ private:
 	// 곡괭이 사용 가능 횟수(pickaxe_charges_)가 최대치보다 적을 때 지금 1번이 차기 시작한 월드 시각(초)
 	double pickaxe_charge_start_ = 0.0;
 	FTimerHandle pickaxe_charge_timer_;
-	// 무기마다 다음 발사를 할 수 있는 실제 시각(FPlatformTime 초)
-	TMap<EWeaponType, double> next_fire_times_;
-	double action_real_time_ = 0.0;
-	double equip_real_time_ = 0.0;
-	// 다음 줍기를 할 수 있는 실제 시각(FPlatformTime 초). 줍기 동작이 끝나기 전에는 다시 줍지 않는다. 서버도 같은 조건으로 막는다.
-	double next_pickup_real_time_ = 0.0;
+	// 무기마다 마지막으로 쏜 전송 프레임 번호와 쏜 횟수. 발사 간격은 서버와 같이 번호 차이 × MOVE_STEP_MS로 센다. 쏜 적 없으면 0번에 쏜 것으로 본다.
+	TMap<EWeaponType, uint32> last_fire_frame_numbers_;
+	TMap<EWeaponType, uint32> shot_counts_;
+	// 마지막으로 주운 전송 프레임 번호. 줍기 동작이 끝나기 전(번호 차이 × MOVE_STEP_MS)에는 다시 줍지 않는다. 서버도 같은 조건으로 막는다.
+	uint32 pickup_frame_number_ = 0;
+	bool has_pickup_ = false;
 
 	UPROPERTY(Transient)
 	TArray<FInventoryHint> acquired_hints_;
@@ -353,7 +355,7 @@ private:
 
 	// 키 설정의 키로 이동 키와 동작 입력을 묶는다.
 	void BindGameKeys(UInputComponent* input);
-	// 이동 키를 누르거나 떼어 눌린 키 기록을 바꾸고 알린다. 이동 입력을 막은 동안에는 알리지 않는다. 기절 중이거나 이미 그 상태면 무시한다.
+	// 이동 키를 누르거나 떼어 눌린 키 기록을 바꾼다. 기절 중이거나 이미 그 상태면 무시한다.
 	void SetMoveKey(MoveKey key, bool is_down);
 	void Look(const FInputActionValue& value);
 	void SelectWeaponFromKey(FKey key);

@@ -8,6 +8,12 @@ enum class OPType { SEND, POOLED_SEND, LARGE_SEND, RECV, ACCEPT, DISCONNECT_CLEA
 // LOADING: 게임 레벨을 불러오는 중, LOADED: 로딩을 마치고 스폰을 기다리는 중
 enum class RoomPlayerState { EMPTY, WAIT, READY, LOADING, LOADED, PLAY };
 
+// 게임 중 한 플레이어의 이동 동기화 상태.
+// NORMAL은 이동 패킷을 받아 비교하는 중, ROLLBACK은 롤백을 보내고 확인을 기다리는 중(이동 패킷과 동작을 버린다),
+// STOPPED는 이동 패킷이 오래 오지 않아 서버가 멈춘 것으로 보고 다른 플레이어에게 멈춤을 알린 뒤다.
+// SPAWNING은 스폰 패킷을 보내고 클라이언트의 스폰 알림을 기다리는 중이다(스폰 자리에 그대로 두고 이동 패킷을 버린다).
+enum class NetworkState { NORMAL, ROLLBACK, STOPPED, SPAWNING };
+
 enum class RoomState { EMPTY, INITIALIZING, WAIT, PLAY, WAITING_DELETE, DELETE_POST };
 
 // 게임 방의 시작 단계. LOADING: 전원 로딩 완료(또는 로딩 제한 시간)를 기다리는 중, READY: 시작 대기 시간을 세는 중, STARTED: 게임 중

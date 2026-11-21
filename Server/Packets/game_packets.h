@@ -11,10 +11,7 @@ enum class BoxKind : std::uint8_t { TREASURE, GIFT };
 // 플레이어 동작. 클라이언트 EPlayerAction과 같은 순서다. RELOAD는 동작 패킷이 아니라 재장전 패킷으로만 오가고, FIRE는 발사 패킷으로 받아 동작 패킷으로 중계한다.
 enum class PlayerAction : std::uint8_t { FIRE, MELEE, RELOAD, PICKUP };
 
-// 이동 상태의 공중 단계. 땅 위, 점프로 올라가는 중, 떨어지는 중(점프 정점 이후·천장에 부딪힌 뒤·걸어서 떨어질 때)이다.
-enum class AirPhase : std::uint8_t { GROUND, RISING, FALLING };
-
-// 이동 키. 앞뒤·좌우 이동 키와 점프다.
+// 이동 키. 앞뒤·좌우 이동 키와 점프다. 이동 패킷의 키 칸은 이 값 자리의 비트다.
 enum class MoveKey : std::uint8_t { FORWARD, BACKWARD, LEFT, RIGHT, JUMP, COUNT };
 
 // 무기. 클라이언트 EWeaponType과 같은 순서다.
@@ -68,44 +65,44 @@ struct MOVE_STATE {
 	float velocity[3];
 	float yaw;
 	float view_pitch;
-	AirPhase air_phase;
-	// 이 상태를 만든 클라이언트 게임 시각(ms). 기준은 클라이언트마다 다르고 32비트로 돌아가므로 차이로만 쓴다.
-	std::uint32_t client_time_ms;
+	// 공중이면 참. 이 상태에서 이어 계산할 때 걷기로 할지 떨어지기로 할지 정한다.
+	// 속도로 대신하지 않는 것은, 걷는 동안 수직 속도는 늘 0이지만 공중에서도 단계 끝 수직 속도가 정확히 0일 수 있기 때문이다
+	// (단계 끝에 맞춰 바닥 끝을 벗어난 순간, 천장에 부딪힌 순간, 점프 정점).
+	bool is_falling;
 };
 
-// 0.1초마다, 이동 방향이 크게 꺾일 때, 공중 단계가 바뀔 때, 총을 쏘기 직전에 보낸다.
+// 전송 프레임 번호를 담는 게임 패킷(이동·조준·장비·동작·재장전·발사·상자 열기·블록 놓기)은 헤더 바로 뒤에 frame_number를 둔다.
+// 전송 프레임은 MOVE_STEP_MS 길이의 구간이고, 번호는 내 캐릭터 스폰을 받은 순간 0에서 시작해 MOVE_STEP_MS마다 1씩 는다.
+// 클라이언트는 게임 프레임을 시작할 때 읽은 시각으로 번호를 정해 그 게임 프레임에서 만든 패킷에 넣고, 번호가 끝난 뒤 첫 게임 프레임에 그 번호의 패킷 뒤에 이동 패킷을 붙여 보낸다.
+// 서버는 번호마다 그 번호의 패킷을 받은 순서대로(이동 패킷이 마지막) 한 틱에 처리한다.
+
+// 전송 프레임마다 하나. 게임 프레임이 없던 번호도 보낸다. move_state는 그 번호의 MOVE_STEP_MS를 계산한 뒤의 상태다.
+// 번호의 마지막 패킷이라, 서버는 이것을 받으면 그 번호가 다 온 것으로 본다.
 struct C2S_MOVE_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	MOVE_STATE move_state;
+	// 그 번호의 마지막 게임 프레임에 눌려 있던 이동 키(MoveKey 자리의 비트). 점프 비트는 그 번호 안에서 한 번이라도 뛰려고 했고 번호 시작에 뛰었을 때 켠다.
+	std::uint8_t move_keys;
 };
 
-// 이동 키를 누르거나 뗐다. 키를 처리한 순간 보낸다. 점프는 실제로 뛸 때 누름만 보낸다.
-// location·velocity는 키를 처리한 순간(그 프레임의 이동 전)의 위치와 속도다. 점프면 서버가 이 위치·속도에서 점프를 시작하고, 받는 쪽은 뗀 자리에서 멈출 자리를 계산하는 데 쓴다.
-// client_time_ms는 그 위치의 클라이언트 게임 시각(ms)으로 이동 상태와 같은 시계다. 서버는 이 시각에 키를 바꾼다.
-struct C2S_MOVE_INPUT_PACKET {
-	PACKET_HEADER header;
-	MoveKey key;
-	bool is_down;
-	float location[3];
-	float velocity[3];
-	std::uint32_t client_time_ms;
-};
-
-// 조준을 시작하거나 끝냈다.
+// 조준을 시작하거나 끝냈다. 서버는 이 번호의 이동부터 바뀐 조준으로 계산한다.
 struct C2S_AIM_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	bool is_aiming;
 };
 
-// 손에 든 장비를 바꿨다. weapon은 바꾼 뒤 손에 든 WeaponType이다. action_time_ms는 바꾼 순간의 서버 기준 시각(ms)이다.
-// 서버는 조준 중이면 받지 않고, 다른 무기로 바뀌면 그 시각부터 그 장비의 교체 대기(equip_duration_ms) 동안 발사·휘두르기·재장전을 받지 않는다.
+// 손에 든 장비를 바꿨다. weapon은 바꾼 뒤 손에 든 WeaponType이다.
+// 서버는 조준 중이면 받지 않고, 다른 무기로 바뀌면 이 번호부터 그 장비의 교체 대기(equip_duration_ms) 동안 발사·휘두르기·재장전을 받지 않는다.
 struct C2S_EQUIP_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	std::uint8_t weapon;
-	std::uint32_t action_time_ms;
 };
 
-// 다른 플레이어의 이동 상태. 틱마다 중계할 플레이어 수만큼 이어 붙여 보낸다.
+// 다른 플레이어의 이동 상태. 틱마다 이동 상태가 바뀐 플레이어 수만큼 이어 붙여 보낸다.
+// 받은 쪽은 그 캐릭터를 지금 그린 위치에서 받은 위치까지 MOVE_STEP_MS 동안 옮긴다.
 struct S2C_MOVE_PACKET {
 	PACKET_HEADER header;
 	int player_id;
@@ -113,48 +110,47 @@ struct S2C_MOVE_PACKET {
 	float velocity[3];
 	float yaw;
 	float view_pitch;
-	AirPhase air_phase;
+	bool is_falling;
+	// 이 상태의 방 틱 번호. 발사 패킷에 대상의 틱 번호로 돌려 보낸다.
+	std::uint32_t tick_number;
 };
 
-// 다른 플레이어가 이동 키를 누르거나 뗐다. 받은 쪽은 눌린 키로 그 캐릭터의 이동을 계산하고, 점프 누름이면 그 위치에서 뛰게 한다.
-struct S2C_MOVE_INPUT_PACKET {
-	PACKET_HEADER header;
-	int player_id;
-	MoveKey key;
-	bool is_down;
-	float location[3];
-	float velocity[3];
-};
-
-// 다른 플레이어의 조준 여부
+// 다른 플레이어의 조준 여부. 서버가 조준 변경을 받지 않으면 바꾸려던 본인에게 지금 조준 여부를 보내 맞추게 한다.
 struct S2C_AIM_PACKET {
 	PACKET_HEADER header;
 	int player_id;
 	bool is_aiming;
 };
 
-// 다른 플레이어가 손에 든 장비
+// 다른 플레이어가 손에 든 장비. 서버가 장비 교체를 받지 않으면 바꾸려던 본인에게 지금 장비를 보내 맞추게 한다.
 struct S2C_EQUIP_PACKET {
 	PACKET_HEADER header;
 	int player_id;
 	std::uint8_t weapon;
 };
 
-// 휘두르기·줍기. 서버는 손에 든 장비로 판정한다. 총 발사는 C2S_FIRE_PACKET으로 보낸다. action_time_ms는 동작한 순간의 서버 기준 시각(ms)이다.
+// 휘두르기·줍기. 서버는 손에 든 장비로 판정한다. 총 발사는 C2S_FIRE_PACKET으로 보낸다.
 struct C2S_ACTION_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	std::uint8_t action;
-	std::uint32_t action_time_ms;
 };
 
 // 손에 든 총을 쐈다. 서버가 탄약과 발사 간격을 확인해 인정하면 다른 플레이어에게 발사 동작을 중계하고, 탄 광선을 직접 판정한다.
-// aim_direction은 퍼지기 전 조준 방향(단위 벡터)이고, 서버가 이번 게임 시드로 정한 빗나감을 적용한다. camera는 발사할 때 카메라 위치(cm)다.
-// action_time_ms는 쏜 순간의 서버 기준 시각(ms)이다. 받은 S2C_TIME_SYNC의 시각에 받은 뒤 흐른 시간을 더한다. 서버는 이 시각으로 다른 플레이어를 되감아 판정한다.
+// aim_direction은 퍼지기 전 조준 방향(단위 벡터)이고, camera는 발사할 때 카메라 위치(cm)다.
+// shot_count는 클라이언트가 그 무기로 쏜 횟수다. 빗나감 방향은 (플레이어 아이디, 무기, shot_count)로 정하고(shot_spread.h), 서버는 앞 발사보다 클 때만 받는다.
+// 클라이언트는 같은 빗나감으로 탄을 만들어 맞은 대상을 찾고, 그 대상이 화면에서 향하던 틱 번호와 그 틱까지 간 정도를 보낸다. 빗나갔으면 대상은 0이다.
+// 서버는 모든 플레이어를 그 시점으로 되감아 판정한다.
 struct C2S_FIRE_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	float aim_direction[3];
 	float camera[3];
-	std::uint32_t action_time_ms;
+	std::uint32_t shot_count;
+	int target_player_id;
+	// 대상이 화면에서 향하던 방 틱 번호와, 앞 위치에서 그 틱 위치까지 간 정도(0~100)
+	std::uint32_t target_tick;
+	std::uint8_t target_progress;
 };
 
 struct S2C_ACTION_PACKET {
@@ -163,11 +159,11 @@ struct S2C_ACTION_PACKET {
 	std::uint8_t action;
 };
 
-// 손에 든 무기의 재장전을 시작했다. action_time_ms는 시작한 순간의 서버 기준 시각(ms)이다. 장비를 바꾸면 재장전은 취소된다.
+// 손에 든 무기의 재장전을 시작했다. 장비를 바꾸면 재장전은 취소된다.
 // 서버가 인정하면 재장전 중계를 보내고, 인정하지 않으면 재장전한 사람에게 지금 탄약으로 재장전 끝을 바로 보낸다.
 struct C2S_RELOAD_PACKET {
 	PACKET_HEADER header;
-	std::uint32_t action_time_ms;
+	std::uint32_t frame_number;
 };
 
 // 재장전이 시작됐다. 방 전체에 보내고 재장전한 사람도 받는다. 서버가 자동 재장전을 시작했을 때도 보낸다.
@@ -238,23 +234,28 @@ struct S2C_STUN_RELEASE_PACKET {
 };
 
 // 서버가 이동을 인정하지 않아 서버 이동 상태로 롤백한다. 방 안 플레이어 모두에게 보낸다.
-// 받은 클라이언트는 그 캐릭터를 보간 없이 위치(캡슐 중심, cm)·속도(cm/s)·방향으로 바로 바꾸고, 롤백된 본인이면 같은 번호로 확인을 보낸다.
-// 공중이면 서버가 계산한 궤적 위의 위치와 속도로 이어 떨어진다.
+// 받은 클라이언트는 그 캐릭터를 보간 없이 위치(캡슐 중심, cm)·속도(cm/s)·방향으로 바로 바꾼다.
+// 롤백된 본인은 이 상태를 지금 이동 상태로 세팅하고 확인을 보낸다. 아직 보내지 않은 패킷은 버린다.
 struct S2C_MOVE_ROLLBACK_PACKET {
 	PACKET_HEADER header;
 	int player_id;
-	std::uint32_t rollback_id;
 	float location[3];
 	float velocity[3];
 	float yaw;
 	float view_pitch;
-	AirPhase air_phase;
+	// 공중이면 참. 받은 클라이언트가 이 상태에서 이어 계산할 때 걷기로 할지 떨어지기로 할지 정한다.
+	// 속도로 대신하지 않는 것은, 걷는 동안 수직 속도는 늘 0이지만 공중에서도 단계 끝 수직 속도가 정확히 0일 수 있기 때문이다
+	// (단계 끝에 맞춰 바닥 끝을 벗어난 순간, 천장에 부딪힌 순간, 점프 정점).
+	bool is_falling;
+	// 롤백한 방 틱 번호
+	std::uint32_t tick_number;
 };
 
-// 롤백을 적용했다는 확인. 서버는 이 확인을 받을 때까지 그 플레이어의 이동 상태를 받지 않는다.
+// 롤백을 적용했다는 확인. 롤백을 받은 즉시 보낸다. 서버는 확인 전에 온 게임 패킷을 버리고,
+// 확인 뒤 첫 이동 패킷에서 그 번호를 처리할 틱을 다시 정한다.
+// 롤백은 확인을 받기 전에 다시 보내지 않으므로 기다리는 롤백은 늘 하나이고, 연결이 순서를 지키므로 번호 없이 그 롤백의 확인이다.
 struct C2S_MOVE_ROLLBACK_ACK_PACKET {
 	PACKET_HEADER header;
-	std::uint32_t rollback_id;
 };
 
 // 상자 하나. 종류는 BoxKind 값이고, 위치는 cm, 회전은 언리얼 회전 순서(pitch, yaw, roll, 도)다.
@@ -308,6 +309,7 @@ struct S2C_PICKAXE_CHARGES_PACKET {
 // 서버는 카메라 위치를 사격 카메라와 같이 검증하고, 시선이 그 상자의 상호작용 범위에 닿으며 카메라에서 그곳까지 지형에 가리지 않아야 연다.
 struct C2S_BOX_OPEN_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	std::uint16_t box;
 	float camera[3];
 	float view_direction[3];
@@ -358,18 +360,13 @@ struct S2C_AREA_REMOVAL_PACKET {
 
 // 서버가 그 플레이어를 멈춘 것으로 판단했다. 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않았거나 서버가 이동을 되돌렸을 때 방 전체에 보낸다.
 // 받은 쪽은 그 캐릭터를 location으로 옮기고 이동 키 입력을 없는 것으로 두어 수평으로 바로 멈춘다. 공중이면 떨어지는 것은 이어 간다.
-// 이동 상태가 다시 오면 서버가 그 사람의 이동 키 입력을 다시 중계한다.
+// 이동 상태가 다시 오면 서버가 그 사람의 이동 상태를 다시 중계한다.
 struct S2C_MOVE_STOP_PACKET {
 	PACKET_HEADER header;
 	int player_id;
 	float location[3]; // 서버가 정한 멈춘 위치(캡슐 중심)
-};
-
-// 서버 시각 동기화. 게임 레벨에 들어오는 플레이어에게 한 번 보낸다.
-// 클라이언트는 받자마자 자기 기준 시각을 server_time_ms로 맞추고, 그 뒤 흐른 만큼 더해 동작 시각으로 쓴다.
-struct S2C_TIME_SYNC_PACKET {
-	PACKET_HEADER header;
-	std::uint32_t server_time_ms;
+	// 멈춘 방 틱 번호
+	std::uint32_t tick_number;
 };
 
 // 시험용 보물 위치 요청. 방장이 요청할 때만 답한다.
@@ -431,6 +428,7 @@ struct C2S_AWARD_DONE_PACKET {
 // 블록마다 한 번만 쓸 수 있고, 놓는 칸은 모두 판 안이며 아직 배제되지 않은 칸이어야 한다.
 struct C2S_BLOCK_USE_PACKET {
 	PACKET_HEADER header;
+	std::uint32_t frame_number;
 	std::uint8_t piece;
 	std::uint8_t rotation;
 	std::uint8_t column;

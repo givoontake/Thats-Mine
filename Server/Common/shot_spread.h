@@ -7,7 +7,7 @@
 // 공중에서는 항상 최대 퍼짐이다. 조준할 수 있는 무기(장비 고유값 can_aim, 저격총)는 조준하지 않으면 기본, 조준하고 서 있으면 aimed_still, 조준하고 움직이면 aimed_moving이다.
 // 연사가 있는 무기(권총)는 연사 열기로 퍼짐이 커진다. 쏠 때마다 열기가 1 오르고(최대 heat_limit), 열기가 free_heat보다 높으면 넘은 만큼 per_shot씩 퍼짐이 커진다.
 // 마지막 발사 뒤 발사 간격만큼 더 쏘지 않으면 그때부터 발사 간격마다 열기가 1씩 내려간다. 최대 속도로 연사하면 회복 없이 오른다.
-// 한 발이 빗나가는 방향은 (판 시드, 플레이어 아이디, 무기, 그 무기의 발사 번호)를 섞은 해시로 정한다. 정수 연산만 써서 서버와 클라이언트가 같은 값을 얻는다.
+// 한 발이 빗나가는 방향은 (플레이어 아이디, 무기, 클라이언트가 그 무기로 쏜 횟수)를 섞은 해시로 정한다. 정수 연산만 써서 서버와 클라이언트가 같은 값을 얻는다.
 // 해시에서 얻은 두 수로 원 둘레 방향과 빗나감 비율(0~1)을 정하고, 실제 빗나간 각도는 비율 × 퍼짐 크기라 가운데 쪽에 더 많이 맞는다.
 
 // 무기 하나의 퍼짐 수치(도)
@@ -63,9 +63,9 @@ constexpr std::uint64_t MixShotSpreadBits(std::uint64_t value)
 }
 
 // 한 발의 빗나감을 정하는 해시
-constexpr std::uint64_t GetShotSpreadHash(std::uint64_t seed, std::int32_t player_id, std::uint8_t weapon, std::uint32_t shot_index)
+constexpr std::uint64_t GetShotSpreadHash(std::int32_t player_id, std::uint8_t weapon, std::uint32_t shot_count)
 {
-	return MixShotSpreadBits(MixShotSpreadBits(MixShotSpreadBits(seed ^ static_cast<std::uint32_t>(player_id)) ^ weapon) ^ shot_index);
+	return MixShotSpreadBits(MixShotSpreadBits(MixShotSpreadBits(static_cast<std::uint32_t>(player_id)) ^ weapon) ^ shot_count);
 }
 
 // 조준 방향(단위 벡터)을 해시로 정한 방향으로 비율 × spread_degrees만큼 기울인 방향.

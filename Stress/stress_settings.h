@@ -29,6 +29,8 @@ constexpr float SPAWN_HEIGHT_OFFSET = 100.0f;
 // 봇은 걷기 시작할 때 이 무기로 바꾸고, 바꾸는 시간이 지나면 FIRE_INTERVAL_MS마다 무작위 방향으로 쏜다.
 constexpr WeaponType FIRE_WEAPON = WeaponType::PISTOL;
 constexpr int FIRE_INTERVAL_MS = 1000;
+// 보내기 스레드가 한 번에 보내는 이동 패킷 수의 상한. 밀린 번호가 더 많으면 다음 차례에 이어 보낸다.
+constexpr int MAX_SEND_MOVE_COUNT = 64;
 
 // 시험 로그인. DB를 거치지 않고 player_id로 로그인한다. 부하 시험할 때만 서버에 넣는 C2S_TEST_LOGIN과 번호·모양이 같고, 서버 헤더와 겹치지 않게 이름만 다르게 둔다.
 constexpr std::uint8_t C2S_STRESS_LOGIN = 127;

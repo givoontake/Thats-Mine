@@ -6,7 +6,7 @@
 enum class EquipmentEvent : std::uint8_t { NONE, RELOAD_START, RELOAD_DONE, CHARGE };
 
 // 장착 장비 하나. 플레이어 동작 상태가 종류마다 하나씩 갖는다. 종류마다 정해진 값은 장비 설정 상수를 참조로 읽고,
-// 이 장비에서만 바뀌는 상태는 멤버로 든다. 동작 시각은 클라이언트가 보낸 서버 기준 시각(ms), 받은 시각은 서버가 요청을 받은 시각(ms)이다.
+// 이 장비에서만 바뀌는 상태는 멤버로 든다. 동작 시각은 그 동작이 든 전송 프레임 번호 × MOVE_STEP_MS(ms)다.
 class Equipment
 {
 	const EquipmentSettings& settings_;
@@ -16,8 +16,8 @@ class Equipment
 
 protected:
 	explicit Equipment(const EquipmentSettings& settings);
-	// 받은 시각 time_ms에 교체 대기가 끝날 때까지 남은 시간(ms). 대기가 없거나 끝났으면 0이다.
-	long long GetEquipWaitRemainingMs(long long time_ms) const;
+	// 동작 시각 action_time_ms에 교체 대기가 끝날 때까지 남은 시간(ms). 대기가 없거나 끝났으면 0이다.
+	long long GetEquipWaitRemainingMs(std::uint32_t action_time_ms) const;
 
 public:
 	virtual ~Equipment() = default;
@@ -30,10 +30,10 @@ public:
 
 	// 게임을 시작할 때 이번 게임의 처음 상태로 되돌린다.
 	virtual void Reset() = 0;
-	// 동작 시각 기준을 동기화로 보낸 서버 시각으로 맞춘다.
-	virtual void ResetActionTime(long long) {}
+	// 동작 시각 기준을 스폰한 번호의 시각으로 맞춘다.
+	virtual void ResetActionTime(std::uint32_t) {}
 	// 다른 장비에서 이 장비로 바꾼다. 교체 대기를 시작한다.
-	virtual void Equip(std::uint32_t action_time_ms, long long time_ms);
+	virtual void Equip(std::uint32_t action_time_ms);
 	// 손에서 내려놓는다. 손에 들고 있어야 이어지는 일을 멈춘다.
 	virtual void OnUnequip() {}
 	// 휘두른다. 교체 대기 중이면 받지 않는다.

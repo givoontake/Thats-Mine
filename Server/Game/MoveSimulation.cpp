@@ -21,19 +21,28 @@ static MoveVector Down(float distance)
 }
 
 MoveSimulation::MoveSimulation(const MapData& map, const MOVE_STATE& state)
-	: map_(&map), location_{ state.location[0], state.location[1], state.location[2] }, velocity_{ state.velocity[0], state.velocity[1], state.velocity[2] }, yaw_(state.yaw), view_pitch_(state.view_pitch), is_walking_(state.air_phase == AirPhase::GROUND)
+	: map_(&map), location_{ state.location[0], state.location[1], state.location[2] }, velocity_{ state.velocity[0], state.velocity[1], state.velocity[2] }, yaw_(state.yaw), view_pitch_(state.view_pitch), is_walking_(!state.is_falling)
 {
 	// 걷는 중이면 지금 자리 바닥에서 시작한다.
 	if (is_walking_) floor_ = FindFloor(location_, nullptr);
 }
 
-void MoveSimulation::Simulate(std::int8_t input_right, std::int8_t input_forward, bool is_aiming, float seconds)
+void MoveSimulation::Simulate(std::int8_t input_right, std::int8_t input_forward, bool is_aiming, float seconds, bool can_walk_off_ledges)
 {
 	if (!map_) return;
 	input_ = GetMoveInputDirection(yaw_, input_right, input_forward);
 	walk_params_.max_speed = GetMaxMoveSpeed(input_forward, is_aiming);
+	can_walk_off_ledges_ = can_walk_off_ledges;
 	jump_apex_attempts_ = 0;
 	StartNewPhysics(seconds, 0);
+}
+
+// 언리얼 점프처럼 위로 점프 속도 이상을 주고 떨어지기로 바꾼다.
+void MoveSimulation::StartJump()
+{
+	velocity_.z = std::max(velocity_.z, JUMP_Z_VELOCITY);
+	is_walking_ = false;
+	floor_ = {};
 }
 
 void MoveSimulation::StopHorizontal()
@@ -59,8 +68,7 @@ MOVE_STATE MoveSimulation::GetMoveState() const
 	state.velocity[0] = velocity_.x;
 	state.velocity[1] = velocity_.y;
 	state.velocity[2] = velocity_.z;
-	// 클라이언트와 같이 공중에서 올라가는 중이면 상승, 아니면 하강이다.
-	state.air_phase = is_walking_ ? AirPhase::GROUND : velocity_.z > 0.0f ? AirPhase::RISING : AirPhase::FALLING;
+	state.is_falling = !is_walking_;
 	return state;
 }
 
@@ -375,7 +383,8 @@ void MoveSimulation::StartNewPhysics(float seconds, int iterations)
 }
 
 // 언리얼 걷기와 같은 순서로 단계마다 속도를 정하고 바닥을 따라 간 뒤 바닥을 다시 찾는다.
-// 바닥이 끝나면 가장자리를 따라 가 보고, 갈 곳이 없으면 이번 단계를 되돌려 멈춘다. 서 있던 바닥이 없었거나 움직이지 않았으면 떨어진다.
+// 바닥이 끝나면, 바닥 끝에서 떨어질 수 있으면 떨어진다. 떨어질 수 없으면 가장자리를 따라 가 보고, 갈 곳이 없으면 이번 단계를 되돌려 멈춘다.
+// 서 있던 바닥이 없었거나 움직이지 않았으면 떨어진다.
 void MoveSimulation::PhysWalking(float seconds, int iterations)
 {
 	if (seconds < MOVE_MIN_TICK_TIME) return;
@@ -404,6 +413,10 @@ void MoveSimulation::PhysWalking(float seconds, int iterations)
 		floor_ = step_down_floor ? *step_down_floor : FindFloor(location_, nullptr);
 
 		if (!floor_.is_walkable) {
+			if (can_walk_off_ledges_) {
+				StartFalling(iterations, remaining, tick, delta, old_location);
+				return;
+			}
 			const MoveVector ledge_delta = has_tried_ledge_move ? MoveVector{} : GetLedgeMove(old_location, delta, old_floor);
 			if (!IsNearlyZero(ledge_delta, 0.0f)) {
 				location_ = old_location;

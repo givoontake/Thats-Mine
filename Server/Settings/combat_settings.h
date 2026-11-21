@@ -33,13 +33,6 @@ constexpr float CAMERA_VIEW_CONE_DEGREES = 45.0f;
 constexpr float SHOT_SPREAD_TIME_ALLOWANCE_SECONDS = 0.2f;
 constexpr float HIT_OCCLUSION_MARGIN = 5.0f; // 지형 막힘 검사 선분의 양 끝에서 빼는 길이(cm). 맞은 사람이 붙어 선 벽이나 발사 지점 바로 옆 면을 막힘으로 보지 않는다.
 
-// 발사 간격 검증. 무기마다 직전 인정 발사와의 동작 시각 간격에 보상(ms)을 더해 발사 간격 이상이면 인정한다.
-// 인정하면 서버가 받은 간격과 동작 시각 간격의 차이를 보상에 더한다. 서버가 늦게 받았으면 양수, 일찍 받았으면 음수다.
-// 발사 간격보다 늦게 쏜 만큼은 지난 보상이나 빚을 0 쪽으로 줄인다. 보상은 FIRE_REWARD_MAX_MS까지 쌓이고,
-// 음수 보상은 FIRE_DEBT_FREE_MS를 넘은 몫만 간격에서 깎는다. 동작 시각이 서버가 받은 시각보다 늦으면 인정하지 않는다.
-constexpr long long FIRE_REWARD_MAX_MS = 500;
-constexpr long long FIRE_DEBT_FREE_MS = 500;
-
 // 탄약 상자. 무기마다 AMMO_BOX_COUNT × 글로벌 배수만큼 만들고, 한 상자에는 한 무기의 탄만 든다. 열면 그 무기의 소지 탄이 늘어난다.
 constexpr int AMMO_BOX_COUNT = 50;
 constexpr int AMMO_BOX_ROUNDS[] = { 0, 1, 3 }; // 상자 하나로 느는 탄 수. 무기 값 순서: 곡괭이, 저격총, 권총. 0이면 그 무기의 탄약 상자를 만들지 않는다.

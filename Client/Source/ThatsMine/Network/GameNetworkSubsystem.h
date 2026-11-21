@@ -27,8 +27,17 @@ public:
 	void Disconnect();
 	bool Reconnect();
 
+	// 쌓아 둔 패킷 뒤에 이 패킷을 붙여 한 번에 보낸다. 서버는 보낸 순서대로 받는다.
 	UFUNCTION(BlueprintCallable, Category = "Network")
 	bool SendPacket(uint8 type, const TArray<uint8>& payload);
+	// 패킷 하나에 헤더를 붙여 buffer 뒤에 이어 쓴다.
+	static bool AppendPacket(TArray<uint8>& buffer, uint8 type, const TArray<uint8>& payload);
+	// 보내지 않고 쌓아 둔다. 다음에 보내는 패킷 앞에 붙어 순서대로 나간다.
+	bool AppendPendingPacket(uint8 type, const TArray<uint8>& payload);
+	// 쌓아 둔 패킷을 바로 보낸다.
+	bool SendPendingPackets();
+	// 쌓아 둔 패킷을 보내지 않고 버린다.
+	void ClearPendingPackets() { pending_packets_.Reset(); }
 
 	UFUNCTION(BlueprintPure, Category = "Network")
 	ENetworkConnectionState GetConnectionState() const { return connection_state_; }
@@ -44,6 +53,8 @@ public:
 	FOnNetworkStateChanged on_connection_state_changed_;
 
 private:
+	bool SendPackets(TArray<uint8>&& packets);
+
 	UPROPERTY(Config)
 	FString server_address_ = TEXT("127.0.0.1");
 
@@ -64,6 +75,8 @@ private:
 
 	TUniquePtr<NetworkConnection> worker_;
 	TMap<uint8, FNetworkPacketHandler> packet_handlers_;
+	// 아직 보내지 않은 패킷. 헤더를 붙여 이어 써 두었다가 다음 송신 때 한 번에 보낸다.
+	TArray<uint8> pending_packets_;
 	ENetworkConnectionState connection_state_ = ENetworkConnectionState::DISCONNECTED;
 	FString connection_message_;
 	uint64 connection_generation_ = 0;

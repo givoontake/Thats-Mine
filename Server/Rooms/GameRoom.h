@@ -66,8 +66,10 @@ private:
 	// 방 삭제와 남은 작업 정리를 동기화한다.
 	std::mutex room_mutex_;
 	ConcurrentTaskQueue<RoomTask> room_tasks_;
-	// 입출력 스레드가 넣는 이 방 플레이어의 패킷. 방 전환 작업과 따로 두고 틱마다 받은 순서대로 처리한다.
+	// 입출력 스레드가 넣는 이 방 플레이어의 패킷. 방 전환 작업과 따로 두고 틱마다 받은 순서대로 꺼낸다.
 	ConcurrentTaskQueue<std::unique_ptr<SessionPacketTask>> packet_tasks_;
+	// 대기열. 꺼낸 패킷 중 전송 프레임 번호가 든 게임 패킷을 받은 순서대로 두고, 그 번호를 처리할 틱에 처리한다. 방을 처리하는 스레드만 쓴다.
+	std::vector<std::unique_ptr<SessionPacketTask>> waiting_packet_tasks_;
 
 	int room_index_ = -1;
 	// 방 키는 방이 만들어질 때마다 새 난수로 바뀌며, 방 자리 재사용을 구분하는 식별자다.
@@ -81,38 +83,39 @@ private:
 	std::array<Player, MAX_ROOM_PLAYER_COUNT> room_players_;
 	int host_id_ = -1;
 	std::atomic<char> current_player_count_{ 0 };
-	// 현재 처리 중인 틱 시각. 받은 이동 상태와 동작에 서버 시각으로 기록한다.
+	// 이번에 깨어난 실제 시각(ms). 패킷이 오지 않은 실제 시간을 재는 1초 끊김에만 쓴다.
 	long long tick_time_ms_ = 0;
+	// 방 틱 번호와 0번 틱이 시작한 실제 시각(ms). 방 틱 번호는 흐른 실제 시간 ÷ TICK_INTERVAL_MS이고, 게임 안 시간은 모두 이 번호로 센다.
+	// 이동 중계에 붙여 보내고, 사격 시점을 되감을 때 쓴다. 실제 시각이 0이면 아직 처리를 시작하지 않았다.
+	std::uint32_t tick_number_ = 0;
+	long long tick_start_ms_ = 0;
 	// 방 자리마다 이번 틱에 그 사람에게 보낼 패킷. 처리한 순서대로 이어 붙이고, 틱 끝에 사람마다 한 번에 보낸다.
 	// 방을 나가는 사람은 나갈 때 퇴장 알림과 함께 보낸다.
 	std::array<TickSendBuffer, MAX_ROOM_PLAYER_COUNT> tick_send_buffers_;
-	// 시작 단계, 전원 로딩 완료를 기다리는 마감 시각, 실제 게임 시작 시각(시작 대기에 들어갈 때 정한다)
+	// 시작 단계, 전원 로딩 완료를 기다리는 마감 틱, 실제 게임 시작 틱(시작 대기에 들어갈 때 정한다)
 	MatchPhase match_phase_ = MatchPhase::LOADING;
-	long long loading_deadline_ms_ = 0;
-	long long game_start_ms_ = 0;
-	// 플레이어 자세의 애니메이션 진행을 마지막으로 계산한 틱 시각
-	long long last_pose_tick_ms_ = 0;
+	std::uint32_t loading_deadline_tick_ = 0;
+	std::uint32_t game_start_tick_ = 0;
 	// 게임 시작 때 고른 상자 자리 번호(유적 상자 다음 자연 상자 순서)와 그 배치 패킷. 상자 번호는 이 목록의 순서다.
 	// 패킷은 모두 닫힌 상태로 만들어 두고, 게임 시작 전에 로딩을 마친 플레이어에게 보낸다. 시작 뒤에 들어온 플레이어에게는 그때 열림 상태로 새로 만들어 보낸다.
 	std::vector<std::uint32_t> box_placement_indices_;
 	std::vector<char> box_layout_packet_;
-	// 상자마다 열린 틱 시각. 0이면 아직 닫혀 있다. 상자 번호 순서다.
-	std::vector<long long> box_open_ms_;
+	// 상자마다 열린 방 틱 번호. 0이면 아직 닫혀 있다. 상자 번호 순서다.
+	std::vector<std::uint32_t> box_open_ticks_;
 	// 게임 시작 때 정한 최종 보물 배치
 	TreasurePlacement treasure_placement_{};
 	// 게임 시작 때 최종 보물 위치로 만든 이번 게임의 힌트 목록
 	std::vector<Hint> hints_;
 	// 상자마다 넣은 내용물(힌트 또는 탄약). 상자 번호 순서다.
 	std::vector<BoxContent> box_contents_;
-	// 이번 게임의 탄 퍼짐 시드(shot_spread.h). 게임마다 새로 정하고 서버만 안다.
-	std::uint64_t shot_seed_ = 0;
-	// 이번 게임에서 영역 지우기로 지운 배제 판 칸 모음과 다음 지우기 시각. 지운 칸은 플레이 중인 전원의 배제 판에 들어간다.
+
+	// 이번 게임에서 영역 지우기로 지운 배제 판 칸 모음과 다음 지우기 틱. 지운 칸은 플레이 중인 전원의 배제 판에 들어간다.
 	std::uint64_t removed_cells_ = 0;
-	long long next_area_removal_ms_ = 0;
-	// 보물을 발견해 게임이 끝나는 시각. 0이면 아직 발견하지 않았다.
-	long long game_end_ms_ = 0;
-	// 시상식이 끝나 방으로 돌아가는 시각. 0이면 시상식 중이 아니다.
-	long long award_end_ms_ = 0;
+	std::uint32_t next_area_removal_tick_ = 0;
+	// 보물을 발견해 게임이 끝나는 틱. 0이면 아직 발견하지 않았다.
+	std::uint32_t game_end_tick_ = 0;
+	// 시상식이 끝나 방으로 돌아가는 틱. 0이면 시상식 중이 아니다.
+	std::uint32_t award_end_tick_ = 0;
 
 	Session* FindSession(const Player& player) const;
 	// 그 플레이어 자리의 이번 틱 송신 버퍼
@@ -124,49 +127,49 @@ private:
 	void BeginRoomDelete();
 	void TryPostRoomDelete();
 	void ProcessPacketTasks();
+	// 꺼낸 게임 패킷을 대기열에 넣을지 본다. 받을 수 없는 패킷이면 거짓이다. 이동 패킷이면 그 번호까지 다 온 것으로 기록한다.
+	bool AcceptFramePacket(const SessionPacketTask& task);
 	void ProcessRoomTasks();
 	void ProcessJoinTask(const RoomTask& task);
 	void ProcessRoomTask(const RoomTask& task);
 	int AddPlayer(Session& new_session, SessionKey session_key, const char* room_password);
 	void ProcessSpecificRoomTask(const RoomTask& task);
 	// elapsed_ms는 지난 틱부터 지난 시간이다.
-	void ProcessGameTick(long long tick_time_ms, long long elapsed_ms);
+	void ProcessGameTick();
+	// 판정용 자세에 넘기는 애니메이션 진행 시각(ms). 애니메이션 곡선을 시간으로 읽어야 해서 방 틱 번호 × TICK_INTERVAL_MS로 만든다.
+	long long GetPoseTimeMs() const { return static_cast<long long>(tick_number_) * TICK_INTERVAL_MS; }
 	void ResetGameState();
 	void ProcessLoadedPlayers();
 	void ProcessGameStart();
-	// 손에 든 weapon으로 한 동작이나 재장전을 인정하는지 본다. time_ms는 서버가 요청을 받은 시각, action_time_ms는 요청의 동작 시각이다.
-	bool AcceptAction(Player& player, PlayerAction action, std::uint8_t weapon, long long time_ms, std::uint32_t action_time_ms);
+	// 손에 든 weapon으로 한 동작이나 재장전을 인정하는지 본다. action_time_ms는 요청의 동작 시각이다.
+	bool AcceptAction(Player& player, PlayerAction action, std::uint8_t weapon, std::uint32_t action_time_ms);
 	// 서버가 아는 곡괭이 사용 가능 횟수와 남은 충전 시간을 그 사람에게 보낸다.
 	void SendPickaxeCharges(const Player& player);
 	// 그 무기의 지금 탄창 탄과 소지 탄을 재장전 끝으로 그 사람에게 보낸다.
 	void SendReloadDone(const Player& player, std::uint8_t weapon);
-	// 그 플레이어의 서버 이동 상태를 그 자리에 세우고 방 전체에 멈춘 위치와 함께 멈춤을 알린다.
+	// 그 플레이어를 멈추고(Player::StopMove) 방 전체에 멈춘 위치와 함께 멈춤을 알린다.
 	void RelayMoveStop(Player& player);
-	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다. time_ms는 서버가 발사 패킷을 받은 시각이다.
-	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms);
+	// 손에 든 총의 발사를 인정하면 탄 광선을 판정한다.
+	void ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p);
 	// 서버가 조준 변경을 받지 않았을 때, 먼저 바꾼 본인에게 서버가 아는 조준 여부를 보내 맞추게 한다.
 	void SendAimCorrection(const Player& player);
 	// 서버가 장비 교체를 받지 않았을 때, 먼저 바꾼 본인에게 서버가 아는 손에 든 장비를 보내 맞추게 한다. 그 무기를 재장전 중이면 재장전 시작도 보낸다.
 	void SendEquipCorrection(const Player& player);
-	// 그 플레이어의 눌린 이동 키·조준·장비 패킷을 buffer에 쓰고 쓴 크기를 돌려준다. 스폰 뒤에 이어 붙인다.
-	int AppendInputState(char* buffer, const Player& player) const;
-	// 그 플레이어의 눌린 이동 키(점프 제외)마다 누름 패킷을 move_state의 위치·속도로 buffer에 쓰고 쓴 크기를 돌려준다.
-	int AppendMoveKeys(char* buffer, const Player& player, const MOVE_STATE& move_state) const;
-	// 그 플레이어의 눌린 이동 키를 방 전체에 다시 알린다. 멈춤을 알렸던 플레이어가 다시 움직일 때 쓴다.
-	void RelayMoveKeys(const Player& player, const MOVE_STATE& move_state);
 	// 공개 여부에 맞는 방 입장 패킷으로 방 이름을 buffer에 쓰고 쓴 크기를 돌려준다.
 	int AppendRoomName(char* buffer) const;
 	void AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part);
 	bool CheckShotCamera(const Player& shooter, const DirectX::XMFLOAT3& camera, const DirectX::XMFLOAT3& hit_point) const;
 	bool IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end) const;
-	void ProcessBoxOpen(Player& opener, std::uint16_t box);
+	// action_time_ms는 연 동작의 동작 시각이다. 탄약 상자면 그 시각으로 자동 재장전을 예약한다.
+	void ProcessBoxOpen(Player& opener, std::uint16_t box, std::uint32_t action_time_ms);
 	bool CheckBoxOpen(const Player& opener, const C2S_BOX_OPEN_PACKET& request_p) const;
 	// 힌트 번호 hint의 종류별 힌트 패킷을 buffer에 쓰고 쓴 크기를 돌려준다.
 	int AppendHintPacket(char* buffer, std::uint32_t hint) const;
 	void ProcessAreaRemoval();
 	void ProcessStunRelease();
-	// 자동 재장전 시작, 재장전 끝, 곡괭이 충전처럼 서버가 시각을 정하는 장비 상태를 지난 시간(ms)만큼 진행하고 알린다.
-	void ProcessActionStates(long long elapsed_ms);
+	// 자동 재장전 시작, 재장전 끝, 곡괭이 충전처럼 서버가 시각을 정하는 장비 상태를 그 플레이어의 번호 하나(MOVE_STEP_MS)만큼 진행하고 알린다.
+	// 그 플레이어의 번호를 처리할 때마다 부르므로, 장비는 그 사람의 번호 흐름대로 진행한다.
+	void ProcessActionStates(Player& player);
 	void DigTreasure(const Player& digger);
 	// 게임 제한시간이 끝났는데 아무도 보물을 찾지 못했으면 보물 위치를 알리고 게임이 끝날 시각을 정한다.
 	void ProcessTimeLimit();
@@ -178,9 +181,9 @@ private:
 	int AppendExclusionBoard(char* buffer, Player& player) const;
 	void ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request_p);
 	void SendAreaRemovalTime(const Player& player);
-	MoveCheckResult CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms) const;
+	MoveCheckResult CheckMove(const MOVE_STATE& move_state, const MOVE_STATE& expected) const;
 	bool IsOnGround(const float location[3]) const;
-	void RollbackMove(Player& player);
+	void RollbackMove(Player& player, bool should_relay);
 	void StartGame(int requester_id);
 	void PlaceTreasure();
 	void GenerateHints();
@@ -212,7 +215,8 @@ public:
 
 	// 공통
 	void HandlePacket(char* packet, Session& request_session, long long receive_time_ms);
-	void ProcessRoomTick(long long tick_time_ms);
+	// now_ms(실제 시각)까지 밀린 방 틱을 차례로 처리한다. 한 번에 최대 MAX_CATCH_UP_TICKS틱까지이고, 쌓인 패킷은 마지막에 사람마다 한 번에 보낸다.
+	void ProcessRoomTick(long long now_ms);
 	void SendCreateRoom(Session& session);
 	bool AddHostSession(SessionKey session_key);
 	bool AddRoomTask(RoomTask task);

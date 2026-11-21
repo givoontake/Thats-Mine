@@ -5,8 +5,9 @@
 #include "remote_move_state.h"
 #include "RemoteMovementComponent.generated.h"
 
-// 다른 플레이어 캐릭터에 붙어, 받은 입력과 몸 방향으로 로컬 이동 계산을 이어 간다.
-// 새 좌표를 받으면 캐릭터 위치와의 차이를 보간 이동으로 메우고, 다음 좌표를 받으면 그 좌표 기준으로 새로 보간한다.
+// 다른 플레이어 캐릭터에 붙어, 서버가 틱마다 보낸 이동 상태로 그 캐릭터를 옮긴다.
+// 새 상태를 받으면 지금 그린 위치·방향에서 받은 위치·방향까지 MOVE_STEP_MS 동안 옮기고, 다음 상태를 받으면 그때 그린 위치에서 다시 옮긴다.
+// 이동은 계산하지 않고, 받은 속도와 공중 여부는 애니메이션에 쓰도록 이동 컴포넌트에 넣어 둔다.
 UCLASS()
 class THATSMINE_API URemoteMovementComponent : public UActorComponent
 {
@@ -15,60 +16,37 @@ class THATSMINE_API URemoteMovementComponent : public UActorComponent
 public:
 	URemoteMovementComponent();
 
-	void ApplyState(const FRemoteMoveState& state);
-	// 눌린 이동 키를 모두 뗀 것으로 한다.
-	void ClearMoveKeys() { move_keys_ = 0; }
-	// 받은 이동 키 누름·뗌과 보낸 사람이 키를 처리한 순간의 위치·속도. 이동 키를 모두 떼 멈추면 보낸 사람이 멈춘 자리에 맞춰 세우고,
-	// 점프 누름이면 그 위치에서 그 수평 속도와 점프 속도로 뛰어오르게 한다.
-	void ApplyMoveKey(MoveKey key, bool is_down, const FVector& location, const FVector& sent_velocity);
-	// 서버가 멈춘 것으로 판단한 위치로 옮기고 눌린 이동 키를 모두 뗀 것으로 두어 수평으로 바로 세운다. 공중이면 떨어지는 것은 이어 간다.
-	void ApplyMoveStop(const FVector& location);
-	// 서버가 롤백한 이동 상태로 보간 없이 바로 바꾼다. 이동 키 입력은 그대로 이어 간다.
-	void ApplyRollback(const FRemoteMoveState& state);
+	// 서버가 보낸 방 틱 tick_number의 이동 상태
+	void ApplyState(const FRemoteMoveState& state, uint32 tick_number);
+	// 서버가 멈춘 것으로 판단한 위치로 옮기고 수평 속도를 0으로 둔다.
+	void ApplyMoveStop(const FVector& location, uint32 tick_number);
+	// 서버가 롤백한 이동 상태로 옮기는 시간 없이 바로 바꾼다.
+	void ApplyRollback(const FRemoteMoveState& state, uint32 tick_number);
 	void SetAiming(bool is_aiming);
 	void SetWeapon(EWeaponType weapon);
 	float GetViewPitch() const { return view_pitch_; }
+	// 지금 향하는 상태의 방 틱 번호와, 앞 위치에서 그 상태까지 간 정도(0~100). 발사할 때 이 시점으로 서버가 되감는다.
+	uint32 GetTickNumber() const { return tick_number_; }
+	uint8 GetTickProgress() const;
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float delta_seconds, ELevelTick tick_type, FActorComponentTickFunction* this_tick_function) override;
 
 private:
-	// 받은 좌표와의 차이를 메우는 시간. 다음 좌표가 올 주기에 맞춘다.
-	static constexpr float CORRECTION_SECONDS = 0.1f;
-	static constexpr float ROTATION_SMOOTH_SECONDS = 0.05f;
-	// 차이가 이보다 크면 보간하지 않고 바로 옮긴다.
-	static constexpr float SNAP_DISTANCE = 100.0f;
-
+	// 향하는 상태와 그 방 틱 번호
 	FRemoteMoveState state_;
-	// 받은 눌린 이동 키. MoveKey 값 자리의 비트다. 점프는 담지 않는다.
-	uint8 move_keys_ = 0;
+	uint32 tick_number_ = 0;
 	bool has_state_ = false;
+	// 옮기기 시작한 위치·방향과 그 뒤 흐른 시간(초)
+	FVector start_location_ = FVector::ZeroVector;
+	float start_yaw_ = 0.0f;
+	float start_view_pitch_ = 0.0f;
+	float move_elapsed_ = 0.0f;
 	float view_pitch_ = 0.0f;
-	// 남은 보간 이동량과 남은 시간
-	FVector correction_ = FVector::ZeroVector;
-	float correction_remaining_ = 0.0f;
 
-	// 멈출 자리에 맞춰 세우는 기준. 이보다 느리게 걷고 있으면 엔진 제동에 맡긴다.
-	static constexpr float STOP_MIN_SPEED = 50.0f;
-	// 남은 거리가 이보다 짧으면 멈출 자리에 이미 닿은 것으로 본다.
-	static constexpr float STOP_ARRIVE_DISTANCE = 1.0f;
-
-	// 눌린 이동 키로 만든 이동 입력. X가 오른쪽, Y가 앞쪽이다.
-	FVector2D GetMoveInput() const;
-	void UpdateControlledStop(float delta_seconds);
-	void FinishControlledStop();
-	// 멈출 자리에 맞춰 세우는 중이면 엔진 제동을 끄고 매 프레임 속도를 직접 정한다.
-	// is_stop_cruise_: 보낸 사람이 제동을 시작한 위치보다 뒤라서, 지금 속도로 그 위치까지 가는 중
-	bool is_controlled_stop_ = false;
-	bool is_stop_cruise_ = false;
-	FVector stop_start_location_ = FVector::ZeroVector;
-	FVector2D stop_direction_ = FVector2D::ZeroVector;
-	float stop_sent_speed_ = 0.0f;
-	float stop_distance_ = 0.0f;
-	float stop_speed_ = 0.0f;
-	float stop_duration_ = 0.0f;
-	float stop_elapsed_ = 0.0f;
-	float saved_braking_deceleration_ = 0.0f;
-	float saved_ground_friction_ = 0.0f;
+	// 지금 그린 위치·방향에서 state로 옮기기 시작한다. 처음 받은 상태면 바로 옮긴다.
+	void StartMove(const FRemoteMoveState& state, uint32 tick_number);
+	// 받은 속도와 공중 여부를 이동 컴포넌트에 넣는다.
+	void ApplyMovementMode(const FRemoteMoveState& state);
 };

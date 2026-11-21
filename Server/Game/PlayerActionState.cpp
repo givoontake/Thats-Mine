@@ -28,17 +28,16 @@ void PlayerActionState::ResetWeapon()
 	has_pickup_ = false;
 }
 
-void PlayerActionState::ResetActionTime(long long time_ms)
+void PlayerActionState::ResetActionTime(std::uint32_t action_time_ms)
 {
-	last_action_ms_ = static_cast<std::uint32_t>(time_ms);
-	for (Equipment* equipment : equipment_by_weapon_) equipment->ResetActionTime(time_ms);
+	last_action_ms_ = action_time_ms;
+	for (Equipment* equipment : equipment_by_weapon_) equipment->ResetActionTime(action_time_ms);
 }
 
-bool PlayerActionState::AcceptActionTime(std::uint32_t action_time_ms, long long time_ms) const
+bool PlayerActionState::AcceptActionTime(std::uint32_t action_time_ms) const
 {
-	// 동작 시각은 받은 서버 시각에 흐른 시간을 더한 값이라 서버가 받은 시각보다 늦을 수 없고, 같은 클라이언트의 동작은 시각 순서대로 온다.
-	// 시각은 32비트로 돌아가므로 차이로 본다.
-	return static_cast<std::int32_t>(action_time_ms - static_cast<std::uint32_t>(time_ms)) <= 0 && static_cast<std::int32_t>(action_time_ms - last_action_ms_) >= 0;
+	// 같은 클라이언트의 동작은 번호 순서대로 온다. 시각은 32비트로 돌아가므로 차이로 본다.
+	return static_cast<std::int32_t>(action_time_ms - last_action_ms_) >= 0;
 }
 
 Gun* PlayerActionState::FindGun(std::uint8_t weapon)
@@ -55,36 +54,36 @@ const Gun* PlayerActionState::FindGun(std::uint8_t weapon) const
 	return nullptr;
 }
 
-bool PlayerActionState::TryEquip(std::uint8_t weapon, std::uint32_t action_time_ms, long long time_ms)
+bool PlayerActionState::TryEquip(std::uint8_t weapon, std::uint32_t action_time_ms)
 {
-	if (weapon >= EQUIPMENT_COUNT || GetHeldEquipment().IsAiming() || !AcceptActionTime(action_time_ms, time_ms)) return false;
+	if (weapon >= EQUIPMENT_COUNT || GetHeldEquipment().IsAiming() || !AcceptActionTime(action_time_ms)) return false;
 	last_action_ms_ = action_time_ms;
 	if (weapon == weapon_) return true;
 	GetHeldEquipment().OnUnequip();
 	weapon_ = weapon;
-	GetHeldEquipment().Equip(action_time_ms, time_ms);
+	GetHeldEquipment().Equip(action_time_ms);
 	return true;
 }
 
-std::optional<FiredShot> PlayerActionState::TryFire(const ShotSpreadInput& spread_input, std::uint32_t action_time_ms, long long time_ms, long long fire_motion_ms)
+std::optional<FiredShot> PlayerActionState::TryFire(const ShotSpreadInput& spread_input, std::uint32_t shot_count, std::uint32_t action_time_ms, long long fire_motion_ms)
 {
 	Gun* gun = FindGun(weapon_);
-	if (!gun || !AcceptActionTime(action_time_ms, time_ms)) return std::nullopt;
-	const std::optional<FiredShot> shot = gun->TryFire(spread_input, action_time_ms, time_ms, fire_motion_ms);
+	if (!gun || !AcceptActionTime(action_time_ms)) return std::nullopt;
+	const std::optional<FiredShot> shot = gun->TryFire(spread_input, shot_count, action_time_ms, fire_motion_ms);
 	if (shot) last_action_ms_ = action_time_ms;
 	return shot;
 }
 
-bool PlayerActionState::TryMelee(std::uint32_t action_time_ms, long long time_ms)
+bool PlayerActionState::TryMelee(std::uint32_t action_time_ms)
 {
-	if (!AcceptActionTime(action_time_ms, time_ms) || !GetHeldEquipment().TryMelee(action_time_ms)) return false;
+	if (!AcceptActionTime(action_time_ms) || !GetHeldEquipment().TryMelee(action_time_ms)) return false;
 	last_action_ms_ = action_time_ms;
 	return true;
 }
 
-bool PlayerActionState::TryPickup(std::uint32_t action_time_ms, long long time_ms, long long pickup_motion_ms)
+bool PlayerActionState::TryPickup(std::uint32_t action_time_ms, long long pickup_motion_ms)
 {
-	if (!AcceptActionTime(action_time_ms, time_ms)) return false;
+	if (!AcceptActionTime(action_time_ms)) return false;
 	if (has_pickup_ && static_cast<std::int32_t>(action_time_ms - pickup_action_ms_) < pickup_motion_ms) return false;
 	last_action_ms_ = action_time_ms;
 	pickup_action_ms_ = action_time_ms;
@@ -92,21 +91,21 @@ bool PlayerActionState::TryPickup(std::uint32_t action_time_ms, long long time_m
 	return true;
 }
 
-bool PlayerActionState::TryStartReload(std::uint32_t action_time_ms, long long time_ms)
+bool PlayerActionState::TryStartReload(std::uint32_t action_time_ms)
 {
 	Gun* gun = FindGun(weapon_);
-	if (!gun || !AcceptActionTime(action_time_ms, time_ms) || !gun->TryStartReload(action_time_ms)) return false;
+	if (!gun || !AcceptActionTime(action_time_ms) || !gun->TryStartReload(action_time_ms)) return false;
 	last_action_ms_ = action_time_ms;
 	return true;
 }
 
-bool PlayerActionState::AddSpareRounds(std::uint8_t weapon, int count, long long time_ms)
+bool PlayerActionState::AddSpareRounds(std::uint8_t weapon, int count, std::uint32_t action_time_ms)
 {
 	Gun* gun = FindGun(weapon);
 	if (!gun) return false;
 	gun->AddSpareRounds(count);
 	// 손에 든 총의 탄창이 비었을 때 소지 탄이 생기면 탄이 떨어졌을 때처럼 재장전한다.
-	if (weapon == weapon_) gun->ScheduleAutoReload(time_ms, 0);
+	if (weapon == weapon_) gun->ScheduleAutoReload(action_time_ms, 0);
 	return true;
 }
 

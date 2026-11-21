@@ -426,48 +426,22 @@ void APlayerCharacter::SetMoveKey(MoveKey key, bool is_down)
 		return;
 	}
 	move_keys_ = is_down ? (move_keys_ | bit) : (move_keys_ & ~bit);
-	// 이동 입력을 막은 동안에는 서버에 알리지 않는다. 풀 때 눌려 있는 키를 알린다.
-	if (!is_move_input_blocked_)
-	{
-		on_move_key_changed_.Broadcast(key, is_down);
-	}
 }
 
-void APlayerCharacter::SetMoveInputBlocked(bool is_blocked)
+void APlayerCharacter::ApplyMoveKeys(uint8 move_keys, bool is_aiming)
 {
-	if (is_move_input_blocked_ == is_blocked)
+	if (is_stunned_ || is_move_input_blocked_ || move_keys == 0)
 	{
 		return;
 	}
-	is_move_input_blocked_ = is_blocked;
-	if (is_blocked)
-	{
-		return;
-	}
-	// 막는 동안 눌러 둔 이동 키를 푸는 순간 누름으로 알려, 서버도 이 순간부터 그 키로 움직이게 한다.
-	for (int32 key = 0; key < static_cast<int32>(MoveKey::JUMP); ++key)
-	{
-		if ((move_keys_ >> key) & 1)
-		{
-			on_move_key_changed_.Broadcast(static_cast<MoveKey>(key), true);
-		}
-	}
+	const auto axis = [move_keys](MoveKey positive, MoveKey negative) { return static_cast<double>((move_keys >> static_cast<int32>(positive)) & 1) - static_cast<double>((move_keys >> static_cast<int32>(negative)) & 1); };
+	ApplyMovementInput(FVector2D(axis(MoveKey::RIGHT, MoveKey::LEFT), axis(MoveKey::FORWARD, MoveKey::BACKWARD)), is_aiming);
 }
 
-void APlayerCharacter::ApplyMoveKeys()
-{
-	if (is_stunned_ || is_move_input_blocked_ || move_keys_ == 0)
-	{
-		return;
-	}
-	const auto axis = [this](MoveKey positive, MoveKey negative) { return static_cast<double>((move_keys_ >> static_cast<int32>(positive)) & 1) - static_cast<double>((move_keys_ >> static_cast<int32>(negative)) & 1); };
-	ApplyMovementInput(FVector2D(axis(MoveKey::RIGHT, MoveKey::LEFT), axis(MoveKey::FORWARD, MoveKey::BACKWARD)));
-}
-
-void APlayerCharacter::ApplyMovementInput(const FVector2D& movement)
+void APlayerCharacter::ApplyMovementInput(const FVector2D& movement, bool is_aiming)
 {
 	// 서버 이동 검증과 같은 속도를 쓴다.
-	if (is_aiming_)
+	if (is_aiming)
 	{
 		// 조준 중에는 뒤로 이동할 때도 같은 속도로 천천히 움직인다.
 		GetCharacterMovement()->MaxWalkSpeed = MOVE_SPEED_AIMING;
@@ -561,7 +535,6 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 	{
 		is_equipping_ = false;
 		has_pending_melee_hit_ = false;
-		equip_real_time_ = FPlatformTime::Seconds();
 		// 장비를 바꾸면 이전 무기의 재장전은 취소된다. 서버도 같은 규칙으로 취소한다.
 		if (FWeaponAmmoState* previous_ammo = weapon_ammo_.Find(current_weapon_))
 		{
@@ -754,7 +727,6 @@ void APlayerCharacter::PrimaryAction()
 			{
 				return;
 			}
-			action_real_time_ = FPlatformTime::Seconds();
 			on_action_started_.Broadcast(EPlayerAction::MELEE, current_weapon_);
 		}
 	}
@@ -762,15 +734,16 @@ void APlayerCharacter::PrimaryAction()
 
 void APlayerCharacter::PickUp()
 {
-	const double real_now = FPlatformTime::Seconds();
-	if (is_stunned_ || real_now < next_pickup_real_time_)
+	const uint32 frame_number = CastChecked<UPlayerMovementComponent>(GetCharacterMovement())->GetFrameNumber();
+	const double pickup_motion_ms = pickup_action_.montage && pickup_action_.play_rate > 0.0f ? pickup_action_.montage->GetPlayLength() / pickup_action_.play_rate * 1000.0 : 0.0;
+	if (is_stunned_ || (has_pickup_ && static_cast<double>(frame_number - pickup_frame_number_) * MOVE_STEP_MS < pickup_motion_ms))
 	{
 		return;
 	}
 	if (PlayAction(pickup_action_))
 	{
-		action_real_time_ = real_now;
-		next_pickup_real_time_ = real_now + pickup_action_.montage->GetPlayLength() / pickup_action_.play_rate;
+		pickup_frame_number_ = frame_number;
+		has_pickup_ = true;
 		on_action_started_.Broadcast(EPlayerAction::PICKUP, current_weapon_);
 	}
 }
@@ -893,25 +866,21 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	{
 		return;
 	}
-	const double now = world->GetTimeSeconds();
-	// 발사 간격은 서버로 보내는 동작 시각과 같은 실제 시간으로 센다.
-	const double real_now = FPlatformTime::Seconds();
-	if (const double* next_fire_time = next_fire_times_.Find(current_weapon_); next_fire_time && real_now < *next_fire_time)
+	// 발사 간격은 서버와 같이 이번 게임 프레임의 전송 프레임 번호와 마지막으로 쏜 번호의 차이로 센다.
+	const uint32 frame_number = CastChecked<UPlayerMovementComponent>(GetCharacterMovement())->GetFrameNumber();
+	const uint32 last_fire_frame_number = last_fire_frame_numbers_.FindRef(current_weapon_);
+	if (static_cast<int64>(frame_number - last_fire_frame_number) * MOVE_STEP_MS < gun->fire_interval_ms)
 	{
 		return;
 	}
 
 	// 명중 여부와 관계없이 발사 간격을 소비하고, 무기 전환 중에도 유지한다.
-	next_fire_times_.Add(current_weapon_, real_now + gun->fire_interval_ms / 1000.0);
-	action_real_time_ = real_now;
+	last_fire_frame_numbers_.Add(current_weapon_, frame_number);
 	// 총구 화염은 다른 플레이어 화면에만 보이고, 쏜 사람 화면에는 보이지 않는다.
 	on_action_started_.Broadcast(EPlayerAction::FIRE, current_weapon_);
 	PlayFireSound(settings);
 	FShotResult shot;
 	shot.weapon = current_weapon_;
-	// 연사 열기를 올린다. 화면의 퍼짐 표시에만 쓰고, 빗나감은 서버가 정한다.
-	ammo->spread_heat = AddShotHeat(gun->spread, RecoverShotHeat(ammo->spread_heat, static_cast<float>(now - ammo->spread_time), gun->fire_interval_ms));
-	ammo->spread_time = now;
 	// 총구는 화염·궤적 표시에만 쓴다.
 	shot.muzzle_location = weapon_mesh->GetSocketLocation(settings.muzzle_socket);
 	const float distance = gun->hitscan_distance;
@@ -933,9 +902,22 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 	// 3인칭 카메라와 캐릭터 사이의 물체 때문에 뒤로 발사하지 않게 한다.
 	const FVector aim_start = view_location + view_direction * FMath::Max(0.0, FVector::DotProduct(shot.trace_start - view_location, view_direction));
 	const FVector aim_end = aim_start + view_direction * distance;
-	shot.has_hit = world->LineTraceSingleByChannel(shot.hit, aim_start, aim_end, settings.trace_channel, query);
-	shot.trace_end = shot.has_hit ? shot.hit.ImpactPoint : aim_end;
-	shot.aim_direction = FVector::Distance(shot.trace_end, shot.trace_start) < SHOT_NEAR_AIM_DISTANCE ? view_direction : (shot.trace_end - shot.trace_start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
+	FHitResult aim_hit;
+	const FVector aim_point = world->LineTraceSingleByChannel(aim_hit, aim_start, aim_end, settings.trace_channel, query) ? aim_hit.ImpactPoint : aim_end;
+	shot.aim_direction = FVector::Distance(aim_point, shot.trace_start) < SHOT_NEAR_AIM_DISTANCE ? view_direction : (aim_point - shot.trace_start).GetSafeNormal(UE_SMALL_NUMBER, view_direction);
+
+	// 서버와 같은 퍼짐 크기와 (플레이어 아이디, 무기, 쏜 횟수)로 정한 빗나감을 조준 방향에 적용하고, 시작점에서 그 방향으로 탄을 쏜다.
+	// 연사 열기는 서버와 같이 마지막으로 쏜 번호와의 차이로 회복한다.
+	const float elapsed_seconds = static_cast<float>(frame_number - ammo->spread_frame_number) * MOVE_STEP_MS / 1000.0f;
+	const float spread = GetShotSpread(gun->spread, RecoverShotHeat(ammo->spread_heat, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, gun->fire_interval_ms), is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
+	ammo->spread_heat = AddShotHeat(gun->spread, RecoverShotHeat(ammo->spread_heat, elapsed_seconds, gun->fire_interval_ms));
+	ammo->spread_frame_number = frame_number;
+	shot.shot_count = ++shot_counts_.FindOrAdd(current_weapon_);
+	const int32 player_id = static_cast<int32>(GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey());
+	const ShotSpreadDirection spread_direction = ApplyShotSpread(static_cast<float>(shot.aim_direction.X), static_cast<float>(shot.aim_direction.Y), static_cast<float>(shot.aim_direction.Z), spread, GetShotSpreadHash(player_id, static_cast<uint8>(current_weapon_), shot.shot_count));
+	const FVector shot_end = shot.trace_start + FVector(spread_direction.x, spread_direction.y, spread_direction.z) * distance;
+	shot.has_hit = world->LineTraceSingleByChannel(shot.hit, shot.trace_start, shot_end, settings.trace_channel, query);
+	shot.trace_end = shot.has_hit ? shot.hit.ImpactPoint : shot_end;
 
 #if WITH_LOCAL_COMBAT_DEBUG
 	CombatDebug::DrawShot(world, shot);
@@ -1169,11 +1151,10 @@ void APlayerCharacter::PlayFootstep()
 
 void APlayerCharacter::Jump()
 {
-	// 이번 프레임 이동에서 실제로 뛸 때만 점프를 걸고 알린다.
-	if (!is_stunned_ && !is_move_input_blocked_ && CanJump())
+	// 바로 뛰지 않고 점프를 요청해 둔다. 이동 컴포넌트가 누른 순간이 속한 단계를 계산할 때 뛸 수 있으면 뛴다.
+	if (!is_stunned_ && !is_move_input_blocked_)
 	{
-		Super::Jump();
-		on_move_key_changed_.Broadcast(MoveKey::JUMP, true);
+		is_jump_requested_ = true;
 	}
 }
 
@@ -1185,7 +1166,8 @@ float APlayerCharacter::GetCurrentShotSpread() const
 	{
 		return 0.0f;
 	}
-	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(GetWorld()->GetTimeSeconds() - ammo->spread_time), gun->fire_interval_ms);
+	const uint32 frame_number = CastChecked<UPlayerMovementComponent>(GetCharacterMovement())->GetFrameNumber();
+	const int32 heat = RecoverShotHeat(ammo->spread_heat, static_cast<float>(frame_number - ammo->spread_frame_number) * MOVE_STEP_MS / 1000.0f, gun->fire_interval_ms);
 	return GetShotSpread(gun->spread, heat, is_aiming_, static_cast<float>(GetVelocity().Size2D()), GetCharacterMovement()->IsFalling());
 }
 
@@ -1307,6 +1289,7 @@ void APlayerCharacter::StartStun()
 		// 조작만 막고 이동은 그대로 두어, 땅에서는 제동으로 멈추고 공중에서는 뛰어오른 속도대로 떨어진다.
 		// 눌린 이동 키는 서버처럼 모두 뗀 것으로 하고 알리지 않는다. 기절이 끝나면 다시 눌러야 움직인다.
 		move_keys_ = 0;
+		is_jump_requested_ = false;
 		SetAiming(false);
 		StopJumping();
 		GetWorldTimerManager().ClearTimer(stun_gauge_timer_);
@@ -1315,10 +1298,9 @@ void APlayerCharacter::StartStun()
 			stun_gauge_widget_->SetStunProgress(1.0f);
 		}
 	}
-	// 다른 플레이어는 서버가 지운 것처럼 이동 키 입력과 조준을 지운다. 이동은 중력과 관성대로 이어진다.
-	else if (URemoteMovementComponent* remote_movement = FindComponentByClass<URemoteMovementComponent>())
+	// 다른 플레이어는 서버가 지운 것처럼 조준을 지운다. 위치는 서버가 보내는 이동 상태를 따른다.
+	else if (FindComponentByClass<URemoteMovementComponent>())
 	{
-		remote_movement->ClearMoveKeys();
 		SetAiming(false);
 	}
 }
@@ -1680,7 +1662,6 @@ void APlayerCharacter::BeginReload(EWeaponType weapon)
 	// 바로 재장전을 보이고 서버에 알린다. 끝은 서버가 재장전 끝으로 알리고, 인정하지 않으면 지금 탄약으로 바로 끝낸다.
 	StartReloadState(weapon);
 	PlayReloadSound(weapon);
-	action_real_time_ = FPlatformTime::Seconds();
 	on_action_started_.Broadcast(EPlayerAction::RELOAD, weapon);
 }
 

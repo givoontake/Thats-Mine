@@ -248,44 +248,40 @@ void TestManager::TryJoinRoom(int session_index)
 	session.SendPacket(&packet, sizeof(packet));
 }
 
-// 앞뒤 키가 바뀌면 뗀 키와 누른 키를 먼저 보내고 그 순간의 이동 상태를 바로 보낸다. 바뀌지 않으면 MOVE_SEND_INTERVAL_MS마다 이동 상태를 보낸다.
+// 스폰을 받은 뒤 끝난 전송 프레임마다, 그 번호가 끝나는 시각의 걷기 상태로 이동 패킷을 만들어 한 번에 보낸다. 걷기 전에는 스폰 자리에 서 있다.
 void TestManager::SendWalk(Session& session, long long now_ms)
 {
-	const WalkStep step = session.GetWalkStep(now_ms);
-	const bool is_input_changed = !session.HasSentInput() || step.key != session.GetSentKey();
-	if (is_input_changed) {
-		C2S_MOVE_INPUT_PACKET input_packet = MakePacket<C2S_MOVE_INPUT_PACKET>(C2S_MOVE_INPUT);
-		std::memcpy(input_packet.location, step.move_state.location, sizeof(input_packet.location));
-		std::memcpy(input_packet.velocity, step.move_state.velocity, sizeof(input_packet.velocity));
-		input_packet.client_time_ms = step.move_state.client_time_ms;
-		if (session.HasSentInput()) {
-			input_packet.key = session.GetSentKey();
-			input_packet.is_down = false;
-			session.SendPacket(&input_packet, sizeof(input_packet));
-		}
-		input_packet.key = step.key;
-		input_packet.is_down = true;
-		session.SendPacket(&input_packet, sizeof(input_packet));
-		session.SetSentKey(step.key);
+	if (!session.HasFrameClock()) return;
+	const std::uint32_t frame_number = session.GetFrameNumber(now_ms);
+	char buffer[MAX_SEND_MOVE_COUNT * sizeof(C2S_MOVE_PACKET)];
+	int size = 0;
+	std::uint32_t move_frame_number = session.GetNextMoveFrameNumber();
+	for (; move_frame_number < frame_number && size + static_cast<int>(sizeof(C2S_MOVE_PACKET)) <= static_cast<int>(sizeof(buffer)); ++move_frame_number) {
+		const WalkStep step = session.GetWalkStep(session.GetFrameEndMs(move_frame_number));
+		C2S_MOVE_PACKET move_packet = MakePacket<C2S_MOVE_PACKET>(C2S_MOVE);
+		move_packet.frame_number = move_frame_number;
+		move_packet.move_state = step.move_state;
+		move_packet.move_keys = step.move_keys;
+		session.AddSentMove(step.move_state.location, GetCurrentTimeMs());
+		std::memcpy(buffer + size, &move_packet, sizeof(move_packet));
+		size += sizeof(move_packet);
 	}
-	if (!is_input_changed && now_ms - session.GetLastMoveSendMs() < MOVE_SEND_INTERVAL_MS) return;
-	C2S_MOVE_PACKET move_packet = MakePacket<C2S_MOVE_PACKET>(C2S_MOVE);
-	move_packet.move_state = step.move_state;
-	session.AddSentMove(step.move_state.location, GetCurrentTimeMs());
-	session.SendPacket(&move_packet, sizeof(move_packet));
-	session.SetLastMoveSendMs(now_ms);
+	session.SetNextMoveFrameNumber(move_frame_number);
+	if (size > 0) session.SendPacket(buffer, size);
 }
 
-// 처음에는 FIRE_WEAPON으로 바꾸고, 바꾸는 시간이 지나면 FIRE_INTERVAL_MS마다 무작위 방향으로 쏜다.
+// 처음에는 FIRE_WEAPON으로 바꾸고, 바꾸는 시간이 지나면 FIRE_INTERVAL_MS마다 무작위 방향으로 쏜다. 장비와 발사는 지금 전송 프레임 번호로 보낸다.
+// 서버는 교체 대기를 번호 차이로 세므로, 번호가 나뉘는 몫만큼 한 번호 더 기다린다.
 void TestManager::SendFire(Session& session, long long now_ms)
 {
-	if (!session.HasTimeSync()) return;
+	if (!session.HasFrameClock()) return;
+	const std::uint32_t frame_number = session.GetFrameNumber(now_ms);
 	if (session.GetNextFireMs() < 0) {
 		C2S_EQUIP_PACKET equip_packet = MakePacket<C2S_EQUIP_PACKET>(C2S_EQUIP);
+		equip_packet.frame_number = frame_number;
 		equip_packet.weapon = static_cast<std::uint8_t>(FIRE_WEAPON);
-		equip_packet.action_time_ms = session.GetActionTimeMs(now_ms);
 		session.SendPacket(&equip_packet, sizeof(equip_packet));
-		session.SetNextFireMs(now_ms + PISTOL_SETTINGS.equip_duration_ms);
+		session.SetNextFireMs(now_ms + PISTOL_SETTINGS.equip_duration_ms + MOVE_STEP_MS);
 		return;
 	}
 	if (now_ms < session.GetNextFireMs()) return;
@@ -297,13 +293,16 @@ void TestManager::SendFire(Session& session, long long now_ms)
 	const float horizontal = std::sqrt(1.0f - z * z);
 	const WalkStep step = session.GetWalkStep(now_ms);
 	C2S_FIRE_PACKET fire_packet = MakePacket<C2S_FIRE_PACKET>(C2S_FIRE);
+	fire_packet.frame_number = frame_number;
 	fire_packet.aim_direction[0] = horizontal * std::cos(angle);
 	fire_packet.aim_direction[1] = horizontal * std::sin(angle);
 	fire_packet.aim_direction[2] = z;
 	fire_packet.camera[0] = step.move_state.location[0];
 	fire_packet.camera[1] = step.move_state.location[1];
 	fire_packet.camera[2] = step.move_state.location[2] + AIM_CAMERA_UP;
-	fire_packet.action_time_ms = session.GetActionTimeMs(now_ms);
+	fire_packet.shot_count = session.AddShotCount();
+	fire_packet.target_tick = session.GetLatestTickNumber();
+	fire_packet.target_progress = 100;
 	session.SetFireSendMs(GetCurrentTimeMs());
 	session.SendPacket(&fire_packet, sizeof(fire_packet));
 	session.SetNextFireMs(session.GetNextFireMs() + FIRE_INTERVAL_MS);
@@ -372,16 +371,15 @@ void TestManager::HandlePacket(char* packet, int session_index)
 		const auto* spawn_packet = reinterpret_cast<S2C_SPAWN_PACKET*>(packet);
 		if (spawn_packet->player_id != session.GetPlayerID()) break;
 		session.SetWalkPath(spawn_packet->location[0], spawn_packet->location[1]);
-		session.StartSpawn(GetCurrentTimeMs());
-		// 서버는 스폰 알림을 받은 뒤부터 이동을 처리한다.
+		// 스폰을 받은 지금 전송 프레임 0번이 시작한다. 서버는 스폰 알림을 받은 뒤부터 게임 패킷을 처리한다.
+		session.StartFrameClock(GetCurrentTimeMs());
 		const C2S_SPAWN_COMPLETE_PACKET spawn_complete_packet = MakePacket<C2S_SPAWN_COMPLETE_PACKET>(C2S_SPAWN_COMPLETE);
 		session.SendPacket(&spawn_complete_packet, sizeof(spawn_complete_packet));
 		break;
 	}
 	case S2C_PLAY_START: {
 		if (!session.TrySetState(SessionState::LOADING, SessionState::PLAYING)) break;
-		// 방 안 봇들이 이동을 같은 순간에 보내지 않도록, 방 슬롯 순서대로 걷기 시작을 보내기 간격 안에 고르게 흩는다.
-		session.StartWalk(GetCurrentTimeMs() + session_index % ROOM_CLIENT_COUNT * (MOVE_SEND_INTERVAL_MS / ROOM_CLIENT_COUNT));
+		session.StartWalk(GetCurrentTimeMs());
 		const int playing_count = playing_client_count_.fetch_add(1) + 1;
 		if (playing_count % 1000 == 0 || playing_count == target_client_count_.load()) {
 			std::lock_guard<std::mutex> lock(log_mutex_);
@@ -395,16 +393,16 @@ void TestManager::HandlePacket(char* packet, int session_index)
 		break;
 	}
 	case S2C_MOVE: {
+		// 서버는 본인 이동을 본인에게 보내지 않으므로, 같은 방 다른 봇이 받은 중계로 보낸 봇의 이동 지연을 잰다. 처음 받은 봇의 것만 센다.
 		const auto* move_packet = reinterpret_cast<S2C_MOVE_PACKET*>(packet);
-		if (move_packet->player_id != session.GetPlayerID()) break;
-		const std::optional<long long> send_time_ms = session.TakeSentMoveTime(move_packet->location);
+		session.MarkTickNumber(move_packet->tick_number);
+		const int sender_index = move_packet->player_id - 1;
+		if (sender_index < 0 || sender_index >= MAX_CLIENT_COUNT) break;
+		const std::optional<long long> send_time_ms = sessions_[sender_index]->TakeSentMoveTime(move_packet->location);
 		if (send_time_ms) latency_recorder_.Record(LatencyKind::MOVE, GetCurrentTimeMs() - *send_time_ms);
 		break;
 	}
-	case S2C_TIME_SYNC: {
-		session.SetTimeSync(reinterpret_cast<S2C_TIME_SYNC_PACKET*>(packet)->server_time_ms, GetCurrentTimeMs());
-		break;
-	}
+
 	case S2C_AMMO_USE: {
 		const long long send_time_ms = session.TakeFireSendMs();
 		if (send_time_ms >= 0) latency_recorder_.Record(LatencyKind::FIRE, GetCurrentTimeMs() - send_time_ms);
@@ -414,7 +412,6 @@ void TestManager::HandlePacket(char* packet, int session_index)
 		const auto* rollback_packet = reinterpret_cast<S2C_MOVE_ROLLBACK_PACKET*>(packet);
 		if (rollback_packet->player_id != session.GetPlayerID()) break;
 		C2S_MOVE_ROLLBACK_ACK_PACKET ack_packet = MakePacket<C2S_MOVE_ROLLBACK_ACK_PACKET>(C2S_MOVE_ROLLBACK_ACK);
-		ack_packet.rollback_id = rollback_packet->rollback_id;
 		session.SendPacket(&ack_packet, sizeof(ack_packet));
 		break;
 	}
@@ -440,9 +437,9 @@ void TestManager::ProcessSend(int worker_index)
 		const bool is_room_key_known = room_keys_[session_index / ROOM_CLIENT_COUNT].load() != 0;
 		if (state == SessionState::LOBBY && !is_room_key_known && session_index % ROOM_CLIENT_COUNT == 1 && now_ms - session.GetLastRoomListMs() >= ROOM_LIST_RETRY_MS) SendRoomListRequest(session_index, now_ms);
 		else if (state == SessionState::LOBBY) TryJoinRoom(session_index);
-		else if (state == SessionState::PLAYING && session.IsWalking(now_ms)) {
+		else if (state == SessionState::PLAYING) {
 			SendWalk(session, now_ms);
-			SendFire(session, now_ms);
+			if (session.IsWalking(now_ms)) SendFire(session, now_ms);
 		}
 	}
 	if (worker_index == 0) UpdateMeasurement();

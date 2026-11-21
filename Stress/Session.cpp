@@ -48,11 +48,10 @@ void Session::ClearSession()
 	ready_player_count_.store(0);
 	last_room_list_ms_ = 0;
 	walk_start_ms_.store(-1);
-	last_move_send_ms_ = 0;
-	sent_key_ = MoveKey::FORWARD;
-	has_sent_input_ = false;
-	server_time_offset_ms_.store(0);
-	has_time_sync_.store(false);
+	frame_start_ms_.store(-1);
+	next_move_frame_number_ = 0;
+	shot_count_ = 0;
+	latest_tick_number_.store(0);
 	next_fire_ms_ = -1;
 	fire_send_ms_.store(-1);
 	std::lock_guard<std::mutex> lock(sent_move_mutex_);
@@ -82,7 +81,7 @@ void Session::SetWalkPath(float x, float y)
 	walk_yaw_ = to.y > from.y ? 90.0f : -90.0f;
 }
 
-// 스폰 자리(바닥보다 SPAWN_HEIGHT_OFFSET 위)에서 땅에 닿을 때까지 떨어지는 시간(ms)
+// 스폰 자리에서 땅까지 떨어지는 시간(ms)
 static float GetSpawnFallMs()
 {
 	return std::sqrt(2.0f * SPAWN_HEIGHT_OFFSET / GRAVITY) * 1000.0f;
@@ -92,27 +91,38 @@ long long Session::GetWalkStartMs() const
 {
 	const long long start_ms = walk_start_ms_.load();
 	if (start_ms < 0) return -1;
-	return std::max(start_ms, spawn_ms_.load() + static_cast<long long>(std::ceil(GetSpawnFallMs())));
+	return std::max(start_ms, frame_start_ms_.load() + static_cast<long long>(std::ceil(GetSpawnFallMs())));
 }
 
-WalkStep Session::GetWalkStep(long long now_ms) const
+WalkStep Session::GetWalkStep(long long time_ms) const
 {
+	WalkStep step{};
+	step.move_state.yaw = walk_yaw_;
+	step.move_state.view_pitch = 0.0f;
+	step.move_state.is_falling = false;
+	step.move_keys = 0;
+	std::memcpy(step.move_state.location, walk_start_, sizeof(step.move_state.location));
+	// 서버도 스폰 상태에서 전송 프레임마다 같은 중력으로 떨어뜨린다.
+	const float fall_seconds = static_cast<float>(time_ms - frame_start_ms_.load()) / 1000.0f;
+	if (fall_seconds * 1000.0f < GetSpawnFallMs()) {
+		step.move_state.location[2] = walk_start_[2] + SPAWN_HEIGHT_OFFSET - 0.5f * GRAVITY * fall_seconds * fall_seconds;
+		step.move_state.velocity[2] = -GRAVITY * fall_seconds;
+		step.move_state.is_falling = true;
+		return step;
+	}
+	const long long start_ms = GetWalkStartMs();
+	if (start_ms < 0 || time_ms < start_ms) return step;
 	const long long forward_ms = static_cast<long long>(WALK_DISTANCE / MOVE_SPEED_FORWARD * 1000.0f);
 	const long long backward_ms = static_cast<long long>(WALK_DISTANCE / MOVE_SPEED_BACKWARD * 1000.0f);
-	const long long elapsed_ms = (now_ms - GetWalkStartMs()) % (forward_ms + backward_ms);
+	const long long elapsed_ms = (time_ms - start_ms) % (forward_ms + backward_ms);
 	const bool is_forward = elapsed_ms < forward_ms;
 	const float ratio = is_forward ? static_cast<float>(elapsed_ms) / forward_ms : 1.0f - static_cast<float>(elapsed_ms - forward_ms) / backward_ms;
 	const float speed = is_forward ? MOVE_SPEED_FORWARD : -MOVE_SPEED_BACKWARD;
-	WalkStep step{};
 	for (int axis = 0; axis < 3; ++axis) {
 		step.move_state.location[axis] = walk_start_[axis] + (walk_end_[axis] - walk_start_[axis]) * ratio;
 		step.move_state.velocity[axis] = (walk_end_[axis] - walk_start_[axis]) / WALK_DISTANCE * speed;
 	}
-	step.move_state.yaw = walk_yaw_;
-	step.move_state.view_pitch = 0.0f;
-	step.move_state.air_phase = AirPhase::GROUND;
-	step.move_state.client_time_ms = static_cast<std::uint32_t>(now_ms);
-	step.key = is_forward ? MoveKey::FORWARD : MoveKey::BACKWARD;
+	step.move_keys = static_cast<std::uint8_t>(1u << static_cast<int>(is_forward ? MoveKey::FORWARD : MoveKey::BACKWARD));
 	return step;
 }
 

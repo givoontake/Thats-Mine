@@ -25,6 +25,7 @@ add_executable(GameServer
     Game/Player.cpp
     Game/PlayerActionState.cpp
     Game/MoveSimulation.cpp
+    Game/FrameGap.cpp
     Game/Equipment/Equipment.cpp
     Game/Equipment/Gun.cpp
     Game/Equipment/Magnifier.cpp
@@ -105,6 +106,7 @@ add_executable(GameServer
     Game/Equipment/Magnifier.h
     Game/Equipment/Pickaxe.h
     Game/MoveSimulation.h
+    Game/FrameGap.h
     Game/player_snapshot.h
     Game/Boxes/box_types.h
     Game/Boxes/BoxCandidateData.h

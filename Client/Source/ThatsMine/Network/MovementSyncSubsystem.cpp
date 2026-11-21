@@ -10,35 +10,16 @@
 #include "GameNetworkSubsystem.h"
 #include "OnlineSessionSubsystem.h"
 #include "Player/PlayerCharacter.h"
+#include "Player/PlayerMovementComponent.h"
 #include "Player/RemoteMovementComponent.h"
 #include "game_protocol.h"
 #include "movement_settings.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMovementSync, Log, All);
 
-// 이동 방향이 마지막으로 보낸 값보다 이만큼 꺾이면 주기보다 먼저 보낸다.
-static constexpr float DIRECTION_CHANGE_DEGREES = 15.0f;
-// 이보다 느리면 이동 방향을 비교하지 않는다.
-static constexpr float MIN_MOVING_SPEED = 10.0f;
-
 static EWeaponType ToWeaponType(uint8 value)
 {
 	return value <= static_cast<uint8>(EWeaponType::MAGNIFIER) ? static_cast<EWeaponType>(value) : EWeaponType::PICKAXE;
-}
-
-static MOVE_STATE ToMoveState(const FRemoteMoveState& state)
-{
-	MOVE_STATE move_state{};
-	move_state.location[0] = static_cast<float>(state.location.X);
-	move_state.location[1] = static_cast<float>(state.location.Y);
-	move_state.location[2] = static_cast<float>(state.location.Z);
-	move_state.velocity[0] = static_cast<float>(state.velocity.X);
-	move_state.velocity[1] = static_cast<float>(state.velocity.Y);
-	move_state.velocity[2] = static_cast<float>(state.velocity.Z);
-	move_state.yaw = state.yaw;
-	move_state.view_pitch = state.view_pitch;
-	move_state.air_phase = state.air_phase;
-	return move_state;
 }
 
 // 이동 상태 칸이 같은 패킷(이동 중계, 롤백)에서 이동 상태를 꺼낸다.
@@ -50,7 +31,7 @@ static FRemoteMoveState ToRemoteMoveState(const T& packet)
 	state.velocity = FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]);
 	state.yaw = packet.yaw;
 	state.view_pitch = packet.view_pitch;
-	state.air_phase = packet.air_phase;
+	state.is_falling = packet.is_falling;
 	return state;
 }
 
@@ -63,16 +44,13 @@ static bool SendPacketBody(UGameNetworkSubsystem* network, uint8 type, const T& 
 	return network->SendPacket(type, payload);
 }
 
-// 마우스 회전 등으로 이동 방향이 기준 이상 꺾였는지 확인한다.
-static bool HasDirectionChanged(const FRemoteMoveState& previous, const FRemoteMoveState& current)
+// 패킷 구조체의 헤더 뒤 내용
+template<typename T>
+static TArray<uint8> GetPacketBody(const T& packet)
 {
-	const FVector2D previous_velocity(previous.velocity);
-	const FVector2D current_velocity(current.velocity);
-	if (previous_velocity.Size() < MIN_MOVING_SPEED || current_velocity.Size() < MIN_MOVING_SPEED)
-	{
-		return false;
-	}
-	return FVector2D::DotProduct(previous_velocity.GetSafeNormal(), current_velocity.GetSafeNormal()) < FMath::Cos(FMath::DegreesToRadians(DIRECTION_CHANGE_DEGREES));
+	TArray<uint8> payload;
+	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
+	return payload;
 }
 
 void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
@@ -91,7 +69,6 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	{
 		return;
 	}
-	network->RegisterPacketHandler(S2C_MOVE_INPUT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveInputPacket));
 	network->RegisterPacketHandler(S2C_MOVE_STOP, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleMoveStopPacket));
 	network->RegisterPacketHandler(S2C_AIM, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAimPacket));
 	network->RegisterPacketHandler(S2C_EQUIP, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleEquipPacket));
@@ -102,7 +79,6 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_AMMO_USE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoUsePacket));
 	network->RegisterPacketHandler(S2C_AMMO_GAIN, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoGainPacket));
 	network->RegisterPacketHandler(S2C_RELOAD_DONE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadDonePacket));
-	network->RegisterPacketHandler(S2C_TIME_SYNC, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleTimeSyncPacket));
 	network->RegisterPacketHandler(S2C_PICKAXE_CHARGES, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandlePickaxeChargesPacket));
 	network->RegisterPacketHandler(S2C_STUN_APPLY, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunApplyPacket));
 	network->RegisterPacketHandler(S2C_STUN_RELEASE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunReleasePacket));
@@ -119,7 +95,6 @@ void UMovementSyncSubsystem::Deinitialize()
 		if (UGameNetworkSubsystem* network = game_instance ? game_instance->GetSubsystem<UGameNetworkSubsystem>() : nullptr)
 		{
 			network->UnregisterPacketHandler(S2C_MOVE);
-			network->UnregisterPacketHandler(S2C_MOVE_INPUT);
 			network->UnregisterPacketHandler(S2C_MOVE_STOP);
 			network->UnregisterPacketHandler(S2C_AIM);
 			network->UnregisterPacketHandler(S2C_EQUIP);
@@ -130,7 +105,6 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_AMMO_USE);
 			network->UnregisterPacketHandler(S2C_AMMO_GAIN);
 			network->UnregisterPacketHandler(S2C_RELOAD_DONE);
-			network->UnregisterPacketHandler(S2C_TIME_SYNC);
 			network->UnregisterPacketHandler(S2C_PICKAXE_CHARGES);
 			network->UnregisterPacketHandler(S2C_STUN_APPLY);
 			network->UnregisterPacketHandler(S2C_STUN_RELEASE);
@@ -146,6 +120,10 @@ void UMovementSyncSubsystem::Deinitialize()
 			character->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 			character->on_weapon_selected_.RemoveAll(this);
 			character->on_aim_toggled_.RemoveAll(this);
+			if (UPlayerMovementComponent* movement = Cast<UPlayerMovementComponent>(character->GetCharacterMovement()))
+			{
+				movement->on_move_step_.RemoveAll(this);
+			}
 		}
 		is_active_ = false;
 	}
@@ -173,145 +151,135 @@ void UMovementSyncSubsystem::Tick(float delta_seconds)
 	Super::Tick(delta_seconds);
 	if (GetWorld()->GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->GetState() == EClientState::PLAYING)
 	{
-		SendMoveState(false);
+		BindLocalCharacter();
+	}
+	// 이번 게임 프레임에 계산한 번호의 패킷과 이동 패킷을 한 번에 보낸다.
+	if (has_move_packet_)
+	{
+		has_move_packet_ = false;
+		GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPendingPackets();
 	}
 }
 
-void UMovementSyncSubsystem::SendMoveState(bool is_forced)
+void UMovementSyncSubsystem::BindLocalCharacter()
 {
 	const APlayerController* controller = GetWorld()->GetFirstPlayerController();
 	APlayerCharacter* character = controller ? Cast<APlayerCharacter>(controller->GetPawn()) : nullptr;
-	if (character != local_character_.Get())
+	if (character == local_character_.Get())
 	{
-		if (APlayerCharacter* previous = local_character_.Get())
+		return;
+	}
+	if (APlayerCharacter* previous = local_character_.Get())
+	{
+		previous->on_action_started_.RemoveAll(this);
+		previous->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
+		previous->on_weapon_selected_.RemoveAll(this);
+		previous->on_aim_toggled_.RemoveAll(this);
+		if (UPlayerMovementComponent* movement = Cast<UPlayerMovementComponent>(previous->GetCharacterMovement()))
 		{
-			previous->on_action_started_.RemoveAll(this);
-			previous->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
-			previous->on_move_key_changed_.RemoveAll(this);
-			previous->on_weapon_selected_.RemoveAll(this);
-			previous->on_aim_toggled_.RemoveAll(this);
-		}
-		local_character_ = character;
-		if (character)
-		{
-			character->on_action_started_.AddUObject(this, &UMovementSyncSubsystem::HandleActionStarted);
-			character->on_shot_fired_.AddDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
-			character->on_move_key_changed_.AddUObject(this, &UMovementSyncSubsystem::HandleMoveKeyChanged);
-			// 장비와 조준은 플레이어가 바꾼 순간 알림을 받아 바로 보낸다.
-			character->on_weapon_selected_.AddUObject(this, &UMovementSyncSubsystem::HandleWeaponSelected);
-			character->on_aim_toggled_.AddUObject(this, &UMovementSyncSubsystem::HandleAimToggled);
+			movement->on_move_step_.RemoveAll(this);
 		}
 	}
+	local_character_ = character;
 	if (!character)
 	{
 		return;
 	}
-
-	const UCharacterMovementComponent* movement = character->GetCharacterMovement();
-	FRemoteMoveState state;
-	state.location = character->GetActorLocation();
-	state.velocity = character->GetVelocity();
-	state.yaw = character->GetActorRotation().Yaw;
-	state.view_pitch = FRotator::NormalizeAxis(character->GetViewRotation().Pitch);
-	// 공중이면 수직 속도로 상승과 하강을 나눈다. 정점을 지나거나 천장에 부딪혀 위로 가는 속도가 없어지면 하강이 되어 그 순간 바로 보낸다.
-	state.air_phase = !movement->IsFalling() ? AirPhase::GROUND : state.velocity.Z > 0.0 ? AirPhase::RISING : AirPhase::FALLING;
-
-	const double now = GetWorld()->GetRealTimeSeconds();
-	const double elapsed = now - last_send_time_;
-	// 위치는 주기마다, 방향이 꺾이면 최소 간격을 두고 보내고, 공중 단계가 바뀌면 바로 보낸다.
-	const bool is_air_phase_changed = has_sent_state_ && last_sent_state_.air_phase != state.air_phase;
-	const bool is_periodic = elapsed >= MOVE_SEND_INTERVAL_MS / 1000.0;
-	const bool is_direction_changed = elapsed >= MOVE_EXTRA_SEND_INTERVAL_MS / 1000.0 && HasDirectionChanged(last_sent_state_, state);
-	if (has_sent_state_ && !is_forced && !is_air_phase_changed && !is_periodic && !is_direction_changed)
+	character->on_action_started_.AddUObject(this, &UMovementSyncSubsystem::HandleActionStarted);
+	character->on_shot_fired_.AddDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
+	// 장비와 조준은 플레이어가 바꾼 순간 알림을 받아 그 번호의 패킷으로 넣는다.
+	character->on_weapon_selected_.AddUObject(this, &UMovementSyncSubsystem::HandleWeaponSelected);
+	character->on_aim_toggled_.AddUObject(this, &UMovementSyncSubsystem::HandleAimToggled);
+	if (UPlayerMovementComponent* movement = Cast<UPlayerMovementComponent>(character->GetCharacterMovement()))
 	{
-		return;
-	}
-	MOVE_STATE move_state = ToMoveState(state);
-	// 이 위치를 만든 게임 시각을 담는다. 서버는 상태 사이 시간을 이 차이로 재고, 서버 시각보다 빨리 흐르면 시간 조작으로 본다.
-	move_state.client_time_ms = static_cast<uint32>(static_cast<uint64>(GetWorld()->GetTimeSeconds() * 1000.0));
-	TArray<uint8> payload;
-	payload.Append(reinterpret_cast<const uint8*>(&move_state), sizeof(move_state));
-	if (GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_MOVE, payload))
-	{
-		last_sent_state_ = state;
-		last_send_time_ = now;
-		has_sent_state_ = true;
+		movement->on_move_step_.AddUObject(this, &UMovementSyncSubsystem::HandleMoveStep);
 	}
 }
 
-// 플레이어가 고른 무기를 바로 보낸다. 동작보다 먼저 보내므로 서버는 동작을 바꾼 무기로 판정한다.
+// 플레이어가 고른 무기를 이번 번호의 패킷으로 들고 있는다. 같은 번호의 동작보다 먼저 넣으므로 서버는 동작을 바꾼 무기로 판정한다.
 void UMovementSyncSubsystem::HandleWeaponSelected(EWeaponType weapon)
 {
-	const APlayerCharacter* character = local_character_.Get();
 	C2S_EQUIP_PACKET packet{};
 	packet.weapon = static_cast<uint8>(weapon);
-	packet.action_time_ms = GetActionTimeMs(character ? character->GetEquipRealTime() : FPlatformTime::Seconds());
-	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_EQUIP, packet);
+	AppendFramePacket(C2S_EQUIP, GetPacketBody(packet));
 }
 
-// 플레이어가 바꾼 조준 여부를 바로 보낸다.
+// 플레이어가 바꾼 조준 여부를 이번 번호의 패킷으로 들고 있는다. 서버는 이 번호의 이동부터 바뀐 조준으로 계산한다.
 void UMovementSyncSubsystem::HandleAimToggled(bool is_aiming)
 {
 	C2S_AIM_PACKET packet{};
 	packet.is_aiming = is_aiming;
-	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_AIM, packet);
+	AppendFramePacket(C2S_AIM, GetPacketBody(packet));
 }
 
-// 이동 키를 처리한 순간 보낸다. 키는 그 프레임의 이동 전에 처리하므로, 위치·속도는 이전 프레임 이동이 끝난 값이고
-// 시각은 그 위치의 게임 시각(이번 프레임 게임 시각 - 이번 프레임 시간)이다. 이동 상태와 같은 시계라 서버가 같은 시간선에 놓는다.
-void UMovementSyncSubsystem::HandleMoveKeyChanged(MoveKey key, bool is_down)
+// 끝난 번호 하나를 계산할 때마다 부른다. 그 번호까지의 들고 있던 패킷을 보낼 패킷 뒤에 옮기고, 그 뒤에 그 번호의 이동 패킷을 붙인다.
+// 게임 프레임이 끝날 때 한 번에 보낸다.
+void UMovementSyncSubsystem::HandleMoveStep(const FLocalMoveStep& step)
 {
+	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
+	int32 moved_count = 0;
+	while (moved_count < frame_packets_.Num() && frame_packets_[moved_count].frame_number <= step.frame_number)
+	{
+		network->AppendPendingPacket(frame_packets_[moved_count].type, frame_packets_[moved_count].payload);
+		++moved_count;
+	}
+	frame_packets_.RemoveAt(0, moved_count);
+	C2S_MOVE_PACKET packet{};
+	packet.frame_number = step.frame_number;
+	packet.move_state = step.move_state;
+	packet.move_keys = step.move_keys;
+	network->AppendPendingPacket(C2S_MOVE, GetPacketBody(packet));
+	has_move_packet_ = true;
+}
+
+void UMovementSyncSubsystem::AppendFramePacket(uint8 type, TArray<uint8> payload)
+{
+	BindLocalCharacter();
 	const APlayerCharacter* character = local_character_.Get();
-	if (!character)
+	const UPlayerMovementComponent* movement = character ? Cast<UPlayerMovementComponent>(character->GetCharacterMovement()) : nullptr;
+	if (!movement || payload.Num() < static_cast<int32>(sizeof(uint32)))
 	{
 		return;
 	}
-	C2S_MOVE_INPUT_PACKET packet{};
-	packet.key = key;
-	packet.is_down = is_down;
-	const FVector location = character->GetActorLocation();
-	const FVector velocity = character->GetVelocity();
-	for (int32 axis = 0; axis < 3; ++axis)
-	{
-		packet.location[axis] = static_cast<float>(location[axis]);
-		packet.velocity[axis] = static_cast<float>(velocity[axis]);
-	}
-	packet.client_time_ms = static_cast<uint32>(static_cast<uint64>((GetWorld()->GetTimeSeconds() - GetWorld()->GetDeltaSeconds()) * 1000.0));
-	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_MOVE_INPUT, packet);
+	const uint32 frame_number = movement->GetFrameNumber();
+	FMemory::Memcpy(payload.GetData(), &frame_number, sizeof(frame_number));
+	frame_packets_.Add({ frame_number, type, MoveTemp(payload) });
 }
 
-// 총을 쏘면 서버가 발사 순간의 위치·방향으로 탄 광선을 판정하도록 지금 위치를 바로 보내고, 발사 패킷은 조준 방향이 정해진 뒤 HandleShotFired가 보낸다.
-// 재장전은 손에 든 무기를 서버가 알고 있으므로 동작 시각만 보낸다.
+// 내 캐릭터 스폰을 받은 순간 번호 시계를 시작하고, 쌓인 스폰 알림을 바로 보낸다. 0번 이동 패킷은 0번이 끝나면 보낸다.
+void UMovementSyncSubsystem::StartFrameClock()
+{
+	BindLocalCharacter();
+	const APlayerCharacter* character = local_character_.Get();
+	UPlayerMovementComponent* movement = character ? Cast<UPlayerMovementComponent>(character->GetCharacterMovement()) : nullptr;
+	if (!movement)
+	{
+		return;
+	}
+	movement->StartFrameClock();
+	frame_packets_.Reset();
+	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPendingPackets();
+}
+
+// 발사 패킷은 조준 방향과 대상이 정해진 뒤 HandleShotFired가 넣는다. 재장전은 손에 든 무기를 서버가 알고 있으므로 번호만 보낸다.
 void UMovementSyncSubsystem::HandleActionStarted(EPlayerAction action, EWeaponType weapon)
 {
 	if (action == EPlayerAction::FIRE)
 	{
-		SendMoveState(true);
 		return;
 	}
-	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
-	// 캐릭터가 동작을 시작한 실제 시각으로 동작 시각을 만든다.
-	const APlayerCharacter* character = local_character_.Get();
-	const uint32 action_time_ms = GetActionTimeMs(character ? character->GetActionRealTime() : FPlatformTime::Seconds());
 	if (action == EPlayerAction::RELOAD)
 	{
-		C2S_RELOAD_PACKET packet{};
-		packet.action_time_ms = action_time_ms;
-		SendPacketBody(network, C2S_RELOAD, packet);
+		AppendFramePacket(C2S_RELOAD, GetPacketBody(C2S_RELOAD_PACKET{}));
 		return;
 	}
 	C2S_ACTION_PACKET packet{};
 	packet.action = static_cast<uint8>(action);
-	packet.action_time_ms = action_time_ms;
-	SendPacketBody(network, C2S_ACTION, packet);
+	AppendFramePacket(C2S_ACTION, GetPacketBody(packet));
 }
 
-uint32 UMovementSyncSubsystem::GetActionTimeMs(double real_time) const
-{
-	return sync_server_time_ms_ + static_cast<uint32>(static_cast<uint64>(FMath::Max(0.0, real_time - sync_real_time_) * 1000.0));
-}
-
-// 쏜 총의 퍼지기 전 조준 방향과 카메라 위치를 보낸다. 빗나감과 명중은 서버가 판정한다.
+// 쏜 총의 퍼지기 전 조준 방향, 카메라 위치, 쏜 횟수와, 퍼진 탄이 맞은 다른 플레이어가 화면에서 향하던 틱 번호와 그 틱까지 간 정도를 보낸다.
+// 다른 플레이어에 맞지 않았으면 대상은 0이고, 받은 가장 최근 틱 번호를 보낸다. 명중은 서버가 그 시점으로 되감아 판정한다.
 void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 {
 	C2S_FIRE_PACKET packet{};
@@ -320,10 +288,23 @@ void UMovementSyncSubsystem::HandleShotFired(const FShotResult& shot)
 		packet.aim_direction[axis] = static_cast<float>(shot.aim_direction[axis]);
 		packet.camera[axis] = static_cast<float>(shot.camera_location[axis]);
 	}
-	// 캐릭터가 발사 간격을 센 것과 같은 실제 시각으로 동작 시각을 만든다.
-	const APlayerCharacter* character = local_character_.Get();
-	packet.action_time_ms = GetActionTimeMs(character ? character->GetActionRealTime() : FPlatformTime::Seconds());
-	SendPacketBody(GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>(), C2S_FIRE, packet);
+	packet.shot_count = shot.shot_count;
+	packet.target_tick = latest_tick_number_;
+	packet.target_progress = 100;
+	const AActor* hit_actor = shot.has_hit ? shot.hit.GetActor() : nullptr;
+	for (const auto& [player_id, remote] : remote_players_)
+	{
+		const URemoteMovementComponent* remote_movement = hit_actor && remote.Get() == hit_actor ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr;
+		if (!remote_movement)
+		{
+			continue;
+		}
+		packet.target_player_id = player_id;
+		packet.target_tick = remote_movement->GetTickNumber();
+		packet.target_progress = remote_movement->GetTickProgress();
+		break;
+	}
+	AppendFramePacket(C2S_FIRE, GetPacketBody(packet));
 }
 
 // 서버가 판정한 명중. 맞은 사람만 받는다. 쏜 사람 쪽으로 피격 방향을 표시한다.
@@ -408,19 +389,6 @@ void UMovementSyncSubsystem::HandleReloadDonePacket(const TArray<uint8>& payload
 	}
 }
 
-// 서버 시각. 게임 레벨에 들어올 때 한 번 온다. 받은 순간을 이 서버 시각으로 맞춘다.
-void UMovementSyncSubsystem::HandleTimeSyncPacket(const TArray<uint8>& payload)
-{
-	if (payload.Num() != sizeof(S2C_TIME_SYNC_PACKET) - sizeof(PACKET_HEADER))
-	{
-		HandleInvalidPacket();
-		return;
-	}
-	S2C_TIME_SYNC_PACKET packet{};
-	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	sync_server_time_ms_ = packet.server_time_ms;
-	sync_real_time_ = FPlatformTime::Seconds();
-}
 
 // 서버가 곡괭이 휘두르기를 인정하거나 거부할 때, 1번이 다시 찰 때 보낸 사용 가능 횟수와 남은 충전 시간
 void UMovementSyncSubsystem::HandlePickaxeChargesPacket(const TArray<uint8>& payload)
@@ -471,8 +439,9 @@ void UMovementSyncSubsystem::HandleStunReleasePacket(const TArray<uint8>& payloa
 	}
 }
 
-// 서버가 그 플레이어의 이동을 인정하지 않고 서버 이동 상태로 롤백했다. 다른 플레이어면 그 캐릭터를 보간 없이 바로 옮긴다.
-// 내 것이면 위치·속도·공중 단계로 바로 바꾸고, 같은 번호로 확인을 보낸 뒤 다음 틱에 새 위치를 바로 보낸다. 몸 방향은 내 조작을 따른다.
+// 서버가 그 플레이어의 이동을 인정하지 않고 서버 이동 상태로 롤백했다. 다른 플레이어면 그 캐릭터를 옮기는 시간 없이 바로 옮긴다.
+// 내 것이면 위치·속도·공중 여부를 지금 이동 상태로 바로 바꾸고 확인을 보낸다. 몸 방향은 내 조작을 따른다.
+// 아직 보내지 않은 패킷은 롤백 전 상태에서 만든 것이라 버린다. 서버도 확인 전에 온 패킷을 버리고, 확인 뒤 첫 이동 패킷에서 처리할 틱을 다시 정한다.
 void UMovementSyncSubsystem::HandleMoveRollbackPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_MOVE_ROLLBACK_PACKET) - sizeof(PACKET_HEADER))
@@ -482,28 +451,35 @@ void UMovementSyncSubsystem::HandleMoveRollbackPacket(const TArray<uint8>& paylo
 	}
 	S2C_MOVE_ROLLBACK_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	MarkTickNumber(packet.tick_number);
 	if (packet.player_id != GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
 	{
 		const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 		if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 		{
-			remote_movement->ApplyRollback(ToRemoteMoveState(packet));
+			remote_movement->ApplyRollback(ToRemoteMoveState(packet), packet.tick_number);
 		}
 		return;
 	}
-	if (APlayerCharacter* character = local_character_.Get())
+	APlayerCharacter* character = local_character_.Get();
+	if (UPlayerMovementComponent* movement = character ? Cast<UPlayerMovementComponent>(character->GetCharacterMovement()) : nullptr)
 	{
-		character->SetActorLocation(FVector(packet.location[0], packet.location[1], packet.location[2]), false, nullptr, ETeleportType::TeleportPhysics);
-		UCharacterMovementComponent* movement = character->GetCharacterMovement();
-		movement->SetMovementMode(packet.air_phase != AirPhase::GROUND ? MOVE_Falling : MOVE_Walking);
-		movement->Velocity = FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]);
+		movement->SetStepState(FVector(packet.location[0], packet.location[1], packet.location[2]), FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]), packet.is_falling);
 	}
-	C2S_MOVE_ROLLBACK_ACK_PACKET ack{};
-	ack.rollback_id = packet.rollback_id;
-	TArray<uint8> ack_payload;
-	ack_payload.Append(reinterpret_cast<const uint8*>(&ack) + sizeof(PACKET_HEADER), sizeof(ack) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_MOVE_ROLLBACK_ACK, ack_payload);
-	has_sent_state_ = false;
+	UGameNetworkSubsystem* network = GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>();
+	frame_packets_.Reset();
+	network->ClearPendingPackets();
+	has_move_packet_ = false;
+	SendPacketBody(network, C2S_MOVE_ROLLBACK_ACK, C2S_MOVE_ROLLBACK_ACK_PACKET{});
+}
+
+void UMovementSyncSubsystem::MarkTickNumber(uint32 tick_number)
+{
+	// 틱 번호는 32비트로 돌아가므로 차이로 본다.
+	if (static_cast<int32>(tick_number - latest_tick_number_) > 0)
+	{
+		latest_tick_number_ = tick_number;
+	}
 }
 
 void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)
@@ -515,6 +491,7 @@ void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)
 	}
 	S2C_MOVE_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	MarkTickNumber(packet.tick_number);
 	if (packet.player_id == GetWorld()->GetGameInstance()->GetSubsystem<UOnlineSessionSubsystem>()->GetPlayerKey())
 	{
 		return;
@@ -528,33 +505,11 @@ void UMovementSyncSubsystem::HandleMovePacket(const TArray<uint8>& payload)
 	}
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
-		remote_movement->ApplyState(state);
+		remote_movement->ApplyState(state, packet.tick_number);
 	}
 }
 
-// 다른 플레이어의 이동 키 누름·뗌. 아직 스폰되지 않았거나 내 것이면 버린다.
-void UMovementSyncSubsystem::HandleMoveInputPacket(const TArray<uint8>& payload)
-{
-	if (payload.Num() != sizeof(S2C_MOVE_INPUT_PACKET) - sizeof(PACKET_HEADER))
-	{
-		HandleInvalidPacket();
-		return;
-	}
-	S2C_MOVE_INPUT_PACKET packet{};
-	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
-	if (packet.key >= MoveKey::COUNT)
-	{
-		HandleInvalidPacket();
-		return;
-	}
-	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
-	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
-	{
-		remote_movement->ApplyMoveKey(packet.key, packet.is_down, FVector(packet.location[0], packet.location[1], packet.location[2]), FVector(packet.velocity[0], packet.velocity[1], packet.velocity[2]));
-	}
-}
-
-// 서버가 그 플레이어를 멈춘 것으로 판단했다. 서버가 정한 위치로 옮겨 수평으로 바로 멈춘다.
+// 서버가 그 플레이어를 멈춘 것으로 판단했다. 서버가 정한 위치로 옮기고 수평 속도를 0으로 둔다.
 void UMovementSyncSubsystem::HandleMoveStopPacket(const TArray<uint8>& payload)
 {
 	if (payload.Num() != sizeof(S2C_MOVE_STOP_PACKET) - sizeof(PACKET_HEADER))
@@ -564,10 +519,11 @@ void UMovementSyncSubsystem::HandleMoveStopPacket(const TArray<uint8>& payload)
 	}
 	S2C_MOVE_STOP_PACKET packet{};
 	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	MarkTickNumber(packet.tick_number);
 	const APlayerCharacter* remote = FindRemotePlayer(packet.player_id);
 	if (URemoteMovementComponent* remote_movement = remote ? remote->FindComponentByClass<URemoteMovementComponent>() : nullptr)
 	{
-		remote_movement->ApplyMoveStop(FVector(packet.location[0], packet.location[1], packet.location[2]));
+		remote_movement->ApplyMoveStop(FVector(packet.location[0], packet.location[1], packet.location[2]), packet.tick_number);
 	}
 }
 

@@ -3,6 +3,8 @@
 #include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
+#include "HAL/PlatformTime.h"
+#include "PlayerCharacter.h"
 #include "movement_settings.h"
 #include "shared_movement.h"
 
@@ -43,6 +45,172 @@ static MoveFloor ToMoveFloor(const FFindFloorResult& floor, const FVector& origi
 	result.line_distance = floor.LineDist;
 	result.hit = ToMoveHit(floor.HitResult, origin);
 	return result;
+}
+
+void UPlayerMovementComponent::TickComponent(float delta_time, ELevelTick tick_type, FActorComponentTickFunction* this_tick_function)
+{
+	APlayerCharacter* character = Cast<APlayerCharacter>(CharacterOwner);
+	if (!character || !character->IsLocallyControlled() || !UpdatedComponent)
+	{
+		Super::TickComponent(delta_time, tick_type, this_tick_function);
+		return;
+	}
+	// 처음에는 지금 상태를 번호 상태로 삼고 번호 시계를 지금 시각에서 시작한다.
+	if (!has_step_state_)
+	{
+		StartFrameClock();
+	}
+	else
+	{
+		RestoreStepState();
+	}
+	// 번호 시계는 실제 시각을 따른다. 게임 시각은 긴 프레임을 잘라 쓰므로 실제 시각보다 뒤처질 수 있다.
+	// 한 게임 프레임이 오래 걸렸어도 끝난 번호는 모두 계산한다. 게임 프레임이 없던 번호는 앞 번호의 마지막 입력을 이어 쓴다.
+	const uint32 frame_number = GetFrameNumber();
+	constexpr double STEP_SECONDS = MOVE_STEP_MS / 1000.0;
+	const FRotator rotation = CharacterOwner->GetActorRotation();
+	while (step_number_ < frame_number)
+	{
+		// 몸 방향은 그 번호의 입력으로 계산하고 알린다. 점프는 누른 번호 시작에 뛰고, 실제로 뛰었는지는 엔진 점프 처리가 남긴 값으로 본다.
+		const bool is_jump_requested = frame_input_.frame_number == step_number_ && frame_input_.is_jump_requested;
+		CharacterOwner->SetActorRotation(FRotator(0.0, frame_input_.yaw, 0.0));
+		RunControlledMove(character, static_cast<float>(STEP_SECONDS), frame_input_.move_keys, frame_input_.is_aiming, is_jump_requested, tick_type, this_tick_function);
+		step_real_time_ += STEP_SECONDS;
+		SaveStepState();
+		FLocalMoveStep step;
+		step.frame_number = step_number_;
+		for (int32 axis = 0; axis < 3; ++axis)
+		{
+			step.move_state.location[axis] = static_cast<float>(step_state_.location[axis]);
+			step.move_state.velocity[axis] = static_cast<float>(step_state_.velocity[axis]);
+		}
+		step.move_state.yaw = frame_input_.yaw;
+		step.move_state.view_pitch = frame_input_.view_pitch;
+		step.move_state.is_falling = step_state_.movement_mode == MOVE_Falling;
+		step.move_keys = frame_input_.move_keys;
+		if (is_jump_requested && character->bWasJumping)
+		{
+			step.move_keys |= static_cast<uint8>(1u << static_cast<int32>(MoveKey::JUMP));
+		}
+		step.is_aiming = frame_input_.is_aiming;
+		++step_number_;
+		on_move_step_.Broadcast(step);
+	}
+	CharacterOwner->SetActorRotation(rotation);
+	// 이번 게임 프레임의 입력을 지금 번호의 입력으로 남긴다. 점프 요청은 그 번호가 끝날 때까지 남는다.
+	if (frame_input_.frame_number != frame_number)
+	{
+		frame_input_.frame_number = frame_number;
+		frame_input_.is_jump_requested = false;
+	}
+	frame_input_.move_keys = character->GetMoveKeys();
+	frame_input_.yaw = static_cast<float>(rotation.Yaw);
+	frame_input_.view_pitch = static_cast<float>(FRotator::NormalizeAxis(CharacterOwner->GetViewRotation().Pitch));
+	frame_input_.is_aiming = character->IsAiming();
+	frame_input_.is_jump_requested |= character->IsJumpRequested();
+	character->ClearJumpRequest();
+	// 마지막 번호 뒤 남은 시간은 지금 입력으로 이어 계산해 그린다. 지금 번호의 점프도 넣는다. 다음 게임 프레임에 번호 끝 상태로 돌아간다.
+	RunControlledMove(character, static_cast<float>(frame_time_ - step_real_time_), frame_input_.move_keys, frame_input_.is_aiming, frame_input_.is_jump_requested, tick_type, this_tick_function);
+	SaveDisplayState();
+}
+
+uint32 UPlayerMovementComponent::GetFrameNumber() const
+{
+	if (read_frame_counter_ != GFrameCounter)
+	{
+		read_frame_counter_ = GFrameCounter;
+		frame_time_ = FPlatformTime::Seconds();
+	}
+	return static_cast<uint32>(FMath::Max(0.0, frame_time_ - frame_start_time_) * 1000.0 / MOVE_STEP_MS);
+}
+
+void UPlayerMovementComponent::StartFrameClock()
+{
+	// 스폰 자리처럼 바닥에서 떠 있으면 떨어지는 상태로 시작한다. 서버도 스폰 자리 바닥으로 걷는 중·떨어지는 중을 정한다.
+	if (IsMovingOnGround())
+	{
+		FFindFloorResult floor;
+		FindFloor(UpdatedComponent->GetComponentLocation(), floor, false);
+		if (!floor.IsWalkableFloor())
+		{
+			SetMovementMode(MOVE_Falling);
+		}
+	}
+	read_frame_counter_ = GFrameCounter;
+	frame_time_ = FPlatformTime::Seconds();
+	frame_start_time_ = frame_time_;
+	step_real_time_ = frame_time_;
+	step_number_ = 0;
+	frame_input_ = FFrameInput();
+	SaveStepState();
+	has_step_state_ = true;
+}
+
+void UPlayerMovementComponent::SetStepState(const FVector& location, const FVector& velocity, bool is_falling)
+{
+	UpdatedComponent->SetWorldLocation(location, false, nullptr, ETeleportType::TeleportPhysics);
+	SetMovementMode(is_falling ? MOVE_Falling : MOVE_Walking);
+	Velocity = velocity;
+	SaveStepState();
+	SaveDisplayState();
+	// 서버는 롤백 확인 뒤 처음 받은 이동 번호로 갭을 다시 정한다. 게임 프레임이 오래 멈춰 아직 계산하지 않은 지난 번호가 쌓여 있어도
+	// 계산해 보내지 않고 버려, 지금 번호부터 이어 계산한다.
+	step_number_ = GetFrameNumber();
+	step_real_time_ = frame_start_time_ + step_number_ * (MOVE_STEP_MS / 1000.0);
+}
+
+
+void UPlayerMovementComponent::SaveStepState()
+{
+	step_state_.location = UpdatedComponent->GetComponentLocation();
+	step_state_.velocity = Velocity;
+	step_state_.movement_mode = MovementMode;
+	step_state_.floor = CurrentFloor;
+	step_state_.is_pressed_jump = CharacterOwner->bPressedJump;
+	step_state_.was_jumping = CharacterOwner->bWasJumping;
+	step_state_.jump_key_hold_time = CharacterOwner->JumpKeyHoldTime;
+	step_state_.jump_force_time_remaining = CharacterOwner->JumpForceTimeRemaining;
+	step_state_.jump_current_count = CharacterOwner->JumpCurrentCount;
+	step_state_.jump_current_count_pre_jump = CharacterOwner->JumpCurrentCountPreJump;
+}
+
+void UPlayerMovementComponent::RestoreStepState()
+{
+	// 지난 프레임 뒤 다른 곳(움직임 막기·풀기, 롤백)에서 위치·속도·이동 방식을 바꿨으면 그 상태를 단계 상태로 삼는다.
+	if (UpdatedComponent->GetComponentLocation() != display_location_ || Velocity != display_velocity_ || MovementMode != display_movement_mode_)
+	{
+		SaveStepState();
+		return;
+	}
+	// 이동 방식은 바꿀 때 엔진이 바닥을 다시 맞추므로, 엔진을 거치지 않고 단계 끝 그대로 되돌린다.
+	UpdatedComponent->SetWorldLocation(step_state_.location, false, nullptr, ETeleportType::TeleportPhysics);
+	Velocity = step_state_.velocity;
+	MovementMode = step_state_.movement_mode;
+	CurrentFloor = step_state_.floor;
+	CharacterOwner->bPressedJump = step_state_.is_pressed_jump;
+	CharacterOwner->bWasJumping = step_state_.was_jumping;
+	CharacterOwner->JumpKeyHoldTime = step_state_.jump_key_hold_time;
+	CharacterOwner->JumpForceTimeRemaining = step_state_.jump_force_time_remaining;
+	CharacterOwner->JumpCurrentCount = step_state_.jump_current_count;
+	CharacterOwner->JumpCurrentCountPreJump = step_state_.jump_current_count_pre_jump;
+}
+
+void UPlayerMovementComponent::SaveDisplayState()
+{
+	display_location_ = UpdatedComponent->GetComponentLocation();
+	display_velocity_ = Velocity;
+	display_movement_mode_ = MovementMode;
+}
+
+void UPlayerMovementComponent::RunControlledMove(APlayerCharacter* character, float delta_time, uint8 move_keys, bool is_aiming, bool is_jumping, ELevelTick tick_type, FActorComponentTickFunction* this_tick_function)
+{
+	character->ApplyMoveKeys(move_keys, is_aiming);
+	if (is_jumping)
+	{
+		character->bPressedJump = true;
+		character->JumpKeyHoldTime = 0.0f;
+	}
+	Super::TickComponent(delta_time, tick_type, this_tick_function);
 }
 
 // 서버 MoveSimulation::PhysWalking과 같은 순서다. 속도와 이번 단계 이동은 공용 계산으로 정하고, 바닥을 따라 간 뒤 바닥을 다시 찾는다.

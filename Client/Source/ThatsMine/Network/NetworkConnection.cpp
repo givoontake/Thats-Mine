@@ -74,26 +74,41 @@ void NetworkConnection::Stop(const FString& message)
 	socket_->Shutdown(ESocketShutdownMode::ReadWrite);
 }
 
-bool NetworkConnection::SendPacket(uint8 type, const TArray<uint8>& payload)
+bool NetworkConnection::AppendPacket(TArray<uint8>& buffer, uint8 type, const TArray<uint8>& payload)
 {
-	check(IsInGameThread());
-	if (is_stopping_.load() || payload.Num() > NetworkLimits::MAX_PACKET_SIZE - NetworkLimits::HEADER_SIZE || send_count_.load() >= NetworkLimits::MAX_QUEUED_PACKETS)
+	if (payload.Num() > NetworkLimits::MAX_PACKET_SIZE - NetworkLimits::HEADER_SIZE)
 	{
 		return false;
 	}
 	const int32 packet_size = NetworkLimits::HEADER_SIZE + payload.Num();
-	TArray<uint8> packet;
-	packet.SetNumUninitialized(packet_size);
+	const int32 offset = buffer.Num();
+	buffer.AddUninitialized(packet_size);
 	// 서버의 Windows little-endian 헤더. 길이는 헤더를 포함한다.
-	packet[0] = static_cast<uint8>(packet_size & 0xff);
-	packet[1] = static_cast<uint8>((packet_size >> 8) & 0xff);
-	packet[2] = type;
+	buffer[offset] = static_cast<uint8>(packet_size & 0xff);
+	buffer[offset + 1] = static_cast<uint8>((packet_size >> 8) & 0xff);
+	buffer[offset + 2] = type;
 	if (!payload.IsEmpty())
 	{
-		FMemory::Memcpy(packet.GetData() + NetworkLimits::HEADER_SIZE, payload.GetData(), payload.Num());
+		FMemory::Memcpy(buffer.GetData() + offset + NetworkLimits::HEADER_SIZE, payload.GetData(), payload.Num());
+	}
+	return true;
+}
+
+bool NetworkConnection::SendPacket(uint8 type, const TArray<uint8>& payload)
+{
+	TArray<uint8> packet;
+	return AppendPacket(packet, type, payload) && SendPackets(MoveTemp(packet));
+}
+
+bool NetworkConnection::SendPackets(TArray<uint8>&& packets)
+{
+	check(IsInGameThread());
+	if (is_stopping_.load() || packets.IsEmpty() || send_count_.load() >= NetworkLimits::MAX_QUEUED_PACKETS)
+	{
+		return false;
 	}
 	send_count_.fetch_add(1);
-	send_queue_.Enqueue(MoveTemp(packet));
+	send_queue_.Enqueue(MoveTemp(packets));
 	send_event_->Trigger();
 	return true;
 }

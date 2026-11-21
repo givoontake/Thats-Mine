@@ -6,6 +6,7 @@
 #include "Interaction/HintSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "Network/GameNetworkSubsystem.h"
+#include "Network/MovementSyncSubsystem.h"
 #include "Network/game_protocol.h"
 #include "Player/PlayerCharacter.h"
 #include "block_pieces.h"
@@ -72,9 +73,10 @@ void UBlockSubsystem::RequestUse(int32 piece, int32 rotation, int32 column, int3
 	packet.rotation = static_cast<uint8>(rotation);
 	packet.column = static_cast<uint8>(column);
 	packet.row = static_cast<uint8>(row);
+	// 플레이 중 조작은 모두 같은 규칙으로 처리되도록, 이번 게임 프레임의 전송 프레임 번호로 보낸다.
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BLOCK_USE, payload);
+	GetWorld()->GetSubsystem<UMovementSyncSubsystem>()->AppendFramePacket(C2S_BLOCK_USE, MoveTemp(payload));
 }
 
 // 내가 연 상자의 블록. 상자 열림 패킷 뒤에 이어 온다. 이미 가진 블록이면 하나 더 가진다.

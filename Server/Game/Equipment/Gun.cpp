@@ -16,24 +16,20 @@ void Gun::Reset()
 	has_auto_reload_ = false;
 	auto_reload_wait_ms_ = 0;
 	last_fire_action_ms_ = 0;
-	last_fire_receive_ms_ = 0;
-	fire_reward_ms_ = 0;
 	shot_count_ = 0;
 	spread_heat_ = 0;
 	is_aiming_ = false;
 }
 
-void Gun::ResetActionTime(long long time_ms)
+void Gun::ResetActionTime(std::uint32_t action_time_ms)
 {
-	last_fire_action_ms_ = static_cast<std::uint32_t>(time_ms);
-	last_fire_receive_ms_ = time_ms;
-	fire_reward_ms_ = 0;
+	last_fire_action_ms_ = action_time_ms;
 }
 
-void Gun::Equip(std::uint32_t action_time_ms, long long time_ms)
+void Gun::Equip(std::uint32_t action_time_ms)
 {
-	Equipment::Equip(action_time_ms, time_ms);
-	ScheduleAutoReload(time_ms, 0);
+	Equipment::Equip(action_time_ms);
+	ScheduleAutoReload(action_time_ms, 0);
 }
 
 void Gun::OnUnequip()
@@ -72,28 +68,21 @@ bool Gun::TrySetAiming(bool is_aiming)
 	return true;
 }
 
-std::optional<FiredShot> Gun::TryFire(const ShotSpreadInput& spread_input, std::uint32_t action_time_ms, long long time_ms, long long fire_motion_ms)
+std::optional<FiredShot> Gun::TryFire(const ShotSpreadInput& spread_input, std::uint32_t shot_count, std::uint32_t action_time_ms, long long fire_motion_ms)
 {
-	if (IsEquipWaiting(action_time_ms) || reload_remaining_ms_ > 0 || rounds_ <= 0) return std::nullopt;
+	if (IsEquipWaiting(action_time_ms) || reload_remaining_ms_ > 0 || rounds_ <= 0 || shot_count <= shot_count_) return std::nullopt;
 	const GunSettings& gun = GetGunSettings();
-	const long long interval_ms = static_cast<std::int32_t>(action_time_ms - last_fire_action_ms_);
-	const long long fire_interval_ms = gun.fire_interval_ms;
-	const long long usable_reward_ms = fire_reward_ms_ >= 0 ? fire_reward_ms_ : std::min(0LL, fire_reward_ms_ + FIRE_DEBT_FREE_MS);
-	if (interval_ms + usable_reward_ms < fire_interval_ms) return std::nullopt;
-	// 간격이 모자라면 모자란 만큼 보상을 쓰고, 남으면 남은 만큼 지난 보상이나 빚을 0 쪽으로 줄인다. 그 뒤 서버가 받은 간격과 동작 시각 간격의 차이를 더한다.
-	if (interval_ms < fire_interval_ms) fire_reward_ms_ -= fire_interval_ms - interval_ms;
-	else if (fire_reward_ms_ > 0) fire_reward_ms_ = std::max(0LL, fire_reward_ms_ - (interval_ms - fire_interval_ms));
-	else fire_reward_ms_ = std::min(0LL, fire_reward_ms_ + (interval_ms - fire_interval_ms));
-	fire_reward_ms_ = std::min(FIRE_REWARD_MAX_MS, fire_reward_ms_ + (time_ms - last_fire_receive_ms_) - interval_ms);
-	const float elapsed_seconds = (time_ms - last_fire_receive_ms_) / 1000.0f;
+	// 직전 인정 발사와의 동작 시각 간격이 발사 간격보다 짧으면 받지 않는다.
+	if (static_cast<std::int32_t>(action_time_ms - last_fire_action_ms_) < gun.fire_interval_ms) return std::nullopt;
+	const float elapsed_seconds = static_cast<std::int32_t>(action_time_ms - last_fire_action_ms_) / 1000.0f;
 	last_fire_action_ms_ = action_time_ms;
-	last_fire_receive_ms_ = time_ms;
+	shot_count_ = shot_count;
 	--rounds_;
-	// 서버가 받은 발사 간격은 지연 때문에 실제와 다를 수 있어, 퍼짐 크기는 연사 열기를 더 회복한 값으로 본다.
-	const FiredShot shot{ shot_count_++, GetShotSpread(gun.spread, RecoverShotHeat(spread_heat_, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, gun.fire_interval_ms), is_aiming_, spread_input.horizontal_speed, spread_input.is_falling) };
+	// 퍼짐 크기는 연사 열기를 SHOT_SPREAD_TIME_ALLOWANCE_SECONDS만큼 더 회복한 값으로 본다.
+	const FiredShot shot{ GetShotSpread(gun.spread, RecoverShotHeat(spread_heat_, elapsed_seconds + SHOT_SPREAD_TIME_ALLOWANCE_SECONDS, gun.fire_interval_ms), is_aiming_, spread_input.horizontal_speed, spread_input.is_falling) };
 	spread_heat_ = AddShotHeat(gun.spread, RecoverShotHeat(spread_heat_, elapsed_seconds, gun.fire_interval_ms));
 	// 탄창이 비면 발사 동작이 끝난 뒤 재장전한다.
-	if (rounds_ == 0) ScheduleAutoReload(time_ms, fire_motion_ms);
+	if (rounds_ == 0) ScheduleAutoReload(action_time_ms, fire_motion_ms);
 	return shot;
 }
 
@@ -105,9 +94,9 @@ bool Gun::TryStartReload(std::uint32_t action_time_ms)
 	return true;
 }
 
-void Gun::ScheduleAutoReload(long long time_ms, long long delay_ms)
+void Gun::ScheduleAutoReload(std::uint32_t action_time_ms, long long delay_ms)
 {
 	if (has_auto_reload_ || rounds_ > 0 || spare_rounds_ <= 0 || reload_remaining_ms_ > 0) return;
 	has_auto_reload_ = true;
-	auto_reload_wait_ms_ = std::max(delay_ms, GetEquipWaitRemainingMs(time_ms));
+	auto_reload_wait_ms_ = std::max(delay_ms, GetEquipWaitRemainingMs(action_time_ms));
 }

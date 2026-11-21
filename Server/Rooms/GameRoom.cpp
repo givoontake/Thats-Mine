@@ -77,6 +77,8 @@ void GameRoom::Initialize(const RoomInitData& data)
 {
 	memcpy(room_name_, data.room_name, sizeof(room_name_));
 	memcpy(room_password_, data.room_password, sizeof(room_password_));
+	// 새로 열린 방은 처음 처리할 때부터 방 틱을 센다. 쉬는 동안 흐른 시간을 밀린 틱으로 보지 않는다.
+	tick_start_ms_ = 0;
 	is_private_.store(room_password_[0] != 0);
 	host_id_ = -1;
 	current_player_count_.store(0);
@@ -108,6 +110,7 @@ void GameRoom::Reset()
 	room_state_.store(RoomState::EMPTY);
 	room_tasks_.DiscardTasks();
 	packet_tasks_.DiscardTasks();
+	waiting_packet_tasks_.clear();
 }
 
 // 방 정보를 복사한다. 읽는 도중 방이 초기화·재사용됐으면 방 키가 달라지므로 false를 반환하고, 복사한 값은 버린다.
@@ -294,59 +297,24 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		break;
 	}
 	case C2S_MOVE: {
+		// 받을 때 대기열에 넣을지 보고, 그 번호를 처리할 틱에 대기열에서 꺼내 여기서 처리한다.
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		// 스폰 알림 전과 되돌리기 확인을 기다리는 동안 받은 이동 상태는 버린다.
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingSpawn() || room_player->IsAwaitingMoveRollback()) break;
-		// 기절 중에도 위치와 공중 단계는 중력과 관성으로 움직인 결과라 평소처럼 검사한다.
-		const MOVE_STATE& move_state = reinterpret_cast<C2S_MOVE_PACKET*>(packet)->move_state;
-		// 이동 시각은 받은 순간의 서버 시각으로 잡는다. 처리한 틱 시각을 쓰면 같은 간격으로 온 패킷도 틱 하나만큼 간격이 흔들린다.
-		if (CheckMove(*room_player, move_state, receive_time_ms) != MoveCheckResult::ACCEPTED) {
-			RollbackMove(*room_player);
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		const auto* request_p = reinterpret_cast<C2S_MOVE_PACKET*>(packet);
+		const MOVE_STATE& move_state = request_p->move_state;
+		// 서버 이동 상태에서 이 번호를 이 패킷의 입력으로 계산해 받은 상태와 비교한다.
+		const MoveSimulation step_end = room_player->PredictMoveStep(move_state, request_p->move_keys, tick_number_);
+		// 기절 중에는 조작을 받지 않으므로 받은 상태와 비교하지 않고 서버가 입력 없이 계산한 상태로 둔다.
+		if (room_player->IsStunned(tick_number_)) {
+			room_player->SetServerMove(step_end);
 			break;
 		}
-		const bool was_move_stopped = room_player->IsMoveStopped();
-		room_player->SetMoveState(server_->GetMapData(), move_state, receive_time_ms);
-		// 멈춤을 알렸던 플레이어의 이동 상태가 다시 오면 그 사람의 눌린 이동 키를 다시 중계한다.
-		if (was_move_stopped) RelayMoveKeys(*room_player, move_state);
-		break;
-	}
-	case C2S_MOVE_INPUT: {
-		if (room_state_.load() != RoomState::PLAY) break;
-		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		// 스폰 알림 전에 받은 이동 키는 버린다.
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsAwaitingSpawn()) break;
-		const auto* request_p = reinterpret_cast<C2S_MOVE_INPUT_PACKET*>(packet);
-		// 기절 중에는 조작을 받지 않으므로 이동 키를 버린다. 기절할 때 눌린 키는 모두 뗀 것으로 했다.
-		if (request_p->key >= MoveKey::COUNT || room_player->IsStunned(tick_time_ms_)) break;
-		// 키 시각이 이동 키 시각 검사를 어기면 그 키를 버린다.
-		const std::optional<long long> key_time_ms = room_player->GetInputTimeMs(request_p->client_time_ms, receive_time_ms);
-		if (!key_time_ms) break;
-		if (request_p->key == MoveKey::JUMP) {
-			// 점프는 누름만 온다. 키를 누른 순간의 위치·수평 속도에서 점프 속도로 뛰어오른 이동 상태로 보고, 이동 상태처럼 검사해 인정하면 그 순간부터 공중을 시작한다.
-			if (!request_p->is_down || room_player->IsAwaitingMoveRollback()) break;
-			MOVE_STATE jump_state = room_player->GetMoveState();
-			std::memcpy(jump_state.location, request_p->location, sizeof(jump_state.location));
-			jump_state.velocity[0] = request_p->velocity[0];
-			jump_state.velocity[1] = request_p->velocity[1];
-			jump_state.velocity[2] = JUMP_Z_VELOCITY;
-			jump_state.air_phase = AirPhase::RISING;
-			jump_state.client_time_ms = request_p->client_time_ms;
-			if (CheckMove(*room_player, jump_state, receive_time_ms) != MoveCheckResult::ACCEPTED) {
-				RollbackMove(*room_player);
-				break;
-			}
-			const bool was_move_stopped = room_player->IsMoveStopped();
-			room_player->SetMoveState(server_->GetMapData(), jump_state, receive_time_ms);
-			if (was_move_stopped) RelayMoveKeys(*room_player, jump_state);
+		if (CheckMove(move_state, step_end.GetMoveState()) != MoveCheckResult::ACCEPTED) {
+			RollbackMove(*room_player, true);
+			break;
 		}
-		else {
-			room_player->SetMoveKey(server_->GetMapData(), request_p->key, request_p->is_down, *key_time_ms);
-		}
-		S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, request_session.GetSessionKey().player_id, request_p->key, request_p->is_down };
-		std::memcpy(input_p.location, request_p->location, sizeof(input_p.location));
-		std::memcpy(input_p.velocity, request_p->velocity, sizeof(input_p.velocity));
-		SendToPlaying(reinterpret_cast<const char*>(&input_p), sizeof(input_p));
+		room_player->ApplyMoveStep(server_->GetMapData(), step_end, move_state, request_p->move_keys);
 		break;
 	}
 	case C2S_AIM:
@@ -356,17 +324,11 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const int player_id = request_session.GetSessionKey().player_id;
 		const std::uint8_t type = reinterpret_cast<PACKET_HEADER*>(packet)->type;
-		// 기절 중에는 조작을 받지 않으므로 조준을 받지 않고, 먼저 바꾼 본인에게 서버 조준을 보내 맞추게 한다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 받는다.
-		if (type != C2S_EQUIP && room_player->IsStunned(tick_time_ms_)) {
-			SendAimCorrection(*room_player);
-			break;
-		}
-		// 서버 이동 상태는 받은 순간까지 앞 입력으로 진행한 뒤 새 조준을 쓴다.
-		if (type != C2S_EQUIP) room_player->AdvanceMove(receive_time_ms);
 		if (type == C2S_AIM) {
+			// 조준은 번호 안에서 이동 패킷보다 먼저 처리되므로, 이 번호의 이동부터 바뀐 조준으로 계산된다.
 			const bool is_aiming = reinterpret_cast<C2S_AIM_PACKET*>(packet)->is_aiming;
-			// 손에 든 장비가 조준할 수 없으면 받지 않고, 먼저 바꾼 본인에게 서버 조준을 보내 맞추게 한다.
-			if (!room_player->SetAiming(is_aiming)) {
+			// 기절 중이면 조작을 받지 않고, 손에 든 장비가 조준할 수 없으면 받지 않는다. 받지 않으면 먼저 바꾼 본인에게 서버 조준을 보내 맞추게 한다.
+			if (room_player->IsStunned(tick_number_) || !room_player->SetAiming(is_aiming)) {
 				SendAimCorrection(*room_player);
 				break;
 			}
@@ -375,13 +337,18 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 			SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&aim_p), sizeof(aim_p));
 		}
 		else {
-			// 조준 중이면 장비를 바꾸지 않는다. 클라이언트도 같은 조건으로 막는다. 받지 않으면 먼저 바꾼 본인에게 서버 장비를 보내 맞추게 한다.
-			const auto* request_p = reinterpret_cast<C2S_EQUIP_PACKET*>(packet);
-			if (!server_->GetHitboxData().GetWeaponInfo(request_p->weapon) || !room_player->GetActionState().TryEquip(request_p->weapon, request_p->action_time_ms, receive_time_ms)) {
+			// 롤백 확인을 기다리는 동안에는 장비를 바꾸지 않고, 먼저 바꾼 본인에게 서버 장비를 보내 맞추게 한다.
+			if (room_player->GetNetworkState() == NetworkState::ROLLBACK) {
 				SendEquipCorrection(*room_player);
 				break;
 			}
-			room_player->GetPose().ChangeWeapon(request_p->weapon, tick_time_ms_);
+			// 조준 중이면 장비를 바꾸지 않는다. 클라이언트도 같은 조건으로 막는다. 장비는 기절과 엇갈려 바꾼 것을 놓치지 않도록 기절 중에도 받는다.
+			const auto* request_p = reinterpret_cast<C2S_EQUIP_PACKET*>(packet);
+			if (!server_->GetHitboxData().GetWeaponInfo(request_p->weapon) || !room_player->GetActionState().TryEquip(request_p->weapon, request_p->frame_number * MOVE_STEP_MS)) {
+				SendEquipCorrection(*room_player);
+				break;
+			}
+			room_player->GetPose().ChangeWeapon(request_p->weapon, GetPoseTimeMs());
 			// 본인은 먼저 바꿨으므로 다른 플레이어에게만 보낸다.
 			const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, request_p->weapon };
 			SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&equip_p), sizeof(equip_p));
@@ -391,7 +358,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 	case C2S_MOVE_ROLLBACK_ACK: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (room_player) room_player->CompleteMoveRollback(reinterpret_cast<C2S_MOVE_ROLLBACK_ACK_PACKET*>(packet)->rollback_id);
+		if (room_player) room_player->CompleteMoveRollback(receive_time_ms);
 		break;
 	}
 	case C2S_ACTION:
@@ -401,10 +368,11 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		const bool is_reload = reinterpret_cast<PACKET_HEADER*>(packet)->type == C2S_RELOAD;
 		const PlayerAction action = is_reload ? PlayerAction::RELOAD : static_cast<PlayerAction>(reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action);
-		const std::uint32_t action_time_ms = is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->action_time_ms : reinterpret_cast<C2S_ACTION_PACKET*>(packet)->action_time_ms;
+		const std::uint32_t action_time_ms = (is_reload ? reinterpret_cast<C2S_RELOAD_PACKET*>(packet)->frame_number : reinterpret_cast<C2S_ACTION_PACKET*>(packet)->frame_number) * MOVE_STEP_MS;
 		const std::uint8_t weapon = room_player->GetActionState().GetWeapon();
-		const bool can_act = action <= PlayerAction::PICKUP && action != PlayerAction::FIRE && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_time_ms_);
-		if (!can_act || !AcceptAction(*room_player, action, weapon, receive_time_ms, action_time_ms)) {
+		// 롤백 확인을 기다리는 동안에는 동작을 받지 않는다. 휘두르기·줍기는 버리기만 한다.
+		const bool can_act = action <= PlayerAction::PICKUP && action != PlayerAction::FIRE && (is_reload || action != PlayerAction::RELOAD) && !room_player->IsStunned(tick_number_) && room_player->GetNetworkState() != NetworkState::ROLLBACK;
+		if (!can_act || !AcceptAction(*room_player, action, weapon, action_time_ms)) {
 			// 클라이언트는 재장전을 바로 시작하므로, 인정하지 않으면 지금 탄약으로 재장전 끝을 보내 되돌린다.
 			if (is_reload) SendReloadDone(*room_player, weapon);
 			break;
@@ -417,30 +385,30 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		}
 		else {
 			const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, player_id, static_cast<std::uint8_t>(action) };
-			SendToPlaying(reinterpret_cast<const char*>(&action_p), sizeof(action_p));
+			SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&action_p), sizeof(action_p));
 		}
-		room_player->GetPose().StartAction(static_cast<std::uint8_t>(action), weapon, tick_time_ms_);
+		room_player->GetPose().StartAction(static_cast<std::uint8_t>(action), weapon, GetPoseTimeMs());
 		break;
 	}
 	case C2S_FIRE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
-		ProcessFire(*room_player, *reinterpret_cast<C2S_FIRE_PACKET*>(packet), receive_time_ms);
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_number_)) break;
+		ProcessFire(*room_player, *reinterpret_cast<C2S_FIRE_PACKET*>(packet));
 		break;
 	}
 	case C2S_BOX_OPEN: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_time_ms_)) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->IsStunned(tick_number_) || room_player->GetNetworkState() == NetworkState::ROLLBACK) break;
 		const auto* open_p = reinterpret_cast<C2S_BOX_OPEN_PACKET*>(packet);
-		if (CheckBoxOpen(*room_player, *open_p)) ProcessBoxOpen(*room_player, open_p->box);
+		if (CheckBoxOpen(*room_player, *open_p)) ProcessBoxOpen(*room_player, open_p->box, open_p->frame_number * MOVE_STEP_MS);
 		break;
 	}
 	case C2S_BLOCK_USE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
-		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->GetNetworkState() == NetworkState::ROLLBACK) break;
 		ProcessBlockUse(*room_player, *reinterpret_cast<C2S_BLOCK_USE_PACKET*>(packet));
 		break;
 	}
@@ -461,7 +429,7 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 	}
 	case C2S_AWARD_DONE: {
 		// 시상식 중 끝까지 본 사람만 먼저 방으로 돌려보낸다. 방은 시상식이 끝날 때 게임 전 대기 상태로 돌아간다.
-		if (room_state_.load() != RoomState::PLAY || award_end_ms_ == 0) break;
+		if (room_state_.load() != RoomState::PLAY || award_end_tick_ == 0) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
 		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
 		room_player->ResetGameData();
@@ -507,18 +475,87 @@ void GameRoom::AddPacketTask(std::unique_ptr<SessionPacketTask> task)
 	packet_tasks_.Enqueue(std::move(task));
 }
 
+// 전송 프레임 번호를 담는 게임 패킷인지
+static bool IsFramePacket(std::uint8_t type)
+{
+	return type == C2S_MOVE || type == C2S_AIM || type == C2S_EQUIP || type == C2S_ACTION || type == C2S_RELOAD || type == C2S_FIRE || type == C2S_BOX_OPEN || type == C2S_BLOCK_USE;
+}
+
+// 게임 패킷의 전송 프레임 번호. 모든 게임 패킷이 헤더 바로 뒤에 둔다.
+static std::uint32_t ReadFrameNumber(const std::vector<char>& packet)
+{
+	std::uint32_t frame_number;
+	std::memcpy(&frame_number, packet.data() + PACKET_HEADER_SIZE, sizeof(frame_number));
+	return frame_number;
+}
+
 // 패킷에 담긴 방 키가 이 방의 키와 다르면 같은 자리에 예전에 있던 방의 패킷이므로 버린다. 판단은 방만 한다.
+// 받은 순서대로 꺼내, 전송 프레임 번호가 든 게임 패킷은 대기열 뒤에 넣고 그 밖의 패킷(롤백 확인·로딩 완료·스폰 알림·방 패킷)은 바로 처리한다.
+// 그 뒤 대기열을 앞에서부터 한 번 보며, 플레이어마다 이번 틱에 처리할 번호까지의 패킷을 처리하고 뒷 번호는 순서 그대로 남긴다.
+// 그래서 같은 틱에 처리하는 패킷은 플레이어가 섞여도 받은 순서이고, 한 번호 안에서는 이동 패킷이 마지막이다.
 void GameRoom::ProcessPacketTasks()
 {
+	// 새 패킷을 꺼내기 전에 처리할 번호의 다음 번호까지 와 있으면, 이번 틱에 두 번호를 처리한다.
+	for (auto& room_player : room_players_) {
+		if (room_player.HasSession()) room_player.GetFrameGap().BeginTick(tick_number_);
+	}
 	const std::size_t task_count = packet_tasks_.ClaimTaskCount();
 	for (std::size_t i = 0; i < task_count; ++i) {
-		const auto task = packet_tasks_.Dequeue();
+		auto task = packet_tasks_.Dequeue();
 		if (task->room_key != GetRoomKey()) continue;
 		auto* session = server_->GetSessionManager().FindSession(task->session_key);
 		// 연결 종료가 예약된 세션의 패킷은 처리하지 않는다. 자리는 연결 끊김 작업으로 뺀다.
 		if (!session || session->GetLifeState() != LifeState::ACTIVE || !IsOwnedPlayer(*session, task->session_key)) continue;
-		HandlePacket(task->packet.data(), *session, task->receive_time_ms);
+		if (!IsFramePacket(reinterpret_cast<PACKET_HEADER*>(task->packet.data())->type)) HandlePacket(task->packet.data(), *session, task->receive_time_ms);
+		else if (AcceptFramePacket(*task)) waiting_packet_tasks_.push_back(std::move(task));
 	}
+	// 이번 틱에 받은 패킷까지 봐도 처리할 번호가 다 오지 않았으면 이번 틱에는 처리하지 않고 기다린다.
+	for (auto& room_player : room_players_) {
+		if (room_player.HasSession()) room_player.GetFrameGap().SettleTick(tick_number_);
+	}
+	std::size_t kept_count = 0;
+	for (std::size_t i = 0; i < waiting_packet_tasks_.size(); ++i) {
+		auto& task = waiting_packet_tasks_[i];
+		// 기다리는 동안 나갔거나 연결이 끊겼거나 롤백을 시작한 플레이어의 패킷은 버린다.
+		auto* session = server_->GetSessionManager().FindSession(task->session_key);
+		if (!session || session->GetLifeState() != LifeState::ACTIVE || !IsOwnedPlayer(*session, task->session_key)) continue;
+		Player* room_player = FindPlayer(task->session_key);
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY || room_player->GetNetworkState() == NetworkState::ROLLBACK) continue;
+		if (ReadFrameNumber(task->packet) > room_player->GetFrameGap().GetProcessNumber(tick_number_)) {
+			if (kept_count != i) waiting_packet_tasks_[kept_count] = std::move(task);
+			++kept_count;
+			continue;
+		}
+		HandlePacket(task->packet.data(), *session, task->receive_time_ms);
+		// 이동 패킷이 그 번호의 마지막 패킷이므로, 처리한 뒤 그 플레이어의 장비를 번호 하나만큼 진행한다.
+		if (reinterpret_cast<const PACKET_HEADER*>(task->packet.data())->type == C2S_MOVE) ProcessActionStates(*room_player);
+	}
+	waiting_packet_tasks_.resize(kept_count);
+}
+
+bool GameRoom::AcceptFramePacket(const SessionPacketTask& task)
+{
+	auto* room_player = room_state_.load() == RoomState::PLAY ? FindPlayer(task.session_key) : nullptr;
+	if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) return false;
+	const std::uint8_t type = reinterpret_cast<const PACKET_HEADER*>(task.packet.data())->type;
+	// 이동 끊김은 처리하지 않고 버리는 패킷까지 받은 패킷으로 센다.
+	if (type == C2S_MOVE) room_player->MarkMovePacketReceived(task.receive_time_ms);
+	// 스폰 알림을 받기 전에는 받지 않는다.
+	if (room_player->GetNetworkState() == NetworkState::SPAWNING) return false;
+	// 롤백 확인을 기다리는 동안 온 패킷은 롤백 전 상태에서 만든 것이라 버린다.
+	// 클라이언트가 먼저 바꾼 조준·장비·재장전은 서버 상태를 보내 맞추게 한다.
+	if (room_player->GetNetworkState() == NetworkState::ROLLBACK) {
+		if (type == C2S_AIM) SendAimCorrection(*room_player);
+		else if (type == C2S_EQUIP) SendEquipCorrection(*room_player);
+		else if (type == C2S_RELOAD) SendReloadDone(*room_player, room_player->GetActionState().GetWeapon());
+		return false;
+	}
+	const std::uint32_t frame_number = ReadFrameNumber(task.packet);
+	FrameGap& frame_gap = room_player->GetFrameGap();
+	// 번호가 줄거나, 이동 패킷까지 받은 번호에 또 온 패킷은 버린다.
+	if (!frame_gap.IsNewNumber(frame_number)) return false;
+	if (type == C2S_MOVE) frame_gap.MarkComplete(frame_number, tick_number_);
+	return true;
 }
 
 // 받는 쪽으로서 입장 요청을 확정한다. 성공하면 ROOM, 실패하면 돌려보내는 요청을 보내며 모든 분기가 결과로 끝난다.
@@ -568,15 +605,22 @@ void GameRoom::ProcessRoomTasks()
 	TryPostRoomDelete();
 }
 
-void GameRoom::ProcessRoomTick(long long tick_time_ms)
+// 방 틱 번호는 처음 처리한 때부터 흐른 실제 시간 ÷ TICK_INTERVAL_MS다. 타이머가 늦거나 앞 틱 처리가 길어 틱이 밀렸으면,
+// 밀린 틱마다 틱 처리를 차례로 반복한다. 한 번에 MAX_CATCH_UP_TICKS틱까지만 처리하고 남은 틱은 다음에 깨어날 때 이어서 처리한다.
+void GameRoom::ProcessRoomTick(long long now_ms)
 {
-	const long long elapsed_ms = tick_time_ms - tick_time_ms_;
-	tick_time_ms_ = tick_time_ms;
-	ProcessRoomTasks();
-	ProcessPacketTasks();
-	ProcessRoomTasks();
-	if (room_state_.load() == RoomState::PLAY) ProcessGameTick(tick_time_ms, elapsed_ms);
-	// 이번 틱에 생긴 패킷을 사람마다 한 번에 보낸다. 세션이 없는 자리는 버린다.
+	tick_time_ms_ = now_ms;
+	if (tick_start_ms_ == 0) tick_start_ms_ = now_ms - static_cast<long long>(tick_number_ + 1) * TICK_INTERVAL_MS;
+	const std::uint32_t due_tick = static_cast<std::uint32_t>((now_ms - tick_start_ms_) / TICK_INTERVAL_MS);
+	const std::uint32_t tick_count = due_tick > tick_number_ ? std::min<std::uint32_t>(due_tick - tick_number_, MAX_CATCH_UP_TICKS) : 0;
+	for (std::uint32_t i = 0; i < tick_count; ++i) {
+		++tick_number_;
+		ProcessRoomTasks();
+		ProcessPacketTasks();
+		ProcessRoomTasks();
+		if (room_state_.load() == RoomState::PLAY) ProcessGameTick();
+	}
+	// 이번에 처리한 틱들에서 생긴 패킷을 사람마다 한 번에 보낸다. 세션이 없는 자리는 버린다.
 	for (auto& room_player : room_players_) {
 		if (auto session = FindSession(room_player)) GetTickSendBuffer(room_player).Send(*session);
 		else GetTickSendBuffer(room_player).Clear();
@@ -773,10 +817,9 @@ void GameRoom::StartGame(int requester_id)
 		++player_count;
 	}
 	ResetGameState();
-	loading_deadline_ms_ = tick_time_ms_ + LOADING_TIMEOUT_MS;
+	loading_deadline_tick_ = tick_number_ + MsToTicks(LOADING_TIMEOUT_MS);
 	// 보물을 놓고 그 위치로 힌트를 만든 뒤, 힌트 수에 맞춰 상자를 놓는다.
 	PlaceTreasure();
-	shot_seed_ = static_cast<std::uint64_t>(CreateRandomSeed()) << 32 | CreateRandomSeed();
 	GenerateHints();
 	PlaceBoxes(player_count);
 }
@@ -785,14 +828,14 @@ void GameRoom::StartGame(int requester_id)
 // 보물·힌트·상자는 시작할 때 새로 놓으면서 바뀐다.
 void GameRoom::ResetGameState()
 {
+	waiting_packet_tasks_.clear();
 	match_phase_ = MatchPhase::LOADING;
-	loading_deadline_ms_ = 0;
-	game_start_ms_ = 0;
-	last_pose_tick_ms_ = 0;
+	loading_deadline_tick_ = 0;
+	game_start_tick_ = 0;
 	removed_cells_ = 0;
-	next_area_removal_ms_ = 0;
-	game_end_ms_ = 0;
-	award_end_ms_ = 0;
+	next_area_removal_tick_ = 0;
+	game_end_tick_ = 0;
+	award_end_tick_ = 0;
 }
 
 // 최종 보물을 맵 경계에서 TREASURE_EDGE_MARGIN 안쪽의 무작위 위치에 놓는다. 보물을 놓지 않는 영역(건물·동양 유적 뒤 절벽·꽃밭) 밖이고, 보물 둘레 사각형 안의 땅이 모두 있고,
@@ -864,7 +907,7 @@ void GameRoom::PlaceBoxes(int player_count)
 	box_placement_indices_ = box_candidates.SelectPlacements(box_contents_.size());
 	// 상자 자리 후보가 모자라 덜 골랐으면 남는 내용물은 넣지 않는다.
 	box_contents_.resize(box_placement_indices_.size());
-	box_open_ms_.assign(box_placement_indices_.size(), 0);
+	box_open_ticks_.assign(box_placement_indices_.size(), 0);
 	box_layout_packet_ = BuildBoxLayoutPacket();
 }
 
@@ -886,7 +929,7 @@ std::vector<char> GameRoom::BuildBoxLayoutPacket() const
 		write += sizeof(box_layout_p);
 		for (std::size_t index = first; index < first + count; ++index) {
 			const BoxPlacement& placement = box_candidates.GetPlacements()[box_placement_indices_[index]];
-			const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, box_open_ms_[index] != 0 };
+			const BOX_ENTRY entry{ static_cast<std::uint8_t>(placement.kind), { placement.location.x, placement.location.y, placement.location.z }, { placement.rotation.x, placement.rotation.y, placement.rotation.z }, box_open_ticks_[index] != 0 };
 			std::memcpy(write, &entry, sizeof(entry));
 			write += sizeof(entry);
 		}
@@ -912,70 +955,71 @@ void GameRoom::ProcessSpecificRoomTask(const RoomTask& task)
 	}
 }
 
-// 중계할 이동 상태와 이번 틱에 받은 동작을 모아 받는 사람마다 한 번에 보낸다. 보낸 사람 것도 포함되며 클라이언트가 거른다.
-void GameRoom::ProcessGameTick(long long tick_time_ms, long long elapsed_ms)
+// 중계할 이동 상태를 모아 받는 사람마다 한 번에 보낸다. 본인 이동은 본인이 먼저 계산한 것이라 빼고 보낸다.
+void GameRoom::ProcessGameTick()
 {
 	ProcessLoadedPlayers();
 	ProcessGameStart();
 	ProcessAreaRemoval();
 	ProcessStunRelease();
-	ProcessActionStates(elapsed_ms);
 	ProcessTimeLimit();
-	// 시상식 중에는 게임 진행을 멈추고, 끝날 시각이 되면 방으로 돌려보낸다.
-	if (award_end_ms_ != 0) {
-		if (tick_time_ms >= award_end_ms_) ClearGame();
+	// 시상식 중에는 게임 진행을 멈추고, 끝날 틱이 되면 방으로 돌려보낸다.
+	if (award_end_tick_ != 0) {
+		if (tick_number_ >= award_end_tick_) ClearGame();
 		return;
 	}
-	if (game_end_ms_ != 0 && tick_time_ms >= game_end_ms_) {
+	if (game_end_tick_ != 0 && tick_number_ >= game_end_tick_) {
 		StartAward();
 		return;
 	}
-	// 스폰한 플레이어의 서버 이동 상태를 이번 틱 시각까지 지금 이동 키 입력으로 진행한다. 스폰 자리에서 떨어지는 것처럼 시작 전에도 움직인다.
-	// 플레이 중인 플레이어의 판정용 자세를 지난 틱 이후 시간만큼 진행한다.
-	const float pose_delta_seconds = last_pose_tick_ms_ != 0 ? (tick_time_ms - last_pose_tick_ms_) / 1000.0f : 0.0f;
-	last_pose_tick_ms_ = tick_time_ms;
+	// 서버 이동 상태는 처리한 번호의 이동 패킷으로만 진행한다. 멈춘 플레이어만 입력 없이 틱 하나만큼 진행한다.
+	// 플레이 중인 플레이어의 판정용 자세를 틱 하나만큼 진행한다.
 	for (auto& room_player : room_players_) {
 		if (!room_player.HasSession() || !room_player.HasMoveState()) continue;
-		room_player.AdvanceMove(tick_time_ms);
-		if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) room_player.GetPose().Update(room_player.GetMoveState(), pose_delta_seconds, tick_time_ms);
+		room_player.AdvanceMove(TICK_INTERVAL_MS);
+		if (room_player.GetRoomPlayerState() == RoomPlayerState::PLAY) room_player.GetPose().Update(room_player.GetMoveState(), TICK_INTERVAL_MS / 1000.0f, GetPoseTimeMs());
 	}
-	// 공중에서 이동 상태가 MOVE_AIR_DELAY_SECONDS 넘게 오지 않으면 그 클라이언트를 서버 이동 상태(공중 궤적)로 맞춘다.
+	// 이동 패킷이 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 멈추고 방 전체에 알린다. 공중이면 궤적을 이어 가다가 착지할 때 세운다.
+	// 본인은 멈춘 서버 이동 상태로 바로 롤백해 늦게 오는 패킷을 버린다. 롤백 확인을 기다리는 플레이어는 서버가 움직이지 않으므로 멈추지 않는다.
 	for (auto& room_player : room_players_) {
-		if (room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingSpawn() || room_player.IsAwaitingMoveRollback()) continue;
-		if (room_player.IsMoveWalking() || tick_time_ms - room_player.GetMoveTimeMs() <= static_cast<long long>(MOVE_AIR_DELAY_SECONDS * 1000.0f)) continue;
-		if (FindSession(room_player)) RollbackMove(room_player);
-	}
-	// 이동 상태가 MOVE_STOP_DELAY_SECONDS 넘게 오지 않으면 그 플레이어를 서버 이동 상태 자리에 세우고 방 전체에 알린다.
-	for (auto& room_player : room_players_) {
-		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.IsAwaitingSpawn() || room_player.IsMoveStopped()) continue;
-		if (tick_time_ms <= room_player.GetMoveTimeMs() + static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f)) continue;
+		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || room_player.GetNetworkState() != NetworkState::NORMAL) continue;
+		if (tick_time_ms_ <= room_player.GetMoveTimeMs() + static_cast<long long>(MOVE_STOP_DELAY_SECONDS * 1000.0f)) continue;
 		RelayMoveStop(room_player);
+		if (FindSession(room_player)) RollbackMove(room_player, false);
 	}
-	// 이번 틱이 끝난 판정 상태를 남긴다. 명중 판정이 사격 시각으로 되감을 때 쓴다.
+	// 이번 틱이 끝난 판정 상태를 남긴다. 명중 판정이 사격 시점으로 되감을 때 쓴다.
 	for (auto& room_player : room_players_) {
 		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState()) continue;
-		room_player.RecordHistory(tick_time_ms);
+		room_player.RecordHistory(tick_number_);
 	}
+	// 모은 이동 상태와 자리마다 그 자리 플레이어 이동 상태가 든 위치. 받는 사람에게는 자기 이동 상태 앞뒤만 보낸다.
 	char send_buffer[BUF_SIZE];
 	int send_data_size = 0;
+	std::array<int, MAX_ROOM_PLAYER_COUNT> own_offsets;
+	own_offsets.fill(-1);
 	const auto flush = [&]() {
 		if (send_data_size == 0) return;
-		for (auto& room_player : room_players_) {
+		for (int slot = 0; slot < MAX_ROOM_PLAYER_COUNT; ++slot) {
+			auto& room_player = room_players_[slot];
 			if (!FindSession(room_player) || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-			GetTickSendBuffer(room_player).Append(send_buffer, send_data_size);
+			TickSendBuffer& tick_send_buffer = GetTickSendBuffer(room_player);
+			const int own_offset = own_offsets[slot];
+			if (own_offset < 0) {
+				tick_send_buffer.Append(send_buffer, send_data_size);
+				continue;
+			}
+			const int after_offset = own_offset + static_cast<int>(sizeof(S2C_MOVE_PACKET));
+			if (own_offset > 0) tick_send_buffer.Append(send_buffer, own_offset);
+			if (after_offset < send_data_size) tick_send_buffer.Append(send_buffer + after_offset, send_data_size - after_offset);
 		}
 		send_data_size = 0;
-	};
-	const auto append = [&](const void* packet, int packet_size) {
-		if (send_data_size + packet_size > BUF_SIZE) flush();
-		memcpy(send_buffer + send_data_size, packet, packet_size);
-		send_data_size += packet_size;
+		own_offsets.fill(-1);
 	};
 
-	// 인정한 이동 상태는 바로, 이동 상태가 오지 않는 동안은 클라이언트 전송 간격마다 서버 이동 상태를 보낸다. 멈춘 뒤에는 보내지 않는다. 롤백한 틱에는 롤백 패킷이 대신한다.
-	for (auto& room_player : room_players_) {
-		const bool is_relay_due = room_player.GetRoomPlayerState() == RoomPlayerState::PLAY && room_player.HasMoveState() && !room_player.IsMoveStopped() && room_player.IsMoveRelayDue(tick_time_ms);
-		if (!room_player.HasSession() || (!room_player.CanRelayMoveState() && !is_relay_due)) continue;
+	// 이동 상태가 마지막으로 알린 것과 달라진 플레이어만 이번 틱 번호와 함께 보낸다. 롤백·멈춤한 틱에는 그 패킷이 대신한다.
+	for (int slot = 0; slot < MAX_ROOM_PLAYER_COUNT; ++slot) {
+		auto& room_player = room_players_[slot];
+		if (!room_player.HasSession() || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY || !room_player.HasMoveState() || !room_player.HasMoveStateChanged()) continue;
 		const MOVE_STATE state = room_player.GetMoveState();
 		S2C_MOVE_PACKET move_p;
 		move_p.header = { static_cast<std::uint16_t>(sizeof(move_p)), S2C_MOVE };
@@ -984,43 +1028,15 @@ void GameRoom::ProcessGameTick(long long tick_time_ms, long long elapsed_ms)
 		std::memcpy(move_p.velocity, state.velocity, sizeof(move_p.velocity));
 		move_p.yaw = state.yaw;
 		move_p.view_pitch = state.view_pitch;
-		move_p.air_phase = state.air_phase;
-		append(&move_p, sizeof(move_p));
-		room_player.MarkMoveStateRelayed(tick_time_ms);
+		move_p.is_falling = state.is_falling;
+		move_p.tick_number = tick_number_;
+		if (send_data_size + static_cast<int>(sizeof(move_p)) > BUF_SIZE) flush();
+		own_offsets[slot] = send_data_size;
+		std::memcpy(send_buffer + send_data_size, &move_p, sizeof(move_p));
+		send_data_size += sizeof(move_p);
+		room_player.MarkMoveStateRelayed();
 	}
 	flush();
-}
-
-int GameRoom::AppendInputState(char* buffer, const Player& player) const
-{
-	const int player_id = player.GetSessionKey().player_id;
-	const int key_size = AppendMoveKeys(buffer, player, player.GetMoveState());
-	const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, player.IsAiming() };
-	const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, player.GetActionState().GetWeapon() };
-	std::memcpy(buffer + key_size, &aim_p, sizeof(aim_p));
-	std::memcpy(buffer + key_size + sizeof(aim_p), &equip_p, sizeof(equip_p));
-	return key_size + sizeof(aim_p) + sizeof(equip_p);
-}
-
-int GameRoom::AppendMoveKeys(char* buffer, const Player& player, const MOVE_STATE& move_state) const
-{
-	int size = 0;
-	for (int key = 0; key < static_cast<int>(MoveKey::JUMP); ++key) {
-		if (!player.IsMoveKeyDown(static_cast<MoveKey>(key))) continue;
-		S2C_MOVE_INPUT_PACKET input_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_INPUT_PACKET)), S2C_MOVE_INPUT }, player.GetSessionKey().player_id, static_cast<MoveKey>(key), true };
-		std::memcpy(input_p.location, move_state.location, sizeof(input_p.location));
-		std::memcpy(input_p.velocity, move_state.velocity, sizeof(input_p.velocity));
-		std::memcpy(buffer + size, &input_p, sizeof(input_p));
-		size += sizeof(input_p);
-	}
-	return size;
-}
-
-void GameRoom::RelayMoveKeys(const Player& player, const MOVE_STATE& move_state)
-{
-	char buffer[static_cast<int>(MoveKey::JUMP) * sizeof(S2C_MOVE_INPUT_PACKET)];
-	const int size = AppendMoveKeys(buffer, player, move_state);
-	if (size > 0) SendToPlaying(buffer, size);
 }
 
 void GameRoom::SendAimCorrection(const Player& player)
@@ -1056,8 +1072,8 @@ void GameRoom::ProcessLoadedPlayers()
 	if (!has_loaded_player) return;
 
 	// 합류하는 플레이어의 시작 좌표는 방 슬롯 번호로 정하고, 이미 플레이 중인 플레이어는 지금 자리를 보낸다.
-	// 플레이어마다 스폰 뒤에 이동 키 입력·조준·장비를 이어 붙여, 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
-	constexpr int SPAWN_STATE_SIZE = sizeof(S2C_SPAWN_PACKET) + static_cast<int>(MoveKey::JUMP) * sizeof(S2C_MOVE_INPUT_PACKET) + sizeof(S2C_AIM_PACKET) + sizeof(S2C_EQUIP_PACKET);
+	// 플레이어마다 스폰 뒤에 조준·장비를 이어 붙여, 이번에 합류하는 플레이어만 담은 것과 이미 플레이 중인 플레이어까지 담은 것을 만든다.
+	constexpr int SPAWN_STATE_SIZE = sizeof(S2C_SPAWN_PACKET) + sizeof(S2C_AIM_PACKET) + sizeof(S2C_EQUIP_PACKET);
 	char joined_buffer[MAX_ROOM_PLAYER_COUNT * SPAWN_STATE_SIZE];
 	char all_buffer[MAX_ROOM_PLAYER_COUNT * SPAWN_STATE_SIZE];
 	int joined_size = 0;
@@ -1076,15 +1092,20 @@ void GameRoom::ProcessLoadedPlayers()
 			spawn_p.location[1] = point.y;
 			spawn_p.location[2] = point.z;
 			spawn_p.yaw = point.yaw;
-			room_player.SetSpawnLocation(server_->GetMapData(), spawn_p.location, spawn_p.yaw, tick_time_ms_);
+			room_player.SetSpawnLocation(server_->GetMapData(), spawn_p.location, spawn_p.yaw, tick_time_ms_, tick_number_);
 		}
 		else {
 			std::memcpy(spawn_p.location, room_player.GetMoveState().location, sizeof(spawn_p.location));
 			spawn_p.yaw = room_player.GetMoveState().yaw;
 		}
+		const int player_id = room_player.GetSessionKey().player_id;
+		const S2C_AIM_PACKET aim_p{ { static_cast<std::uint16_t>(sizeof(S2C_AIM_PACKET)), S2C_AIM }, player_id, room_player.IsAiming() };
+		const S2C_EQUIP_PACKET equip_p{ { static_cast<std::uint16_t>(sizeof(S2C_EQUIP_PACKET)), S2C_EQUIP }, player_id, room_player.GetActionState().GetWeapon() };
 		char* entry = all_buffer + all_size;
 		std::memcpy(entry, &spawn_p, sizeof(spawn_p));
-		const int entry_size = sizeof(spawn_p) + AppendInputState(entry + sizeof(spawn_p), room_player);
+		std::memcpy(entry + sizeof(spawn_p), &aim_p, sizeof(aim_p));
+		std::memcpy(entry + sizeof(spawn_p) + sizeof(aim_p), &equip_p, sizeof(equip_p));
+		const int entry_size = SPAWN_STATE_SIZE;
 		all_size += entry_size;
 		if (state == RoomPlayerState::LOADED) {
 			std::memcpy(joined_buffer + joined_size, entry, entry_size);
@@ -1095,10 +1116,11 @@ void GameRoom::ProcessLoadedPlayers()
 	start_p.header = { static_cast<std::uint16_t>(sizeof(start_p)), S2C_PLAY_START };
 	S2C_GAME_READY_PACKET ready_p;
 	ready_p.header = { static_cast<std::uint16_t>(sizeof(ready_p)), S2C_GAME_READY };
-	ready_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, game_start_ms_ - tick_time_ms_));
+	ready_p.remaining_ms = (game_start_tick_ > tick_number_ ? game_start_tick_ - tick_number_ : 0) * TICK_INTERVAL_MS;
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
-	game_start_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, game_start_ms_ + GAME_TIME_LIMIT_MS - tick_time_ms_));
+	const std::uint32_t time_limit_tick = game_start_tick_ + MsToTicks(GAME_TIME_LIMIT_MS);
+	game_start_p.remaining_ms = (time_limit_tick > tick_number_ ? time_limit_tick - tick_number_ : 0) * TICK_INTERVAL_MS;
 
 	// 합류하는 플레이어는 상자 배치, 전원의 스폰, 맵 표시를, 이미 플레이 중인 플레이어는 합류하는 플레이어의 스폰만 받는다.
 	for (auto& room_player : room_players_) {
@@ -1106,12 +1128,8 @@ void GameRoom::ProcessLoadedPlayers()
 		TickSendBuffer& tick_send_buffer = GetTickSendBuffer(room_player);
 		if (room_player.GetRoomPlayerState() == RoomPlayerState::LOADED) {
 			room_player.GetPose().Reset(server_->GetHitboxData());
-			// 동작 시각의 기준이 될 서버 시각을 보내고, 발사 간격 검증 기준도 이 시각으로 채운다.
-			S2C_TIME_SYNC_PACKET sync_p;
-			sync_p.header = { static_cast<std::uint16_t>(sizeof(sync_p)), S2C_TIME_SYNC };
-			sync_p.server_time_ms = static_cast<std::uint32_t>(tick_time_ms_);
-			tick_send_buffer.Append(&sync_p, sync_p.header.size);
-			room_player.GetActionState().ResetActionTime(tick_time_ms_);
+			// 동작 시각 순서와 발사 간격 검증 기준을 스폰을 받는 순간(0번 번호)의 시각으로 채운다.
+			room_player.GetActionState().ResetActionTime(0);
 			if (match_phase_ == MatchPhase::STARTED) {
 				const std::vector<char> box_layout_packet = BuildBoxLayoutPacket();
 				tick_send_buffer.Append(box_layout_packet.data(), static_cast<int>(box_layout_packet.size()));
@@ -1140,19 +1158,19 @@ void GameRoom::ProcessLoadedPlayers()
 
 // 줍기는 직전 줍기 동작이 끝난 뒤에만, 곡괭이 휘두르기는 사용 가능 횟수로, 재장전은 서버 탄약 상태로 확인해 인정한다.
 // 휘두르기·재장전은 장비 교체 대기 중이면 인정하지 않는다. 곡괭이는 인정하든 안 하든 서버가 아는 사용 가능 횟수를 보내 클라이언트를 맞춘다.
-bool GameRoom::AcceptAction(Player& player, PlayerAction action, std::uint8_t weapon_value, long long time_ms, std::uint32_t action_time_ms)
+bool GameRoom::AcceptAction(Player& player, PlayerAction action, std::uint8_t weapon_value, std::uint32_t action_time_ms)
 {
 	const HitboxData& data = server_->GetHitboxData();
 	PlayerActionState& action_state = player.GetActionState();
-	if (action == PlayerAction::PICKUP) return action_state.TryPickup(action_time_ms, time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::PICKUP), weapon_value));
+	if (action == PlayerAction::PICKUP) return action_state.TryPickup(action_time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::PICKUP), weapon_value));
 	if (action == PlayerAction::MELEE) {
-		const bool is_accepted = action_state.TryMelee(action_time_ms, time_ms);
+		const bool is_accepted = action_state.TryMelee(action_time_ms);
 		if (weapon_value != static_cast<std::uint8_t>(WeaponType::PICKAXE)) return is_accepted;
 		SendPickaxeCharges(player);
 		if (is_accepted) DigTreasure(player);
 		return is_accepted;
 	}
-	return action_state.TryStartReload(action_time_ms, time_ms);
+	return action_state.TryStartReload(action_time_ms);
 }
 
 void GameRoom::SendPickaxeCharges(const Player& player)
@@ -1180,8 +1198,10 @@ void GameRoom::SendReloadDone(const Player& player, std::uint8_t weapon)
 void GameRoom::RelayMoveStop(Player& player)
 {
 	player.StopMove();
+	// 멈춤 패킷이 이번 틱 이동 상태 중계를 대신한다.
+	player.MarkMoveStateRelayed();
 	const MOVE_STATE state = player.GetMoveState();
-	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id, { state.location[0], state.location[1], state.location[2] } };
+	const S2C_MOVE_STOP_PACKET stop_p{ { static_cast<std::uint16_t>(sizeof(S2C_MOVE_STOP_PACKET)), S2C_MOVE_STOP }, player.GetSessionKey().player_id, { state.location[0], state.location[1], state.location[2] }, tick_number_ };
 	SendToPlaying(reinterpret_cast<const char*>(&stop_p), sizeof(stop_p));
 }
 
@@ -1205,19 +1225,21 @@ static DirectX::XMFLOAT3 GetShotOrigin(const MOVE_STATE& move_state)
 }
 
 // 발사는 손에 든 총으로 판정하고, 쏜 사람이 되돌리기 확인을 기다리는 중이면(발사 직전 이동 상태를 인정하지 않았으면) 버린다.
-// 인정하면 남은 탄창 탄을 쏜 사람에게 보내고 발사 동작을 중계한 뒤, 조준 방향에 서버가 (시드, 아이디, 무기, 발사 번호)로 정한 빗나감을 적용한 탄 광선을 쏜다.
-// 광선이 처음 닿는 것은 사격 시각으로 되감은(그 시각의 서버 이동 상태) 다른 플레이어의 히트박스와 지금 상자 모양 중 가장 가까운 것이고, 그곳까지 지형이 막지 않고 쏜 사람 카메라에서 보였어야 한다.
-// 선물이면 열고, 나무 상자면 탄만 막는다. 플레이어면 맞은 사람에게 명중을 알리고 기절 게이지를 올리되, 되감은 시각에 기절·보호 중이었으면 탄만 막는다.
-void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, long long time_ms)
+// 인정하면 남은 탄창 탄을 쏜 사람에게 보내고 발사 동작을 중계한 뒤, 조준 방향에 (아이디, 무기, 클라이언트 발사 횟수)로 정한 빗나감을 적용한 탄 광선을 쏜다.
+// 광선이 처음 닿는 것은 쏜 사람이 보던 시점(대상의 틱 번호와 그 틱까지 간 정도)으로 되감은 다른 플레이어의 히트박스와 지금 상자 모양 중 가장 가까운 것이고,
+// 그곳까지 지형이 막지 않고 쏜 사람 카메라에서 보였어야 한다.
+// 선물이면 열고, 나무 상자면 탄만 막는다. 플레이어면 맞은 사람에게 명중을 알리고 기절 게이지를 올리되, 되감은 시점에 기절·보호 중이었으면 탄만 막는다.
+void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p)
 {
 	const HitboxData& data = server_->GetHitboxData();
 	PlayerActionState& action_state = shooter.GetActionState();
 	const std::uint8_t weapon = action_state.GetWeapon();
-	if (!data.IsLoaded() || !shooter.HasMoveState() || shooter.IsAwaitingMoveRollback()) return;
+	if (!data.IsLoaded() || !shooter.HasMoveState() || shooter.GetNetworkState() == NetworkState::ROLLBACK) return;
 	const DirectX::XMVECTOR aim = DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(request_p.aim_direction));
 	const float aim_length = DirectX::XMVectorGetX(DirectX::XMVector3Length(aim));
-	if (!std::isfinite(aim_length) || aim_length < 0.5f) return;
-	const std::optional<FiredShot> shot = action_state.TryFire(shooter.GetShotSpreadInput(), request_p.action_time_ms, time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon));
+	if (!std::isfinite(aim_length) || aim_length < 0.5f || request_p.target_progress > 100) return;
+	const std::uint32_t action_time_ms = request_p.frame_number * MOVE_STEP_MS;
+	const std::optional<FiredShot> shot = action_state.TryFire(shooter.GetShotSpreadInput(), request_p.shot_count, action_time_ms, data.GetMontageMs(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon));
 	if (!shot) return;
 	const Gun* gun = action_state.FindGun(weapon);
 
@@ -1227,18 +1249,16 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	use_p.rounds = static_cast<std::uint16_t>(gun->GetRounds());
 	GetTickSendBuffer(shooter).Append(&use_p, use_p.header.size);
 	const S2C_ACTION_PACKET action_p{ { static_cast<std::uint16_t>(sizeof(S2C_ACTION_PACKET)), S2C_ACTION }, shooter.GetSessionKey().player_id, static_cast<std::uint8_t>(PlayerAction::FIRE) };
-	SendToPlaying(reinterpret_cast<const char*>(&action_p), sizeof(action_p));
-	shooter.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon, tick_time_ms_);
+	SendToOtherPlaying(shooter, reinterpret_cast<const char*>(&action_p), sizeof(action_p));
+	shooter.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::FIRE), weapon, GetPoseTimeMs());
 
 	DirectX::XMFLOAT3 unit_aim;
 	DirectX::XMStoreFloat3(&unit_aim, DirectX::XMVectorScale(aim, 1.0f / aim_length));
-	const ShotSpreadDirection spread_direction = ApplyShotSpread(unit_aim.x, unit_aim.y, unit_aim.z, shot->spread, GetShotSpreadHash(shot_seed_, shooter.GetSessionKey().player_id, weapon, shot->shot_index));
+	const ShotSpreadDirection spread_direction = ApplyShotSpread(unit_aim.x, unit_aim.y, unit_aim.z, shot->spread, GetShotSpreadHash(shooter.GetSessionKey().player_id, weapon, request_p.shot_count));
 	const DirectX::XMFLOAT3 direction(spread_direction.x, spread_direction.y, spread_direction.z);
 	const DirectX::XMFLOAT3 origin = GetShotOrigin(shooter.GetMoveState());
 	const DirectX::XMVECTOR origin_v = DirectX::XMLoadFloat3(&origin);
 	const DirectX::XMVECTOR direction_v = DirectX::XMLoadFloat3(&direction);
-	// 사격 시각은 동작 시각이다. 서버가 받은 시각보다 늦지 않고, HIT_REWIND_MS보다 오래됐으면 그만큼 전으로 맞춘다. 시각은 32비트로 돌아가므로 차이로 본다.
-	const long long shot_time_ms = std::max<long long>(time_ms - HIT_REWIND_MS, time_ms + static_cast<std::int32_t>(request_p.action_time_ms - static_cast<std::uint32_t>(time_ms)));
 
 	// 광선을 따라 가장 가까운 플레이어 히트박스와 상자 모양을 찾는다. 더 가까운 것을 찾을 때마다 검사 거리를 줄인다.
 	float distance = gun->GetGunSettings().hitscan_distance;
@@ -1248,11 +1268,11 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	std::optional<std::uint16_t> hit_box;
 	for (auto& target : room_players_) {
 		if (&target == &shooter || !target.HasSession() || target.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		const std::optional<RewoundState> rewound = target.GetRewoundState(shot_time_ms);
+		const std::optional<RewoundState> rewound = target.GetRewoundState(request_p.target_tick, request_p.target_progress);
 		if (!rewound) continue;
 		const MOVE_STATE& state = rewound->move_state;
 		if (!IsRayNearCharacter(origin, direction, distance, DirectX::XMFLOAT3(state.location[0], state.location[1], state.location[2]), state.yaw, data.GetBroadphaseCapsule(), HIT_MARGIN)) continue;
-		const HitboxRayHit hit = RaycastHitboxes(origin, direction, distance, rewound->pose->BuildWorldHitboxes(state, shot_time_ms), HIT_MARGIN);
+		const HitboxRayHit hit = RaycastHitboxes(origin, direction, distance, rewound->pose->BuildWorldHitboxes(state, rewound->time_ms), HIT_MARGIN);
 		if (!hit.has_hit) continue;
 		distance = hit.distance;
 		hit_player = &target;
@@ -1264,14 +1284,14 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	for (std::size_t box = 0; box < box_placement_indices_.size(); ++box) {
 		const BoxPlacement& placement = placements[box_placement_indices_[box]];
 		// 선물은 열리면 사라진다. 나무 상자는 열리고 CHEST_OPEN_SHAPE_DELAY_MS가 지나면 열린 모양이다.
-		const bool is_opened = box_open_ms_[box] != 0;
+		const bool is_opened = box_open_ticks_[box] != 0;
 		if (placement.kind == BoxKind::GIFT && is_opened) continue;
 		// 상자 바닥 가운데를 중심으로 모든 모양을 감싸는 구에 광선이 닿을 때만 모양을 검사한다.
 		const DirectX::XMVECTOR location = DirectX::XMLoadFloat3(&placement.location);
 		const float along = std::clamp(DirectX::XMVectorGetX(DirectX::XMVector3Dot(DirectX::XMVectorSubtract(location, origin_v), direction_v)), 0.0f, distance);
 		const float gap = DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVectorSubtract(location, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, along)))));
 		if (gap > box_shapes.GetBoundingRadius(placement.kind)) continue;
-		std::vector<HitboxShape> shapes = box_shapes.GetShapes(placement.kind, is_opened && tick_time_ms_ - box_open_ms_[box] >= CHEST_OPEN_SHAPE_DELAY_MS);
+		std::vector<HitboxShape> shapes = box_shapes.GetShapes(placement.kind, is_opened && tick_number_ - box_open_ticks_[box] >= MsToTicks(CHEST_OPEN_SHAPE_DELAY_MS));
 		for (HitboxShape& shape : shapes) shape = PlaceBoxShape(shape, placement);
 		const HitboxRayHit hit = RaycastHitboxes(origin, direction, distance, shapes, 0.0f);
 		if (!hit.has_hit) continue;
@@ -1284,7 +1304,7 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 	DirectX::XMStoreFloat3(&hit_point, DirectX::XMVectorAdd(origin_v, DirectX::XMVectorScale(direction_v, distance)));
 	if (IsShotPathBlocked(origin, hit_point) || !CheckShotCamera(shooter, DirectX::XMFLOAT3(request_p.camera[0], request_p.camera[1], request_p.camera[2]), hit_point)) return;
 	if (hit_box) {
-		if (placements[box_placement_indices_[*hit_box]].kind == BoxKind::GIFT) ProcessBoxOpen(shooter, *hit_box);
+		if (placements[box_placement_indices_[*hit_box]].kind == BoxKind::GIFT) ProcessBoxOpen(shooter, *hit_box, action_time_ms);
 		return;
 	}
 	if (is_hit_protected) return;
@@ -1301,9 +1321,9 @@ void GameRoom::ProcessFire(Player& shooter, const C2S_FIRE_PACKET& request_p, lo
 void GameRoom::AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon, HitboxPart part)
 {
 	const std::size_t part_index = static_cast<std::size_t>(part);
-	if (part_index >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_time_ms_)) return;
+	if (part_index >= std::size(STUN_GAUGE_PART_MULTIPLIERS) || target.IsStunProtected(tick_number_)) return;
 	const float gain = shooter.GetActionState().GetEquipment(weapon).GetSettings().stun_gauge_gain;
-	if (target.AddStunGauge(gain * STUN_GAUGE_PART_MULTIPLIERS[part_index], tick_time_ms_)) {
+	if (target.AddStunGauge(gain * STUN_GAUGE_PART_MULTIPLIERS[part_index], tick_number_)) {
 		// 기절하면 조작을 받지 않으므로 이동 키 입력과 조준을 지운다. 클라이언트도 기절 적용을 받으면 스스로 지운다. 이동은 중력과 관성대로 이어진다.
 		target.ClearMoveKeys();
 		target.SetAiming(false);
@@ -1331,12 +1351,12 @@ void GameRoom::AddStunGauge(Player& shooter, Player& target, std::uint8_t weapon
 			else if (&room_player == &target) GetTickSendBuffer(room_player).Append(target_buffer, target_size);
 			else GetTickSendBuffer(room_player).Append(&stun_p, stun_p.header.size);
 		}
-		shooter.AddAwardCount(AwardCategory::STUN, tick_time_ms_);
+		shooter.AddAwardCount(AwardCategory::STUN, tick_number_);
 		return;
 	}
 	S2C_STUN_GAUGE_PACKET gauge_p;
 	gauge_p.header = { static_cast<std::uint16_t>(sizeof(gauge_p)), S2C_STUN_GAUGE };
-	gauge_p.gauge = target.GetStunGauge(tick_time_ms_);
+	gauge_p.gauge = target.GetStunGauge(tick_number_);
 	if (FindSession(target)) GetTickSendBuffer(target).Append(&gauge_p, gauge_p.header.size);
 }
 
@@ -1431,12 +1451,12 @@ bool GameRoom::IsShotPathBlocked(const DirectX::XMFLOAT3& start, const DirectX::
 // 게임이 시작된 뒤 아직 열리지 않은 상자만 연다. 열면 플레이 중인 방 전체에 상자 열림을 보내고, 연 사람에게는 상자 열림 뒤에 내용물을 이어 보낸다.
 // 힌트 상자는 그 힌트를 가진 것으로 기록하고(이미 가졌으면 그대로) 보내며, 탄약 상자는 소지 탄을 늘린 뒤 그 무기의 탄약 상태를 보낸다.
 // 아이템 상자는 그 아이템을, 블록 상자는 그 블록을 가진 것으로 기록하고 보낸다.
-void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box)
+void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box, std::uint32_t action_time_ms)
 {
 	// 탄에 맞아 열리는 것은 발사 판정에서, F키로 여는 것은 CheckBoxOpen에서 확인한다.
-	if (match_phase_ != MatchPhase::STARTED || box >= box_open_ms_.size() || box_open_ms_[box] != 0) return;
-	box_open_ms_[box] = tick_time_ms_;
-	opener.AddAwardCount(AwardCategory::BOX_OPEN, tick_time_ms_);
+	if (match_phase_ != MatchPhase::STARTED || box >= box_open_ticks_.size() || box_open_ticks_[box] != 0) return;
+	box_open_ticks_[box] = tick_number_;
+	opener.AddAwardCount(AwardCategory::BOX_OPEN, tick_number_);
 
 	S2C_BOX_OPEN_PACKET open_p;
 	open_p.header = { static_cast<std::uint16_t>(sizeof(open_p)), S2C_BOX_OPEN };
@@ -1468,7 +1488,7 @@ void GameRoom::ProcessBoxOpen(Player& opener, std::uint16_t box)
 	}
 	else {
 		const std::uint8_t weapon = static_cast<std::uint8_t>(content.value);
-		if (opener.GetActionState().AddSpareRounds(weapon, AMMO_BOX_ROUNDS[weapon], tick_time_ms_)) {
+		if (opener.GetActionState().AddSpareRounds(weapon, AMMO_BOX_ROUNDS[weapon], action_time_ms)) {
 			S2C_AMMO_GAIN_PACKET gain_p;
 			gain_p.header = { static_cast<std::uint16_t>(sizeof(gain_p)), S2C_AMMO_GAIN };
 			gain_p.weapon = weapon;
@@ -1543,8 +1563,8 @@ int GameRoom::AppendHintPacket(char* buffer, std::uint32_t hint) const
 // 플레이 중인 전원에게 지운 칸과 바뀐 배제 판, 다음 지우기까지 남은 시간을 보낸다.
 void GameRoom::ProcessAreaRemoval()
 {
-	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || tick_time_ms_ < next_area_removal_ms_) return;
-	next_area_removal_ms_ += AREA_REMOVAL_INTERVAL_MS;
+	if (match_phase_ != MatchPhase::STARTED || game_end_tick_ != 0 || tick_number_ < next_area_removal_tick_) return;
+	next_area_removal_tick_ += MsToTicks(AREA_REMOVAL_INTERVAL_MS);
 	const int treasure_cell = GetBlockCellIndex(treasure_placement_.location.x, treasure_placement_.location.y);
 	std::vector<std::uint8_t> candidates;
 	for (int cell = 0; cell < BLOCK_GRID_SIZE * BLOCK_GRID_SIZE; ++cell) {
@@ -1601,14 +1621,14 @@ void GameRoom::ProcessBlockUse(Player& user, const C2S_BLOCK_USE_PACKET& request
 // 발견한 뒤에도 게임이 끝날 때까지 플레이는 그대로 하지만 힌트 제공은 멈춘다.
 void GameRoom::DigTreasure(const Player& digger)
 {
-	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || !digger.HasMoveState()) return;
+	if (match_phase_ != MatchPhase::STARTED || game_end_tick_ != 0 || !digger.HasMoveState()) return;
 	const MOVE_STATE state = digger.GetMoveState();
 	const float* location = state.location;
 	const float dx = location[0] - treasure_placement_.location.x;
 	const float dy = location[1] - treasure_placement_.location.y;
 	const float dz = location[2] - CHARACTER_CAPSULE_HALF_HEIGHT - treasure_placement_.location.z;
 	if (dx * dx + dy * dy + dz * dz > TREASURE_DIG_DISTANCE * TREASURE_DIG_DISTANCE) return;
-	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
+	game_end_tick_ = tick_number_ + MsToTicks(GAME_END_WAIT_MS);
 	S2C_TREASURE_FOUND_PACKET found_p;
 	found_p.header = { static_cast<std::uint16_t>(sizeof(found_p)), S2C_TREASURE_FOUND };
 	found_p.player_id = digger.GetSessionKey().player_id;
@@ -1620,8 +1640,8 @@ void GameRoom::DigTreasure(const Player& digger)
 
 void GameRoom::ProcessTimeLimit()
 {
-	if (match_phase_ != MatchPhase::STARTED || game_end_ms_ != 0 || tick_time_ms_ < game_start_ms_ + GAME_TIME_LIMIT_MS) return;
-	game_end_ms_ = tick_time_ms_ + GAME_END_WAIT_MS;
+	if (match_phase_ != MatchPhase::STARTED || game_end_tick_ != 0 || tick_number_ < game_start_tick_ + MsToTicks(GAME_TIME_LIMIT_MS)) return;
+	game_end_tick_ = tick_number_ + MsToTicks(GAME_END_WAIT_MS);
 	S2C_TIME_OVER_PACKET over_p;
 	over_p.header = { static_cast<std::uint16_t>(sizeof(over_p)), S2C_TIME_OVER };
 	char buffer[sizeof(over_p) + sizeof(S2C_TREASURE_LOCATION_PACKET)];
@@ -1645,31 +1665,28 @@ void GameRoom::AppendTreasureLocation(char* buffer) const
 void GameRoom::ProcessStunRelease()
 {
 	for (auto& target : room_players_) {
-		if (!target.TakeStunRelease(tick_time_ms_)) continue;
+		if (!target.TakeStunRelease(tick_number_)) continue;
 		S2C_STUN_RELEASE_PACKET release_p;
 		release_p.header = { static_cast<std::uint16_t>(sizeof(release_p)), S2C_STUN_RELEASE };
 		release_p.player_id = target.GetSessionKey().player_id;
-		release_p.protection_ms = static_cast<std::uint32_t>(target.GetStunProtectionMs());
+		release_p.protection_ms = static_cast<std::uint32_t>(target.GetStunProtectionTicks() * TICK_INTERVAL_MS);
 		SendToPlaying(reinterpret_cast<char*>(&release_p), release_p.header.size);
 	}
 }
 
 // 시간제 장비를 지난 시간만큼 진행한다. 자동 재장전을 시작하면 방 전체에 알리고, 재장전이 끝난 총은 탄창 탄과 소지 탄을 재장전한 사람에게 보낸다.
 // 곡괭이 사용 가능 횟수가 1번이라도 차면 그 사람에게 보낸다.
-void GameRoom::ProcessActionStates(long long elapsed_ms)
+void GameRoom::ProcessActionStates(Player& player)
 {
-	for (auto& room_player : room_players_) {
-		if (!FindSession(room_player) || room_player.GetRoomPlayerState() != RoomPlayerState::PLAY) continue;
-		const auto events = room_player.GetActionState().Update(elapsed_ms);
-		for (std::uint8_t weapon = 0; weapon < events.size(); ++weapon) {
-			if (events[weapon] == EquipmentEvent::RELOAD_START) {
-				const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, room_player.GetSessionKey().player_id, weapon };
-				SendToPlaying(reinterpret_cast<const char*>(&reload_p), sizeof(reload_p));
-				room_player.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::RELOAD), weapon, tick_time_ms_);
-			}
-			else if (events[weapon] == EquipmentEvent::RELOAD_DONE) SendReloadDone(room_player, weapon);
-			else if (events[weapon] == EquipmentEvent::CHARGE) SendPickaxeCharges(room_player);
+	const auto events = player.GetActionState().Update(MOVE_STEP_MS);
+	for (std::uint8_t weapon = 0; weapon < events.size(); ++weapon) {
+		if (events[weapon] == EquipmentEvent::RELOAD_START) {
+			const S2C_RELOAD_PACKET reload_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_PACKET)), S2C_RELOAD }, player.GetSessionKey().player_id, weapon };
+			SendToPlaying(reinterpret_cast<const char*>(&reload_p), sizeof(reload_p));
+			player.GetPose().StartAction(static_cast<std::uint8_t>(PlayerAction::RELOAD), weapon, GetPoseTimeMs());
 		}
+		else if (events[weapon] == EquipmentEvent::RELOAD_DONE) SendReloadDone(player, weapon);
+		else if (events[weapon] == EquipmentEvent::CHARGE) SendPickaxeCharges(player);
 	}
 }
 
@@ -1686,7 +1703,7 @@ void GameRoom::StartAward()
 		}
 		std::sort(ranked.begin(), ranked.end(), [award](const Player* a, const Player* b) {
 			if (a->GetAwardCount(award) != b->GetAwardCount(award)) return a->GetAwardCount(award) > b->GetAwardCount(award);
-			return a->GetAwardReachMs(award) < b->GetAwardReachMs(award);
+			return a->GetAwardReachTick(award) < b->GetAwardReachTick(award);
 		});
 		for (std::size_t rank = 0; rank < AWARD_RANK_COUNT; ++rank) {
 			award_p.entries[category][rank] = rank < ranked.size() ? AWARD_ENTRY{ ranked[rank]->GetSessionKey().player_id, ranked[rank]->GetAwardCount(award) } : AWARD_ENTRY{ -1, 0 };
@@ -1698,39 +1715,35 @@ void GameRoom::StartAward()
 		return;
 	}
 	SendToPlaying(reinterpret_cast<char*>(&award_p), award_p.header.size);
-	award_end_ms_ = tick_time_ms_ + scene_count * AWARD_SCENE_MS + AWARD_END_MARGIN_MS;
+	award_end_tick_ = tick_number_ + MsToTicks(scene_count * AWARD_SCENE_MS + AWARD_END_MARGIN_MS);
 }
 
 void GameRoom::SendAreaRemovalTime(const Player& player)
 {
 	S2C_AREA_REMOVAL_TIME_PACKET time_p;
 	time_p.header = { static_cast<std::uint16_t>(sizeof(time_p)), S2C_AREA_REMOVAL_TIME };
-	time_p.remaining_ms = static_cast<std::uint32_t>(std::max(0LL, next_area_removal_ms_ - tick_time_ms_));
+	time_p.remaining_ms = (next_area_removal_tick_ > tick_number_ ? next_area_removal_tick_ - tick_number_ : 0) * TICK_INTERVAL_MS;
 	GetTickSendBuffer(player).Append(&time_p, time_p.header.size);
 }
 
-// 받은 이동 상태를 그 상태가 나타내는 서버 시각의 서버 이동 상태와 비교한다. 클라이언트 시각이 거꾸로 가거나 서버보다 너무 앞서면 인정하지 않는다.
+// 받은 이동 상태를 서버가 같은 입력으로 계산한 그 단계의 서버 이동 상태(expected)와 비교한다. 클라이언트 시각은 처리 전에 보상으로 따로 본다.
 // 발이 랜드스케이프보다 허용치 넘게 아래면 땅속이고, 게임 시작 전에는 시작 구역 밖으로 나간 위치도 인정하지 않는다.
-// 서버 이동 상태와의 거리가 허용치를 넘으면 인정하지 않는다. 공중에서는 서버 이동 상태가 공중 시작 상태로 이어 간 궤적이므로 그 시각의 궤적 위치와 비교한다.
+// 서버 이동 상태와의 거리가 허용치를 넘으면 인정하지 않는다.
 // 서버 이동 상태 위치에서 받은 위치까지 허용치만큼 줄인 캡슐을 쓸어 캐릭터 이동을 막는 배치물(건물·나무·바위·경계 볼륨)에 막히면 관통이다.
 // 쓸기는 언리얼처럼 한쪽 면 삼각형을 바깥쪽에서 들어올 때만 막고, 이미 파고든 채 빠져나가는 이동은 막지 않는다.
-// 점프는 알린 위치에서 시작하므로 그 위치가 땅 위여야 하고, 입력이라 기절 중에는 할 수 없다. 땅 위라고 알리면 땅 위여야 한다.
-MoveCheckResult GameRoom::CheckMove(const Player& player, const MOVE_STATE& move_state, long long time_ms) const
+// 점프는 서버가 같은 단계에서 계산하므로 따로 보지 않는다. 땅 위라고 알리면 땅 위여야 한다.
+MoveCheckResult GameRoom::CheckMove(const MOVE_STATE& move_state, const MOVE_STATE& expected) const
 {
 	const float* next = move_state.location;
-	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2]) || move_state.air_phase > AirPhase::FALLING) return MoveCheckResult::ROLLBACK;
-	const std::optional<long long> clock_drift = player.GetClockDrift(move_state.client_time_ms, time_ms);
-	if (!clock_drift || *clock_drift > CLOCK_MAX_AHEAD_MS) return MoveCheckResult::ROLLBACK;
+	if (!std::isfinite(next[0]) || !std::isfinite(next[1]) || !std::isfinite(next[2])) return MoveCheckResult::ROLLBACK;
 	const std::optional<float> ground = server_->GetMapData().GetLandscape().GetGroundHeight(next[0], next[1]);
 	if (ground && next[2] - CHARACTER_CAPSULE_HALF_HEIGHT < *ground - MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
 	if (match_phase_ != MatchPhase::STARTED && (next[0] < START_AREA_MIN[0] || next[0] > START_AREA_MAX[0] || next[1] < START_AREA_MIN[1] || next[1] > START_AREA_MAX[1])) return MoveCheckResult::ROLLBACK;
-	const MOVE_STATE expected = player.PredictMoveState(player.GetStateTimeMs(move_state.client_time_ms, time_ms));
 	const float deviation = std::hypot(next[0] - expected.location[0], next[1] - expected.location[1], next[2] - expected.location[2]);
 	if (deviation > MOVE_TOLERANCE) return MoveCheckResult::ROLLBACK;
 	const MoveVector from{ expected.location[0], expected.location[1], expected.location[2] };
 	if (server_->GetMapData().GetCollisionObjects().SweepCapsule(from, { next[0], next[1], next[2] }, CHARACTER_CAPSULE_RADIUS - MOVE_TOLERANCE, CHARACTER_CAPSULE_HALF_HEIGHT - MOVE_TOLERANCE, TERRAIN_BLOCKS_PAWN, true).is_blocking) return MoveCheckResult::ROLLBACK;
-	if (expected.air_phase == AirPhase::GROUND && move_state.air_phase == AirPhase::RISING && (!IsOnGround(next) || player.IsInputLocked(time_ms))) return MoveCheckResult::ROLLBACK;
-	if (move_state.air_phase == AirPhase::GROUND && !IsOnGround(next)) return MoveCheckResult::ROLLBACK;
+	if (!move_state.is_falling && !IsOnGround(next)) return MoveCheckResult::ROLLBACK;
 	return MoveCheckResult::ACCEPTED;
 }
 
@@ -1742,22 +1755,24 @@ bool GameRoom::IsOnGround(const float location[3]) const
 	return floor.hit.is_start_penetrating || (floor.is_blocking && floor.floor_distance <= GROUND_CHECK_DEPTH);
 }
 
-// 이동을 인정하지 않고 지금 서버 이동 상태(위치·속도·방향·공중 단계)로 롤백한다. 공중이면 서버가 계산한 궤적 위의 위치다.
-// 서버 이동 상태는 그대로 이어 가고, 롤백 패킷은 본인과 다른 플레이어 모두에게 이번 틱 묶음으로 보낸다.
-void GameRoom::RollbackMove(Player& player)
+// 이동을 인정하지 않고 지금 서버 이동 상태(위치·속도·방향·공중 여부)로 롤백한다. 공중이면 서버가 계산한 궤적 위의 위치다. 서버는 이 상태에서 이어 간다.
+// 롤백 패킷은 이번 틱 묶음으로 본인에게 보내고, should_relay면 다른 플레이어에게도 보낸다.
+void GameRoom::RollbackMove(Player& player, bool should_relay)
 {
-	const MOVE_STATE state = player.PredictMoveState(tick_time_ms_);
+	const MOVE_STATE state = player.StartMoveRollback();
 	S2C_MOVE_ROLLBACK_PACKET rollback_p;
 	rollback_p.header = { static_cast<std::uint16_t>(sizeof(rollback_p)), S2C_MOVE_ROLLBACK };
 	rollback_p.player_id = player.GetSessionKey().player_id;
-	rollback_p.rollback_id = player.StartMoveRollback(tick_time_ms_);
 	std::memcpy(rollback_p.location, state.location, sizeof(rollback_p.location));
 	std::memcpy(rollback_p.velocity, state.velocity, sizeof(rollback_p.velocity));
 	rollback_p.yaw = state.yaw;
 	rollback_p.view_pitch = state.view_pitch;
-	rollback_p.air_phase = state.air_phase;
-	SendToPlaying(reinterpret_cast<const char*>(&rollback_p), sizeof(rollback_p));
+	rollback_p.is_falling = state.is_falling;
+	rollback_p.tick_number = tick_number_;
+	if (should_relay) SendToPlaying(reinterpret_cast<const char*>(&rollback_p), sizeof(rollback_p));
+	else GetTickSendBuffer(player).Append(&rollback_p, rollback_p.header.size);
 }
+
 
 // 전원이 로딩을 마치거나 로딩 제한 시간이 지나면 시작 대기를 알리고, 대기 시간이 지나면 게임 시작을 알린다.
 void GameRoom::ProcessGameStart()
@@ -1768,18 +1783,18 @@ void GameRoom::ProcessGameStart()
 		for (auto& room_player : room_players_) {
 			if (FindSession(room_player) && room_player.GetRoomPlayerState() == RoomPlayerState::LOADING) has_loading_player = true;
 		}
-		if (has_loading_player && tick_time_ms_ < loading_deadline_ms_) return;
+		if (has_loading_player && tick_number_ < loading_deadline_tick_) return;
 		match_phase_ = MatchPhase::READY;
-		game_start_ms_ = tick_time_ms_ + GAME_READY_WAIT_MS;
+		game_start_tick_ = tick_number_ + MsToTicks(GAME_READY_WAIT_MS);
 		S2C_GAME_READY_PACKET ready_p;
 		ready_p.header = { static_cast<std::uint16_t>(sizeof(ready_p)), S2C_GAME_READY };
 		ready_p.remaining_ms = GAME_READY_WAIT_MS;
 		SendToPlaying(reinterpret_cast<char*>(&ready_p), ready_p.header.size);
 		return;
 	}
-	if (tick_time_ms_ < game_start_ms_) return;
+	if (tick_number_ < game_start_tick_) return;
 	match_phase_ = MatchPhase::STARTED;
-	next_area_removal_ms_ = tick_time_ms_ + AREA_REMOVAL_INTERVAL_MS;
+	next_area_removal_tick_ = tick_number_ + MsToTicks(AREA_REMOVAL_INTERVAL_MS);
 	S2C_GAME_START_PACKET game_start_p;
 	game_start_p.header = { static_cast<std::uint16_t>(sizeof(game_start_p)), S2C_GAME_START };
 	game_start_p.remaining_ms = GAME_TIME_LIMIT_MS;

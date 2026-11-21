@@ -21,7 +21,11 @@ public:
 	~NetworkConnection();
 	bool Start();
 	void Stop(const FString& message = FString());
+	// 패킷 하나에 헤더를 붙여 buffer 뒤에 이어 쓴다. 한 패킷 크기를 넘으면 쓰지 않는다.
+	static bool AppendPacket(TArray<uint8>& buffer, uint8 type, const TArray<uint8>& payload);
 	bool SendPacket(uint8 type, const TArray<uint8>& payload);
+	// AppendPacket으로 이어 쓴 패킷들을 한 번에 보낸다.
+	bool SendPackets(TArray<uint8>&& packets);
 	TOptional<NetworkPacket> DequeuePacket();
 	bool HasFinished() const { return has_send_finished_.load() && has_recv_finished_.load(); }
 	bool HasPendingPackets() const { return recv_count_.load() != 0; }

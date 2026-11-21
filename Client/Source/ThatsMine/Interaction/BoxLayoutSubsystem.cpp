@@ -8,6 +8,7 @@
 #include "Flow/ClientStateSubsystem.h"
 #include "Interaction/HintBox.h"
 #include "Network/GameNetworkSubsystem.h"
+#include "Network/MovementSyncSubsystem.h"
 #include "Network/game_protocol.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBoxLayout, Log, All);
@@ -121,9 +122,10 @@ void UBoxLayoutSubsystem::RequestOpen(const AHintBox* box, const FVector& camera
 		packet.camera[axis] = static_cast<float>(camera_location[axis]);
 		packet.view_direction[axis] = static_cast<float>(view_direction[axis]);
 	}
+	// 서버가 이 번호 시점의 위치로 거리와 시선을 확인하도록, 이번 게임 프레임의 전송 프레임 번호로 보낸다.
 	TArray<uint8> payload;
 	payload.Append(reinterpret_cast<const uint8*>(&packet) + sizeof(PACKET_HEADER), sizeof(packet) - sizeof(PACKET_HEADER));
-	GetWorld()->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_BOX_OPEN, payload);
+	GetWorld()->GetSubsystem<UMovementSyncSubsystem>()->AppendFramePacket(C2S_BOX_OPEN, MoveTemp(payload));
 }
 
 // 서버가 인정한 상자 열림. 플레이 중인 방 전체가 받는다.

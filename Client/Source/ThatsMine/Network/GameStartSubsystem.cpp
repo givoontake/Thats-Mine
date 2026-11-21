@@ -188,8 +188,9 @@ void UGameStartSubsystem::HandleSpawnPacket(const TArray<uint8>& payload)
 		if (APlayerCharacter* character = Cast<APlayerCharacter>(controller->GetPawn()))
 		{
 			character->SetMoveInputBlocked(true);
-			// 서버는 스폰 알림을 받은 뒤부터 이 플레이어의 이동을 처리한다.
-			world->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->SendPacket(C2S_SPAWN_COMPLETE, TArray<uint8>());
+			// 서버는 스폰 알림을 받은 뒤부터 게임 패킷을 처리한다. 스폰을 받은 지금 번호 시계를 0번에서 시작하고 알림을 바로 보낸다.
+			world->GetGameInstance()->GetSubsystem<UGameNetworkSubsystem>()->AppendPendingPacket(C2S_SPAWN_COMPLETE, TArray<uint8>());
+			movement->StartFrameClock();
 		}
 	}
 }

@@ -40,9 +40,10 @@ bool UGameNetworkSubsystem::Connect(const FString& server_address, int32 server_
 	{
 		return false;
 	}
-	// 연결별 큐도 함께 파괴해 이전 연결의 패킷이 재접속 후 적용되지 않게 한다.
+	// 연결별 큐도 함께 파괴해 이전 연결의 패킷이 재접속 후 적용되지 않게 한다. 보내지 않은 패킷도 버린다.
 	++connection_generation_;
 	worker_.Reset();
+	pending_packets_.Reset();
 	connection_state_ = ENetworkConnectionState::DISCONNECTED;
 	ISocketSubsystem* sockets = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	FSocket* socket = nullptr;
@@ -101,6 +102,7 @@ void UGameNetworkSubsystem::Disconnect()
 	check(IsInGameThread());
 	++connection_generation_;
 	worker_.Reset();
+	pending_packets_.Reset();
 	const bool should_notify = connection_state_ != ENetworkConnectionState::DISCONNECTED;
 	connection_state_ = ENetworkConnectionState::DISCONNECTED;
 	connection_message_.Reset();
@@ -113,8 +115,36 @@ void UGameNetworkSubsystem::Disconnect()
 
 bool UGameNetworkSubsystem::SendPacket(uint8 type, const TArray<uint8>& payload)
 {
+	return AppendPendingPacket(type, payload) && SendPendingPackets();
+}
+
+bool UGameNetworkSubsystem::AppendPendingPacket(uint8 type, const TArray<uint8>& payload)
+{
 	check(IsInGameThread());
-	return !GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode() && worker_ && connection_state_ == ENetworkConnectionState::CONNECTED && worker_->SendPacket(type, payload);
+	return AppendPacket(pending_packets_, type, payload);
+}
+
+bool UGameNetworkSubsystem::SendPendingPackets()
+{
+	check(IsInGameThread());
+	if (pending_packets_.IsEmpty())
+	{
+		return true;
+	}
+	TArray<uint8> packets = MoveTemp(pending_packets_);
+	pending_packets_.Reset();
+	return SendPackets(MoveTemp(packets));
+}
+
+bool UGameNetworkSubsystem::AppendPacket(TArray<uint8>& buffer, uint8 type, const TArray<uint8>& payload)
+{
+	return NetworkConnection::AppendPacket(buffer, type, payload);
+}
+
+bool UGameNetworkSubsystem::SendPackets(TArray<uint8>&& packets)
+{
+	check(IsInGameThread());
+	return !GetGameInstance()->GetSubsystem<UClientStateSubsystem>()->IsLocalMode() && worker_ && connection_state_ == ENetworkConnectionState::CONNECTED && worker_->SendPackets(MoveTemp(packets));
 }
 
 bool UGameNetworkSubsystem::RegisterPacketHandler(uint8 type, FNetworkPacketHandler handler)
