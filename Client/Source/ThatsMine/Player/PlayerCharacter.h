@@ -44,6 +44,7 @@ DECLARE_MULTICAST_DELEGATE(FOnItemsChanged);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnActionStarted, EPlayerAction, EWeaponType);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnWeaponSelected, EWeaponType);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnAimToggled, bool);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnReloadCancelled, EWeaponType);
 
 UCLASS()
 class THATSMINE_API APlayerCharacter : public ACharacter
@@ -95,6 +96,8 @@ public:
 	void StartServerReload(EWeaponType weapon);
 	// 서버의 재장전이 끝났거나 인정하지 않았다. 재장전을 끝내고 탄창 탄과 소지 탄으로 바꾼다.
 	void CompleteReload(EWeaponType weapon, int32 rounds, int32 spare_rounds);
+	// 그 총의 재장전 동작과 소리를 멈춘다. 재장전이 끝나거나 취소될 때와 다른 플레이어의 재장전 취소를 받았을 때 쓴다.
+	void StopReloadPlayback(EWeaponType weapon);
 	// 들고 있는 총으로 지금 쏘면 쓰는 퍼짐 크기(도). 총이 아니면 0이다.
 	float GetCurrentShotSpread() const;
 	// 서버가 아는 곡괭이 사용 가능 횟수와 다음 1번이 찰 때까지 남은 시간으로 맞춘다. 횟수는 서버가 보낸 값으로만 바뀌고 남은 시간은 표시만 센다.
@@ -118,6 +121,8 @@ public:
 	FOnWeaponSelected on_weapon_selected_;
 	// 플레이어가 조준 키로 조준을 바꿨을 때 바뀐 조준 여부를 알린다.
 	FOnAimToggled on_aim_toggled_;
+	// 플레이어가 발사 입력으로 그 총의 재장전을 취소했을 때 알린다.
+	FOnReloadCancelled on_reload_cancelled_;
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	FEquipmentDisplay GetEquipmentDisplay() const;
@@ -365,7 +370,7 @@ private:
 	void FireHitscan(const FHitscanSettings& settings);
 	void PlayMuzzleEffect(const FHitscanSettings& settings);
 	void PlayFireSound(const FHitscanSettings& settings) const;
-	void PlayReloadSound(EWeaponType weapon) const;
+	void PlayReloadSound(EWeaponType weapon);
 	// 들고 있는 총의 재장전을 시작하고 서버에 알린다.
 	void BeginReload(EWeaponType weapon);
 	// 재장전 중 상태로 두고 재장전 동작을 재생한다.

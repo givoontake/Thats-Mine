@@ -62,6 +62,8 @@ public:
 	bool TryPickup(std::uint32_t action_time_ms, long long pickup_motion_ms);
 	// 손에 든 총의 재장전을 시작한다. 총이 아니거나 총이 받지 않으면 거짓이다.
 	bool TryStartReload(std::uint32_t action_time_ms);
+	// 손에 든 총이 weapon이면 그 총의 재장전을 발사 입력으로 취소한다. 총이 받지 않으면 거짓이다.
+	bool TryCancelReload(std::uint8_t weapon, std::uint32_t action_time_ms);
 	// 그 무기 번호의 총에 소지 탄을 count발 늘린다. 손에 든 총이면 탄창이 비었을 때 자동 재장전을 예약한다. 총이 아니면 거짓이다.
 	bool AddSpareRounds(std::uint8_t weapon, int count, std::uint32_t action_time_ms);
 	// 시간제 장비를 지난 시간(ms)만큼 모두 진행하고, 무기 번호 순서로 일어난 일을 돌려준다.

@@ -99,6 +99,14 @@ bool PlayerActionState::TryStartReload(std::uint32_t action_time_ms)
 	return true;
 }
 
+bool PlayerActionState::TryCancelReload(std::uint8_t weapon, std::uint32_t action_time_ms)
+{
+	Gun* gun = weapon == weapon_ ? FindGun(weapon_) : nullptr;
+	if (!gun || !AcceptActionTime(action_time_ms) || !gun->TryCancelReload()) return false;
+	last_action_ms_ = action_time_ms;
+	return true;
+}
+
 bool PlayerActionState::AddSpareRounds(std::uint8_t weapon, int count, std::uint32_t action_time_ms)
 {
 	Gun* gun = FindGun(weapon);

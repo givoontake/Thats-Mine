@@ -30,6 +30,8 @@ public:
 	void SetAiming(bool is_aiming) { is_aiming_ = is_aiming; }
 	// 동작 이벤트를 받은 시각부터 동작과 무기에 맞는 몽타주를 재생한다. 맞는 몽타주가 없으면 재생 중인 동작을 그대로 둔다.
 	void StartAction(std::uint8_t action, std::uint8_t weapon, long long time_ms);
+	// 동작과 무기에 맞는 몽타주를 재생 중이면 멈춘다.
+	void StopAction(std::uint8_t action, std::uint8_t weapon);
 	// time_ms 시각의 뼈 자세를 액터 기준(캐릭터 위치·좌우 방향 적용 전)으로 계산한다.
 	std::vector<BoneTransform> BuildBonePoses(const MOVE_STATE& move_state, long long time_ms) const;
 	// time_ms 시각의 히트박스를 월드 좌표로 만든다. 도형의 transform이 월드 기준이 된다.

@@ -74,3 +74,5 @@ constexpr std::uint8_t S2C_AMMO_GAIN = 124;
 constexpr std::uint8_t S2C_RELOAD_DONE = 125;
 constexpr std::uint8_t S2C_MOVE_STOP = 128;
 constexpr std::uint8_t C2S_SPAWN_COMPLETE = 129;
+constexpr std::uint8_t C2S_RELOAD_CANCEL = 130;
+constexpr std::uint8_t S2C_RELOAD_CANCEL = 131;

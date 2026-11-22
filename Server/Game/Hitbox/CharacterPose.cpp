@@ -209,6 +209,12 @@ void CharacterPose::StartAction(std::uint8_t action, std::uint8_t weapon, long l
 	montage_start_ms_ = time_ms;
 }
 
+void CharacterPose::StopAction(std::uint8_t action, std::uint8_t weapon)
+{
+	if (!montage_ || !data_ || montage_ != data_->FindMontage(action, weapon)) return;
+	montage_ = nullptr;
+}
+
 std::vector<BoneTransform> CharacterPose::BuildBonePoses(const MOVE_STATE& move_state, long long time_ms) const
 {
 	if (!data_ || !data_->IsLoaded()) return {};

@@ -394,6 +394,19 @@ void GameRoom::HandlePacket(char* packet, Session& request_session, long long re
 		room_player->GetPose().StartAction(static_cast<std::uint8_t>(action), weapon, GetPoseTimeMs());
 		break;
 	}
+	case C2S_RELOAD_CANCEL: {
+		// 탄창에 탄이 있는 총의 재장전을 발사 입력으로 취소했다. 그 번호에 손에 든 총이 그 무기이고 재장전 중이며 탄창에 탄이 있을 때만 취소한다.
+		// 취소하지 않으면 정정은 보내지 않는다. 서버가 이어 가는 재장전의 끝 패킷이 클라이언트 탄약을 맞춘다.
+		auto* room_player = room_state_.load() == RoomState::PLAY ? FindPlayer(request_session.GetSessionKey()) : nullptr;
+		if (!room_player || room_player->GetRoomPlayerState() != RoomPlayerState::PLAY) break;
+		const auto* request_p = reinterpret_cast<C2S_RELOAD_CANCEL_PACKET*>(packet);
+		if (room_player->IsInputLocked(tick_number_, request_p->frame_number) || !room_player->GetActionState().TryCancelReload(request_p->weapon, request_p->frame_number * MOVE_STEP_MS)) break;
+		room_player->GetPose().StopAction(static_cast<std::uint8_t>(PlayerAction::RELOAD), request_p->weapon);
+		// 본인은 먼저 취소했으므로 다른 플레이어에게만 보낸다.
+		const S2C_RELOAD_CANCEL_PACKET cancel_p{ { static_cast<std::uint16_t>(sizeof(S2C_RELOAD_CANCEL_PACKET)), S2C_RELOAD_CANCEL }, request_session.GetSessionKey().player_id, request_p->weapon };
+		SendToOtherPlaying(*room_player, reinterpret_cast<const char*>(&cancel_p), sizeof(cancel_p));
+		break;
+	}
 	case C2S_FIRE: {
 		if (room_state_.load() != RoomState::PLAY) break;
 		auto* room_player = FindPlayer(request_session.GetSessionKey());
@@ -482,7 +495,7 @@ void GameRoom::AddPacketTask(std::unique_ptr<SessionPacketTask> task)
 // 전송 프레임 번호를 담는 게임 패킷인지
 static bool IsFramePacket(std::uint8_t type)
 {
-	return type == C2S_MOVE || type == C2S_AIM || type == C2S_EQUIP || type == C2S_ACTION || type == C2S_RELOAD || type == C2S_FIRE || type == C2S_BOX_OPEN || type == C2S_BLOCK_USE;
+	return type == C2S_MOVE || type == C2S_AIM || type == C2S_EQUIP || type == C2S_ACTION || type == C2S_RELOAD || type == C2S_RELOAD_CANCEL || type == C2S_FIRE || type == C2S_BOX_OPEN || type == C2S_BLOCK_USE;
 }
 
 // 게임 패킷의 전송 프레임 번호. 모든 게임 패킷이 헤더 바로 뒤에 둔다.

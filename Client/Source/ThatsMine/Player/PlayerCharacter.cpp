@@ -18,6 +18,7 @@
 #include "InputActionValue.h"
 #include "LandscapeProxy.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/AudioComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -539,6 +540,7 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 		if (FWeaponAmmoState* previous_ammo = weapon_ammo_.Find(current_weapon_))
 		{
 			previous_ammo->is_reloading = false;
+			StopReloadPlayback(current_weapon_);
 		}
 		const FWeaponSettings* previous_settings = GetCurrentWeaponSettings();
 		if (UAnimInstance* anim_instance = GetMesh()->GetAnimInstance(); anim_instance && previous_settings)
@@ -546,10 +548,6 @@ void APlayerCharacter::SelectWeapon(EWeaponType weapon)
 			if (previous_settings->equip_montage)
 			{
 				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->equip_montage);
-			}
-			if (previous_settings->hitscan.reload_montage)
-			{
-				anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), previous_settings->hitscan.reload_montage);
 			}
 			if (IsGunWeapon(static_cast<WeaponType>(current_weapon_)) && previous_settings->primary_action.montage)
 			{
@@ -861,6 +859,16 @@ void APlayerCharacter::FireHitscan(const FHitscanSettings& settings)
 		return;
 	}
 	FWeaponAmmoState* ammo = weapon_ammo_.Find(current_weapon_);
+	// 탄창에 탄이 있는 총을 재장전하는 중이면 발사 입력은 재장전만 취소하고 쏘지 않는다. 탄창이 비었으면 재장전이 끝날 때까지 받지 않는다.
+	// 서버도 같은 규칙으로 취소하고 다른 플레이어에게 알린다.
+	if (ammo && ammo->is_reloading && ammo->rounds > 0)
+	{
+		ammo->is_reloading = false;
+		StopReloadPlayback(current_weapon_);
+		UpdateEquipmentDisplay();
+		on_reload_cancelled_.Broadcast(current_weapon_);
+		return;
+	}
 	const GunSettings* gun = FindGunSettings(current_weapon_);
 	if (!ammo || !gun || ammo->rounds <= 0 || ammo->is_reloading)
 	{
@@ -1096,7 +1104,7 @@ void APlayerCharacter::PlayFireSound(const FHitscanSettings& settings) const
 }
 
 // 듣는 내 캐릭터가 RELOAD_SOUND_DISTANCE 안일 때만 캐릭터에 붙여 재생해 움직여도 따라오고, 거리에 따라 크기를 줄인다.
-void APlayerCharacter::PlayReloadSound(EWeaponType weapon) const
+void APlayerCharacter::PlayReloadSound(EWeaponType weapon)
 {
 	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
 	USoundBase* sound = settings ? settings->hitscan.reload_sound.LoadSynchronous() : nullptr;
@@ -1106,7 +1114,12 @@ void APlayerCharacter::PlayReloadSound(EWeaponType weapon) const
 	}
 	if (const float volume = GetHeardVolume(GetWorld(), GetActorLocation(), RELOAD_SOUND_DISTANCE); volume > 0.0f)
 	{
-		UGameplayStatics::SpawnSoundAttached(sound, GetMesh(), NAME_None, FVector::ZeroVector, EAttachLocation::KeepRelativeOffset, false, volume);
+		UAudioComponent* reload_sound = UGameplayStatics::SpawnSoundAttached(sound, GetMesh(), NAME_None, FVector::ZeroVector, EAttachLocation::KeepRelativeOffset, false, volume);
+		// 재장전이 끝나거나 취소되면 멈추도록 그 무기의 탄약 상태에 둔다.
+		if (FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
+		{
+			ammo->reload_sound = reload_sound;
+		}
 	}
 }
 
@@ -1206,14 +1219,27 @@ void APlayerCharacter::CompleteReload(EWeaponType weapon, int32 rounds, int32 sp
 	if (ammo->is_reloading)
 	{
 		ammo->is_reloading = false;
-		const FWeaponSettings* settings = weapon_settings_.Find(weapon);
-		UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
-		if (weapon == current_weapon_ && settings && settings->hitscan.reload_montage && anim_instance)
-		{
-			anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), settings->hitscan.reload_montage);
-		}
+		StopReloadPlayback(weapon);
 	}
 	UpdateEquipmentDisplay();
+}
+
+void APlayerCharacter::StopReloadPlayback(EWeaponType weapon)
+{
+	const FWeaponSettings* settings = weapon_settings_.Find(weapon);
+	UAnimInstance* anim_instance = GetMesh()->GetAnimInstance();
+	if (settings && settings->hitscan.reload_montage && anim_instance)
+	{
+		anim_instance->Montage_StopWithBlendSettings(MakeInertialBlendOut(0.1f), settings->hitscan.reload_montage);
+	}
+	if (FWeaponAmmoState* ammo = weapon_ammo_.Find(weapon))
+	{
+		if (UAudioComponent* sound = ammo->reload_sound.Get())
+		{
+			sound->Stop();
+		}
+		ammo->reload_sound.Reset();
+	}
 }
 
 void APlayerCharacter::StartServerReload(EWeaponType weapon)

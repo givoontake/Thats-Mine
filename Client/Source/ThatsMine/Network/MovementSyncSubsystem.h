@@ -43,6 +43,7 @@ private:
 	void BindLocalCharacter();
 	void HandleWeaponSelected(EWeaponType weapon);
 	void HandleAimToggled(bool is_aiming);
+	void HandleReloadCancelled(EWeaponType weapon);
 	// 계산한 번호의 들고 있던 패킷과 이동 패킷을 보낼 패킷 뒤에 이어 쓴다.
 	void HandleMoveStep(const FLocalMoveStep& step);
 	void HandleActionStarted(EPlayerAction action, EWeaponType weapon);
@@ -63,6 +64,7 @@ private:
 	void HandleEquipPacket(const TArray<uint8>& payload);
 	void HandleActionPacket(const TArray<uint8>& payload);
 	void HandleReloadPacket(const TArray<uint8>& payload);
+	void HandleReloadCancelPacket(const TArray<uint8>& payload);
 	void RemoveLeftPlayers();
 	void HandleInvalidPacket();
 	APlayerCharacter* FindRemotePlayer(int32 player_id) const;

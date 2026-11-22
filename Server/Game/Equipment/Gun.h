@@ -14,12 +14,16 @@ struct FiredShot {
 	float spread;
 };
 
+// 총의 지금 상태. 재장전 중이면 남은 재장전 시간만 줄인다.
+enum class GunState : std::uint8_t { READY, RELOADING };
+
 // 총. 저격총과 권총이 같은 클래스를 쓰고 참조하는 고유값만 다르다. 탄약, 재장전, 발사 간격 검증, 탄 퍼짐, 조준 상태를 든다.
 class Gun : public Equipment
 {
+	GunState state_ = GunState::READY;
 	int rounds_ = 0; // 지금 탄창의 탄
 	int spare_rounds_ = 0; // 소지 탄. 재장전할 때 탄창이 빈 만큼 여기서 채운다.
-	long long reload_remaining_ms_ = 0; // 재장전이 끝날 때까지 남은 시간. 0이면 재장전 중이 아니다.
+	long long reload_remaining_ms_ = 0; // 재장전 중일 때 재장전이 끝날 때까지 남은 시간
 	// 자동 재장전을 예약했는지와 시작할 때까지 남은 시간(ms)
 	bool has_auto_reload_ = false;
 	long long auto_reload_wait_ms_ = 0;
@@ -36,7 +40,7 @@ public:
 
 	const GunSettings& GetGunSettings() const { return static_cast<const GunSettings&>(GetSettings()); }
 	int GetRounds() const { return rounds_; }
-	bool IsReloading() const { return reload_remaining_ms_ > 0; }
+	bool IsReloading() const { return state_ == GunState::RELOADING; }
 	int GetSpareRounds() const { return spare_rounds_; }
 
 	// 탄과 소지 탄 없이 시작한다.
@@ -56,6 +60,8 @@ public:
 	std::optional<FiredShot> TryFire(const ShotSpreadInput& spread_input, std::uint32_t shot_count, std::uint32_t action_time_ms, long long fire_motion_ms);
 	// 재장전을 시작한다. 교체 대기 중, 이미 재장전 중, 소지 탄이 없거나 탄창이 가득 차 있으면 받지 않는다. 자동 재장전 예약은 지운다.
 	bool TryStartReload(std::uint32_t action_time_ms);
+	// 발사 입력으로 재장전을 취소한다. 재장전 중이 아니거나 탄창이 비었으면 받지 않는다.
+	bool TryCancelReload();
 	// 소지 탄을 count발 늘린다.
 	void AddSpareRounds(int count) { spare_rounds_ += count; }
 	// 탄창이 비었고 소지 탄이 있으면, 동작 시각 action_time_ms에서 delay_ms와 남은 교체 대기 중 긴 쪽이 지난 뒤로 자동 재장전을 예약한다.

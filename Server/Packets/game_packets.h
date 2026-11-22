@@ -166,11 +166,26 @@ struct C2S_RELOAD_PACKET {
 	std::uint32_t frame_number;
 };
 
+// 손에 든 총의 재장전을 발사 입력으로 취소했다. 탄창에 탄이 남아 있을 때만 보낸다.
+// 서버는 그 번호에 손에 든 총이 weapon이고 재장전 중이며 탄창에 탄이 있을 때만 취소한다.
+struct C2S_RELOAD_CANCEL_PACKET {
+	PACKET_HEADER header;
+	std::uint32_t frame_number; // 이 입력이 든 전송 프레임 번호
+	std::uint8_t weapon; // 재장전을 취소한 총(WeaponType)
+};
+
 // 재장전이 시작됐다. 방 전체에 보내고 재장전한 사람도 받는다. 서버가 자동 재장전을 시작했을 때도 보낸다.
 struct S2C_RELOAD_PACKET {
 	PACKET_HEADER header;
 	int player_id;
 	std::uint8_t weapon;
+};
+
+// 그 플레이어가 그 총의 재장전을 취소했다. 본인을 뺀 플레이어에게 보낸다. 받은 쪽은 그 캐릭터의 재장전 동작을 멈춘다.
+struct S2C_RELOAD_CANCEL_PACKET {
+	PACKET_HEADER header;
+	int player_id;
+	std::uint8_t weapon; // 재장전을 취소한 총(WeaponType)
 };
 
 // 로딩을 마친 플레이어 한 명의 스폰 자리. 스폰할 플레이어 수만큼 이어 붙여 보낸다. 이미 플레이 중인 플레이어는 지금 자리다.

@@ -36,6 +36,7 @@ inline constexpr std::array<PacketSizeRange, 256> CLIENT_PACKET_SIZE_TABLE = [] 
 	table[C2S_EQUIP] = { sizeof(C2S_EQUIP_PACKET), sizeof(C2S_EQUIP_PACKET) };
 	table[C2S_ACTION] = { sizeof(C2S_ACTION_PACKET), sizeof(C2S_ACTION_PACKET) };
 	table[C2S_RELOAD] = { sizeof(C2S_RELOAD_PACKET), sizeof(C2S_RELOAD_PACKET) };
+	table[C2S_RELOAD_CANCEL] = { sizeof(C2S_RELOAD_CANCEL_PACKET), sizeof(C2S_RELOAD_CANCEL_PACKET) };
 	table[C2S_LOAD_COMPLETE] = { sizeof(C2S_LOAD_COMPLETE_PACKET), sizeof(C2S_LOAD_COMPLETE_PACKET) };
 	table[C2S_SPAWN_COMPLETE] = { sizeof(C2S_SPAWN_COMPLETE_PACKET), sizeof(C2S_SPAWN_COMPLETE_PACKET) };
 	table[C2S_FIRE] = { sizeof(C2S_FIRE_PACKET), sizeof(C2S_FIRE_PACKET) };

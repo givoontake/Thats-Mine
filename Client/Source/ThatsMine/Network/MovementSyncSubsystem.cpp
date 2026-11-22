@@ -74,6 +74,7 @@ void UMovementSyncSubsystem::OnWorldBeginPlay(UWorld& world)
 	network->RegisterPacketHandler(S2C_EQUIP, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleEquipPacket));
 	network->RegisterPacketHandler(S2C_ACTION, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleActionPacket));
 	network->RegisterPacketHandler(S2C_RELOAD, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadPacket));
+	network->RegisterPacketHandler(S2C_RELOAD_CANCEL, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleReloadCancelPacket));
 	network->RegisterPacketHandler(S2C_HIT, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleHitPacket));
 	network->RegisterPacketHandler(S2C_STUN_GAUGE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleStunGaugePacket));
 	network->RegisterPacketHandler(S2C_AMMO_USE, FNetworkPacketHandler::CreateUObject(this, &UMovementSyncSubsystem::HandleAmmoUsePacket));
@@ -100,6 +101,7 @@ void UMovementSyncSubsystem::Deinitialize()
 			network->UnregisterPacketHandler(S2C_EQUIP);
 			network->UnregisterPacketHandler(S2C_ACTION);
 			network->UnregisterPacketHandler(S2C_RELOAD);
+			network->UnregisterPacketHandler(S2C_RELOAD_CANCEL);
 			network->UnregisterPacketHandler(S2C_HIT);
 			network->UnregisterPacketHandler(S2C_STUN_GAUGE);
 			network->UnregisterPacketHandler(S2C_AMMO_USE);
@@ -120,6 +122,7 @@ void UMovementSyncSubsystem::Deinitialize()
 			character->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 			character->on_weapon_selected_.RemoveAll(this);
 			character->on_aim_toggled_.RemoveAll(this);
+			character->on_reload_cancelled_.RemoveAll(this);
 			if (UPlayerMovementComponent* movement = Cast<UPlayerMovementComponent>(character->GetCharacterMovement()))
 			{
 				movement->on_move_step_.RemoveAll(this);
@@ -175,6 +178,7 @@ void UMovementSyncSubsystem::BindLocalCharacter()
 		previous->on_shot_fired_.RemoveDynamic(this, &UMovementSyncSubsystem::HandleShotFired);
 		previous->on_weapon_selected_.RemoveAll(this);
 		previous->on_aim_toggled_.RemoveAll(this);
+		previous->on_reload_cancelled_.RemoveAll(this);
 		if (UPlayerMovementComponent* movement = Cast<UPlayerMovementComponent>(previous->GetCharacterMovement()))
 		{
 			movement->on_move_step_.RemoveAll(this);
@@ -190,6 +194,7 @@ void UMovementSyncSubsystem::BindLocalCharacter()
 	// 장비와 조준은 플레이어가 바꾼 순간 알림을 받아 그 번호의 패킷으로 넣는다.
 	character->on_weapon_selected_.AddUObject(this, &UMovementSyncSubsystem::HandleWeaponSelected);
 	character->on_aim_toggled_.AddUObject(this, &UMovementSyncSubsystem::HandleAimToggled);
+	character->on_reload_cancelled_.AddUObject(this, &UMovementSyncSubsystem::HandleReloadCancelled);
 	if (UPlayerMovementComponent* movement = Cast<UPlayerMovementComponent>(character->GetCharacterMovement()))
 	{
 		movement->on_move_step_.AddUObject(this, &UMovementSyncSubsystem::HandleMoveStep);
@@ -210,6 +215,14 @@ void UMovementSyncSubsystem::HandleAimToggled(bool is_aiming)
 	C2S_AIM_PACKET packet{};
 	packet.is_aiming = is_aiming;
 	AppendFramePacket(C2S_AIM, GetPacketBody(packet));
+}
+
+// 플레이어가 발사 입력으로 취소한 재장전을 이번 번호의 패킷으로 들고 있는다.
+void UMovementSyncSubsystem::HandleReloadCancelled(EWeaponType weapon)
+{
+	C2S_RELOAD_CANCEL_PACKET packet{};
+	packet.weapon = static_cast<uint8>(weapon);
+	AppendFramePacket(C2S_RELOAD_CANCEL, GetPacketBody(packet));
 }
 
 // 끝난 번호 하나를 계산할 때마다 부른다. 그 번호까지의 들고 있던 패킷을 보낼 패킷 뒤에 옮기고, 그 뒤에 그 번호의 이동 패킷을 붙인다.
@@ -617,6 +630,22 @@ void UMovementSyncSubsystem::HandleReloadPacket(const TArray<uint8>& payload)
 	else if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
 	{
 		remote->PlayRemoteAction(EPlayerAction::RELOAD, ToWeaponType(packet.weapon));
+	}
+}
+
+// 다른 플레이어가 재장전을 취소했다. 그 캐릭터의 그 총 재장전 동작을 멈춘다.
+void UMovementSyncSubsystem::HandleReloadCancelPacket(const TArray<uint8>& payload)
+{
+	if (payload.Num() != sizeof(S2C_RELOAD_CANCEL_PACKET) - sizeof(PACKET_HEADER))
+	{
+		HandleInvalidPacket();
+		return;
+	}
+	S2C_RELOAD_CANCEL_PACKET packet{};
+	FMemory::Memcpy(reinterpret_cast<uint8*>(&packet) + sizeof(PACKET_HEADER), payload.GetData(), payload.Num());
+	if (APlayerCharacter* remote = FindRemotePlayer(packet.player_id))
+	{
+		remote->StopReloadPlayback(ToWeaponType(packet.weapon));
 	}
 }
 
